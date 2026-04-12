@@ -10,12 +10,14 @@ const required = [
   ".codex-plugin/plugin.json",
   "commands/review.md",
   "commands/adversarial-review.md",
+  "commands/elite-review.md",
   "commands/setup.md",
   "commands/status.md",
   "commands/result.md",
   "commands/cancel.md",
   "scripts/claude-review-companion.mjs",
-  "schemas/review-output.schema.json"
+  "schemas/review-output.schema.json",
+  "schemas/elite-review-output.schema.json"
 ];
 
 for (const relative of required) {
@@ -25,8 +27,17 @@ for (const relative of required) {
   }
 }
 
-JSON.parse(fs.readFileSync(path.join(root, ".codex-plugin/plugin.json"), "utf8"));
+const pluginManifest = JSON.parse(fs.readFileSync(path.join(root, ".codex-plugin/plugin.json"), "utf8"));
 JSON.parse(fs.readFileSync(path.join(root, "schemas/review-output.schema.json"), "utf8"));
+JSON.parse(fs.readFileSync(path.join(root, "schemas/elite-review-output.schema.json"), "utf8"));
+
+if (!Array.isArray(pluginManifest.interface?.defaultPrompt) || pluginManifest.interface.defaultPrompt.length === 0) {
+  throw new Error("plugin.json interface.defaultPrompt must be a non-empty array.");
+}
+
+if (pluginManifest.interface.defaultPrompt.length > 3) {
+  throw new Error("plugin.json interface.defaultPrompt must contain at most 3 prompts.");
+}
 
 for (const file of [
   "scripts/claude-review-companion.mjs",

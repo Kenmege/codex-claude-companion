@@ -32,3 +32,24 @@ test("git helpers collect working tree review context", () => {
   assert.match(context.fullContent, /Unstaged Diff/);
   assert.equal(selected.mode, "full");
 });
+
+test("git helpers ignore internal .claude-review artifacts", () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-git-"));
+  run(cwd, "init");
+  run(cwd, "config", "user.email", "test@example.com");
+  run(cwd, "config", "user.name", "Test User");
+  fs.writeFileSync(path.join(cwd, "index.js"), "const x = 1;\n", "utf8");
+  run(cwd, "add", "index.js");
+  run(cwd, "commit", "-m", "initial");
+
+  fs.writeFileSync(path.join(cwd, "index.js"), "const x = 2;\n", "utf8");
+  fs.mkdirSync(path.join(cwd, ".claude-review", "jobs"), { recursive: true });
+  fs.writeFileSync(path.join(cwd, ".claude-review", "jobs", "review.job.json"), "{\"status\":\"completed\"}\n", "utf8");
+
+  const target = resolveReviewTarget(cwd, {});
+  const context = collectReviewContext(cwd, target);
+
+  assert.equal(target.mode, "working-tree");
+  assert.deepEqual(context.changedFiles, ["index.js"]);
+  assert.doesNotMatch(context.fullContent, /\.claude-review\/jobs\/review\.job\.json/);
+});

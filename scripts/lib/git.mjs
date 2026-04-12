@@ -6,6 +6,7 @@ import { formatCommandFailure, runCommand, runCommandChecked } from "./process.m
 const DEFAULT_OPUS_INLINE_BYTES = 250_000;
 const DEFAULT_LONG_CONTEXT_BYTES = 800_000;
 const MAX_UNTRACKED_BYTES = 24 * 1024;
+const REVIEW_PATHSPEC = ["--", ".", ":(exclude).claude-review/**"];
 
 function git(cwd, args, options = {}) {
   return runCommand("git", args, { cwd, ...options });
@@ -17,6 +18,10 @@ function gitChecked(cwd, args, options = {}) {
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))].sort();
+}
+
+function isInternalReviewArtifact(relativePath) {
+  return relativePath === ".claude-review" || relativePath.startsWith(".claude-review/");
 }
 
 function isProbablyText(buffer) {
@@ -66,9 +71,21 @@ export function detectDefaultBranch(cwd) {
 
 export function getWorkingTreeState(cwd) {
   return {
-    staged: String(gitChecked(cwd, ["diff", "--cached", "--name-only"]).stdout).trim().split("\n").filter(Boolean),
-    unstaged: String(gitChecked(cwd, ["diff", "--name-only"]).stdout).trim().split("\n").filter(Boolean),
-    untracked: String(gitChecked(cwd, ["ls-files", "--others", "--exclude-standard"]).stdout).trim().split("\n").filter(Boolean)
+    staged: String(gitChecked(cwd, ["diff", "--cached", "--name-only"]).stdout)
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .filter((file) => !isInternalReviewArtifact(file)),
+    unstaged: String(gitChecked(cwd, ["diff", "--name-only"]).stdout)
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .filter((file) => !isInternalReviewArtifact(file)),
+    untracked: String(gitChecked(cwd, ["ls-files", "--others", "--exclude-standard"]).stdout)
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .filter((file) => !isInternalReviewArtifact(file))
   };
 }
 
@@ -104,13 +121,19 @@ function collectWorkingTreeContext(cwd) {
     throw new Error("Nothing to review in the working tree.");
   }
 
-  const status = String(gitChecked(cwd, ["status", "--short", "--untracked-files=all"]).stdout).trim();
-  const stagedDiff = String(gitChecked(cwd, ["diff", "--cached", "--binary", "--no-ext-diff", "--submodule=diff"]).stdout);
-  const unstagedDiff = String(gitChecked(cwd, ["diff", "--binary", "--no-ext-diff", "--submodule=diff"]).stdout);
+  const status = String(
+    gitChecked(cwd, ["status", "--short", "--untracked-files=all", ...REVIEW_PATHSPEC]).stdout
+  ).trim();
+  const stagedDiff = String(
+    gitChecked(cwd, ["diff", "--cached", "--binary", "--no-ext-diff", "--submodule=diff", ...REVIEW_PATHSPEC]).stdout
+  );
+  const unstagedDiff = String(
+    gitChecked(cwd, ["diff", "--binary", "--no-ext-diff", "--submodule=diff", ...REVIEW_PATHSPEC]).stdout
+  );
   const untrackedFiles = state.untracked.map((file) => readUntrackedFile(cwd, file)).join("\n\n");
   const changedFiles = unique([...state.staged, ...state.unstaged, ...state.untracked]);
-  const stagedStat = String(gitChecked(cwd, ["diff", "--shortstat", "--cached"]).stdout).trim();
-  const unstagedStat = String(gitChecked(cwd, ["diff", "--shortstat"]).stdout).trim();
+  const stagedStat = String(gitChecked(cwd, ["diff", "--shortstat", "--cached", ...REVIEW_PATHSPEC]).stdout).trim();
+  const unstagedStat = String(gitChecked(cwd, ["diff", "--shortstat", ...REVIEW_PATHSPEC]).stdout).trim();
 
   return {
     summary: `Reviewing ${changedFiles.length} changed file(s) from the working tree.`,

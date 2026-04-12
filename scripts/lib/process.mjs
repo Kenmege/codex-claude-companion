@@ -5,7 +5,8 @@ export function runCommand(command, args, options = {}) {
     cwd: options.cwd,
     env: options.env,
     encoding: "utf8",
-    maxBuffer: options.maxBuffer ?? 16 * 1024 * 1024
+    maxBuffer: options.maxBuffer ?? 16 * 1024 * 1024,
+    timeout: options.timeout
   });
 }
 

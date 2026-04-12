@@ -27,7 +27,11 @@
       "Write"
     ],
     "websiteURL": "https://github.com/Kenmege/codex-plugin-cc",
-    "defaultPrompt": "Review the current Codex-generated changes with Claude Opus 4.6 and tell me what is unsafe, brittle, or under-tested.",
+    "defaultPrompt": [
+      "Review the current Codex-generated changes with Claude and flag anything unsafe, brittle, or under-tested.",
+      "Run an adversarial review on the current diff and challenge the design.",
+      "Check whether the current workspace is ready for a Claude review run."
+    ],
     "brandColor": "#1f2937",
     "screenshots": []
   }

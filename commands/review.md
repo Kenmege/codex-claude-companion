@@ -37,4 +37,5 @@ Return the helper stdout verbatim.
 
 ## Next Steps
 
-If the user wants a harsher pass, suggest `/claude-review:adversarial-review`.
+If the user wants a harsher pass, suggest `/claude-review:adversarial-review`
+or `/claude-review:elite-review`.

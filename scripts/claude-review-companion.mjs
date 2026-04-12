@@ -11,6 +11,7 @@ import {
   DEFAULT_MODEL,
   getClaudeAuthStatus,
   getClaudeAvailability,
+  probeClaudeStructuredOutput,
   runClaudeStructuredReview,
   selectClaudeProfile
 } from "./lib/claude.mjs";
@@ -34,6 +35,28 @@ import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const ROOT_DIR = path.resolve(path.dirname(SCRIPT_PATH), "..");
 const SCHEMA_PATH = path.join(ROOT_DIR, "schemas", "review-output.schema.json");
+const ELITE_SCHEMA_PATH = path.join(ROOT_DIR, "schemas", "elite-review-output.schema.json");
+
+const REVIEW_KIND_CONFIG = {
+  review: {
+    reviewLabel: "Review",
+    title: "Claude review",
+    schemaPath: SCHEMA_PATH,
+    jobPrefix: "review"
+  },
+  "adversarial-review": {
+    reviewLabel: "Adversarial Review",
+    title: "Claude adversarial review",
+    schemaPath: SCHEMA_PATH,
+    jobPrefix: "adversarial"
+  },
+  "elite-review": {
+    reviewLabel: "Elite Review",
+    title: "Claude elite review",
+    schemaPath: ELITE_SCHEMA_PATH,
+    jobPrefix: "elite"
+  }
+};
 
 function parseCommandInput(argv, config = {}) {
   if (argv.length === 1 && argv[0]?.includes(" ")) {
@@ -49,6 +72,7 @@ function printUsage() {
       "  codex-claude-review setup",
       "  codex-claude-review review [--background] [--base <ref>] [--scope auto|working-tree|branch] [--model <name>] [--effort <low|medium|high|max>] [--profile quality|long-context] [--long-context]",
       "  codex-claude-review adversarial-review [same flags] [focus text]",
+      "  codex-claude-review elite-review [same flags] [focus text]",
       "  codex-claude-review status [job-id]",
       "  codex-claude-review result <job-id>",
       "  codex-claude-review cancel <job-id>"
@@ -59,6 +83,7 @@ function printUsage() {
 function buildSetupPayload(cwd) {
   const claude = getClaudeAvailability(cwd);
   const auth = claude.available ? getClaudeAuthStatus(cwd) : { loggedIn: false, detail: "claude unavailable" };
+  const runtime = claude.available && auth.loggedIn ? probeClaudeStructuredOutput(cwd) : { ready: false, detail: "runtime probe skipped" };
   const nextSteps = [];
   if (!claude.available) {
     nextSteps.push("Install Claude Code CLI and ensure `claude` is on PATH.");
@@ -66,11 +91,15 @@ function buildSetupPayload(cwd) {
   if (claude.available && !auth.loggedIn) {
     nextSteps.push("Run `claude auth login` and complete the Claude sign-in flow.");
   }
+  if (claude.available && auth.loggedIn && !runtime.ready) {
+    nextSteps.push("The Claude CLI is authenticated but the non-interactive print path is unhealthy. Re-run setup after fixing Claude CLI runtime issues.");
+  }
 
   return {
-    ready: claude.available && auth.loggedIn,
+    ready: claude.available && auth.loggedIn && runtime.ready,
     claude,
     auth,
+    runtime,
     defaults: {
       model: DEFAULT_MODEL,
       effort: DEFAULT_EFFORT,
@@ -81,6 +110,7 @@ function buildSetupPayload(cwd) {
 }
 
 function prepareSnapshot(cwd, kind, options, focusText) {
+  const reviewConfig = REVIEW_KIND_CONFIG[kind];
   const target = resolveReviewTarget(cwd, options);
   const reviewContext = collectReviewContext(cwd, target);
   const wantsLongContext = options.profile === "long-context" || Boolean(options["long-context"]);
@@ -99,7 +129,7 @@ function prepareSnapshot(cwd, kind, options, focusText) {
 
   return {
     reviewKind: kind,
-    reviewLabel: kind === "adversarial-review" ? "Adversarial Review" : "Review",
+    reviewLabel: reviewConfig.reviewLabel,
     target,
     targetLabel: target.label,
     focusText,
@@ -112,13 +142,15 @@ function prepareSnapshot(cwd, kind, options, focusText) {
     effort: selectedProfile.effort,
     profile: selectedProfile.profile,
     betas: selectedProfile.betas,
-    notes
+    notes,
+    schemaPath: reviewConfig.schemaPath
   };
 }
 
 function buildBackgroundJob(cwd, kind, snapshot) {
-  const jobId = generateJobId(kind === "adversarial-review" ? "adversarial" : "review");
-  const title = kind === "adversarial-review" ? "Claude adversarial review" : "Claude review";
+  const reviewConfig = REVIEW_KIND_CONFIG[kind];
+  const jobId = generateJobId(reviewConfig.jobPrefix);
+  const title = reviewConfig.title;
   const job = buildJobRecord(cwd, jobId, {
     kind,
     title,
@@ -137,7 +169,7 @@ function buildBackgroundJob(cwd, kind, snapshot) {
 function runSnapshot(cwd, jobId, snapshot) {
   appendLogLine(cwd, jobId, `Starting ${snapshot.reviewKind} with ${snapshot.model}/${snapshot.effort}`);
   appendLogLine(cwd, jobId, `Context mode: ${snapshot.contextMode} (${snapshot.inputBytes} bytes)`);
-  const result = runClaudeStructuredReview(cwd, snapshot, snapshot.reviewKind, SCHEMA_PATH);
+  const result = runClaudeStructuredReview(cwd, snapshot, snapshot.reviewKind, snapshot.schemaPath);
   appendLogLine(cwd, jobId, `Claude returned ${result.parsed.findings.length} finding(s)`);
   return result;
 }
@@ -149,12 +181,13 @@ function handleSetup(argv) {
 }
 
 function handleReviewLike(kind, argv) {
+  const reviewConfig = REVIEW_KIND_CONFIG[kind];
   const { options, positionals } = parseCommandInput(argv, {
     booleanOptions: ["background", "long-context"],
     valueOptions: ["base", "scope", "model", "effort", "profile", "cwd"]
   });
   const cwd = path.resolve(options.cwd ?? process.cwd());
-  const focusText = kind === "adversarial-review" ? positionals.join(" ").trim() : "";
+  const focusText = kind === "review" ? "" : positionals.join(" ").trim();
   const snapshot = prepareSnapshot(cwd, kind, options, focusText);
 
   if (options.background) {
@@ -165,10 +198,10 @@ function handleReviewLike(kind, argv) {
     return;
   }
 
-  const jobId = generateJobId(kind === "adversarial-review" ? "adversarial" : "review");
+  const jobId = generateJobId(reviewConfig.jobPrefix);
   const job = buildJobRecord(cwd, jobId, {
     kind,
-    title: kind === "adversarial-review" ? "Claude adversarial review" : "Claude review",
+    title: reviewConfig.title,
     summary: snapshot.summary,
     model: snapshot.model,
     effort: snapshot.effort,
@@ -283,6 +316,9 @@ function main() {
         break;
       case "adversarial-review":
         handleReviewLike("adversarial-review", argv);
+        break;
+      case "elite-review":
+        handleReviewLike("elite-review", argv);
         break;
       case "run-job":
         handleRunJob(argv);

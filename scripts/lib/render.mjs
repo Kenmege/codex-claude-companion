@@ -21,6 +21,13 @@ function severityRank(severity) {
   }
 }
 
+function formatConfidence(confidence) {
+  if (typeof confidence !== "number" || Number.isNaN(confidence)) {
+    return "unknown";
+  }
+  return confidence.toFixed(2);
+}
+
 export function renderSetupReport(report) {
   const lines = [
     "# Claude Review Setup",
@@ -29,6 +36,7 @@ export function renderSetupReport(report) {
     "",
     `- claude: ${report.claude.detail}`,
     `- auth: ${report.auth.detail}`,
+    `- runtime: ${report.runtime.detail}`,
     `- default quality profile: ${report.defaults.model} / ${report.defaults.effort}`
   ];
 
@@ -43,6 +51,10 @@ export function renderSetupReport(report) {
 }
 
 export function renderReviewResult(snapshot, result, job = null) {
+  if (snapshot.reviewKind === "elite-review") {
+    return renderEliteReviewResult(snapshot, result, job);
+  }
+
   const findings = [...result.parsed.findings].sort((left, right) => severityRank(left.severity) - severityRank(right.severity));
   const lines = [
     `# Claude ${snapshot.reviewLabel}`,
@@ -82,6 +94,79 @@ export function renderReviewResult(snapshot, result, job = null) {
       }
       lines.push("");
     });
+  }
+
+  if (result.parsed.next_steps?.length) {
+    lines.push("Next steps:");
+    for (const step of result.parsed.next_steps) {
+      lines.push(`- ${step}`);
+    }
+  }
+
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function renderEliteReviewResult(snapshot, result, job = null) {
+  const findings = [...result.parsed.findings].sort((left, right) => severityRank(left.severity) - severityRank(right.severity));
+  const lines = [
+    `# Claude ${snapshot.reviewLabel}`,
+    "",
+    `Target: ${snapshot.targetLabel}`,
+    `Model: ${snapshot.model}`,
+    `Effort: ${snapshot.effort}`,
+    `Profile: ${snapshot.profile}`,
+    `Context mode: ${snapshot.contextMode}`,
+    `Verdict: ${result.parsed.verdict}`,
+    `Ship Recommendation: ${result.parsed.ship_recommendation}`
+  ];
+
+  if (job) {
+    lines.push(`Job: ${job.id}`);
+  }
+
+  if (snapshot.notes?.length) {
+    lines.push("", "Notes:");
+    for (const note of snapshot.notes) {
+      lines.push(`- ${note}`);
+    }
+  }
+
+  lines.push("", "Executive Summary:", result.parsed.executive_summary, "");
+
+  if (result.parsed.systemic_risks?.length) {
+    lines.push("Systemic Risks:");
+    for (const risk of result.parsed.systemic_risks) {
+      lines.push(`- ${risk}`);
+    }
+    lines.push("");
+  }
+
+  if (findings.length === 0) {
+    lines.push("Findings: none.");
+  } else {
+    lines.push("Findings:");
+    findings.forEach((finding, index) => {
+      lines.push(
+        `${index + 1}. [${finding.severity}] ${finding.title} (${finding.file}${formatLineRange(finding)})`
+      );
+      lines.push(`Risk Category: ${finding.risk_category}`);
+      lines.push(`Confidence: ${formatConfidence(finding.confidence)}`);
+      lines.push(`Failure Scenario: ${finding.failure_scenario}`);
+      lines.push(`Why Vulnerable: ${finding.why_vulnerable}`);
+      lines.push(`Impact: ${finding.impact}`);
+      lines.push(finding.body);
+      lines.push(`Recommendation: ${finding.recommendation}`);
+      lines.push(`Test Gap: ${finding.test_gap}`);
+      lines.push("");
+    });
+  }
+
+  if (result.parsed.blind_spots?.length) {
+    lines.push("Blind Spots:");
+    for (const blindSpot of result.parsed.blind_spots) {
+      lines.push(`- ${blindSpot}`);
+    }
+    lines.push("");
   }
 
   if (result.parsed.next_steps?.length) {

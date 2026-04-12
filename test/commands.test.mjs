@@ -22,8 +22,18 @@ test("adversarial command stays read-only", () => {
   assert.match(source, /codex-claude-review adversarial-review/);
 });
 
+test("elite command exposes the exhaustive review lane", () => {
+  const source = read("commands/elite-review.md");
+  assert.match(source, /codex-claude-review elite-review/);
+  assert.match(source, /elite adversarial review pass/i);
+  assert.match(source, /Keep this command read-only/i);
+});
+
 test("plugin manifest has the expected plugin name", () => {
   const manifest = JSON.parse(read(".codex-plugin/plugin.json"));
   assert.equal(manifest.name, "claude-review");
   assert.equal(manifest.interface.displayName, "Claude Review");
+  assert.ok(Array.isArray(manifest.interface.defaultPrompt));
+  assert.ok(manifest.interface.defaultPrompt.length > 0);
+  assert.ok(manifest.interface.defaultPrompt.length <= 3);
 });

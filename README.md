@@ -13,6 +13,8 @@ but the runtime here is deliberately reversed:
 
 - `/claude-review:review` for a normal read-only Claude review
 - `/claude-review:adversarial-review` for a harder challenge pass
+- `/claude-review:elite-review` for an exhaustive, adversarial, high-level and
+  low-level ship review
 - `/claude-review:setup` to verify local Claude CLI readiness
 - `/claude-review:status`, `/claude-review:result`, and `/claude-review:cancel`
   for background review jobs
@@ -66,6 +68,7 @@ codex-claude-review setup
 codex-claude-review review
 codex-claude-review review --base main
 codex-claude-review adversarial-review --background look for migration and rollback risk
+codex-claude-review elite-review --background focus on architecture, rollback, and hidden failure modes
 codex-claude-review status
 codex-claude-review result <job-id>
 codex-claude-review cancel <job-id>
@@ -77,6 +80,7 @@ Once loaded as a Codex plugin, the intended slash command surface is:
 
 - `/claude-review:review`
 - `/claude-review:adversarial-review`
+- `/claude-review:elite-review`
 - `/claude-review:setup`
 - `/claude-review:status`
 - `/claude-review:result`
@@ -84,6 +88,17 @@ Once loaded as a Codex plugin, the intended slash command surface is:
 
 The command docs are thin wrappers that tell Codex to invoke the local helper
 and return its stdout directly.
+
+## Runtime Hardening
+
+The helper runs Claude with `--setting-sources project,local` so user-level
+Claude plugins and hooks do not hijack or stall the review flow. `setup` also
+performs a live non-interactive structured-output probe instead of trusting
+`claude auth status` alone.
+
+`elite-review` uses a richer structured output contract that is designed to
+surface executive ship/no-ship judgment, systemic risks, adversarial findings,
+blind spots, and concrete test gaps in one pass.
 
 ## Workspace State
 

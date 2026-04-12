@@ -1,8 +1,8 @@
 ---
-description: Run a harder Claude challenge review against the current git workspace.
+description: Run an elite, high-scrutiny Claude review against the current git workspace.
 ---
 
-# /claude-review:adversarial-review
+# /claude-review:elite-review
 
 ## Preflight
 
@@ -14,18 +14,18 @@ description: Run a harder Claude challenge review against the current git worksp
 
 ## Plan
 
-Run one adversarial review pass through the helper and return the helper output
-without paraphrasing it.
+Run one elite adversarial review pass through the helper and return the helper
+output without paraphrasing it.
 
 ## Commands
 
 Use the exact argument tail the user supplied after
-`/claude-review:adversarial-review`.
+`/claude-review:elite-review`.
 
 - Preferred:
-  `codex-claude-review adversarial-review <user-arguments>`
+  `codex-claude-review elite-review <user-arguments>`
 - Fallback:
-  `node /Users/kenmege/codex-plugin-cc/scripts/claude-review-companion.mjs adversarial-review <user-arguments>`
+  `node /Users/kenmege/codex-plugin-cc/scripts/claude-review-companion.mjs elite-review <user-arguments>`
 
 Keep this command read-only.
 
@@ -40,5 +40,4 @@ Return the helper stdout verbatim.
 ## Next Steps
 
 If the user wants a persistent record, suggest `--background` plus
-`/claude-review:status`. If they want the most exhaustive lane, suggest
-`/claude-review:elite-review`.
+`/claude-review:status`.
