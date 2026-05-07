@@ -7,8 +7,8 @@ description: Show the stored final output for a finished Claude review job.
 ## Preflight
 
 1. Prefer the helper binary `codex-claude-review` if it is available on PATH.
-2. If it is not available, fall back to:
-   `node /Users/kenmege/codex-plugin-cc/scripts/claude-review-companion.mjs`
+2. If it is not available, tell the user to install the helper from the plugin
+   repository root with `npm install -g .`.
 
 ## Plan
 
@@ -20,8 +20,6 @@ Use the exact argument tail the user supplied after `/claude-review:result`.
 
 - Preferred:
   `codex-claude-review result <user-arguments>`
-- Fallback:
-  `node /Users/kenmege/codex-plugin-cc/scripts/claude-review-companion.mjs result <user-arguments>`
 
 ## Verification
 

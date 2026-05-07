@@ -1,5 +1,5 @@
 ---
-description: Run a normal Claude review against the current git workspace.
+description: Run an agentic Claude review (Opus 4.7 by default) against the current git workspace.
 ---
 
 # /claude-review:review
@@ -7,14 +7,19 @@ description: Run a normal Claude review against the current git workspace.
 ## Preflight
 
 1. Prefer the helper binary `codex-claude-review` if it is available on PATH.
-2. If it is not available, fall back to:
-   `node /Users/kenmege/codex-plugin-cc/scripts/claude-review-companion.mjs`
-3. If neither is available, tell the user to install the helper with:
-   `npm install -g /Users/kenmege/codex-plugin-cc`
+2. If it is not available, tell the user to install the helper from the plugin
+   repository root with `npm install -g .`.
 
 ## Plan
 
-Run the helper once, keep the review read-only, and return its stdout directly.
+Runs an agentic Claude pass over the current diff. Claude has read-only access
+to Read, Glob, Grep, Task (sub-agents), WebFetch, WebSearch, and Bash limited
+to the git-safe wrapper plus node/npm verification commands. Edits, writes,
+and shell mutations are blocked.
+
+Default model is `claude-opus-4-7` at `high` effort. The helper auto-switches
+to the long-context Sonnet 4.6 profile when the diff exceeds the Opus inline
+envelope.
 
 ## Commands
 
@@ -22,10 +27,17 @@ Use the exact argument tail the user supplied after `/claude-review:review`.
 
 - Preferred:
   `codex-claude-review review <user-arguments>`
-- Fallback:
-  `node /Users/kenmege/codex-plugin-cc/scripts/claude-review-companion.mjs review <user-arguments>`
 
-Do not make edits or apply fixes from this command.
+Useful flags:
+
+- `--legacy` — disable agentic mode (structured output only, no tool access).
+- `--model <name>` / `--effort <level>` — override profile.
+- `--mcp-config <file-or-json>` — attach MCP servers (repeatable).
+- `--max-budget-usd <n>` — cap review spend.
+- `--add-dir <path>` — grant tool access to extra directories.
+- `--quiet` / `--debug` — adjust rendered detail and job-log diagnostics.
+
+Do not make edits or apply fixes from this command. The agent is read-only.
 
 ## Verification
 
@@ -37,5 +49,6 @@ Return the helper stdout verbatim.
 
 ## Next Steps
 
-If the user wants a harsher pass, suggest `/claude-review:adversarial-review`
-or `/claude-review:elite-review`.
+If the user wants a harsher pass, suggest `/claude-review:adversarial-review`,
+`/claude-review:elite-review`, `/claude-review:deep-review`, or
+`/claude-review:security-review`.

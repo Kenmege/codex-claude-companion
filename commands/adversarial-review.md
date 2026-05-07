@@ -7,15 +7,15 @@ description: Run a harder Claude challenge review against the current git worksp
 ## Preflight
 
 1. Prefer the helper binary `codex-claude-review` if it is available on PATH.
-2. If it is not available, fall back to:
-   `node /Users/kenmege/codex-plugin-cc/scripts/claude-review-companion.mjs`
-3. If neither is available, tell the user to install the helper with:
-   `npm install -g /Users/kenmege/codex-plugin-cc`
+2. If it is not available, tell the user to install the helper from the plugin
+   repository root with `npm install -g .`.
 
 ## Plan
 
-Run one adversarial review pass through the helper and return the helper output
-without paraphrasing it.
+Runs an agentic adversarial review pass. Claude (Opus 4.7 default, high
+effort) gets read-only Read/Glob/Grep/Bash/Task/WebFetch/WebSearch tools so it
+can verify call sites, downstream consumers, and test gaps before challenging
+the design. Returns the helper output without paraphrasing it.
 
 ## Commands
 
@@ -24,10 +24,14 @@ Use the exact argument tail the user supplied after
 
 - Preferred:
   `codex-claude-review adversarial-review <user-arguments>`
-- Fallback:
-  `node /Users/kenmege/codex-plugin-cc/scripts/claude-review-companion.mjs adversarial-review <user-arguments>`
 
-Keep this command read-only.
+Useful flags:
+
+- `--legacy` to disable agentic mode (structured-output only).
+- `--mcp-config`, `--max-budget-usd`, `--add-dir`, `--system-prompt-extra` for
+  workspace-specific control.
+
+Keep this command read-only. The agent is restricted to read-only tools.
 
 ## Verification
 

@@ -53,3 +53,21 @@ test("git helpers ignore internal .claude-review artifacts", () => {
   assert.deepEqual(context.changedFiles, ["index.js"]);
   assert.doesNotMatch(context.fullContent, /\.claude-review\/jobs\/review\.job\.json/);
 });
+
+test("chooseContextMode honors inline and long-context boundaries", () => {
+  const context = {
+    fullContent: "x".repeat(10),
+    summaryContent: "summary"
+  };
+
+  assert.equal(chooseContextMode(context, { inlineLimit: 10 }).mode, "full");
+  assert.equal(chooseContextMode(context, { inlineLimit: 9 }).mode, "summarized");
+  assert.equal(
+    chooseContextMode(context, { inlineLimit: 9, longContext: true, longContextLimit: 10 }).mode,
+    "full"
+  );
+  assert.equal(
+    chooseContextMode(context, { inlineLimit: 9, longContext: true, longContextLimit: 9 }).mode,
+    "summarized"
+  );
+});

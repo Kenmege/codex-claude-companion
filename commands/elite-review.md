@@ -7,15 +7,19 @@ description: Run an elite, high-scrutiny Claude review against the current git w
 ## Preflight
 
 1. Prefer the helper binary `codex-claude-review` if it is available on PATH.
-2. If it is not available, fall back to:
-   `node /Users/kenmege/codex-plugin-cc/scripts/claude-review-companion.mjs`
-3. If neither is available, tell the user to install the helper with:
-   `npm install -g /Users/kenmege/codex-plugin-cc`
+2. If it is not available, tell the user to install the helper from the plugin
+   repository root with `npm install -g .`.
 
 ## Plan
 
-Run one elite adversarial review pass through the helper and return the helper
-output without paraphrasing it.
+Runs the elite adversarial review pass. Agentic by default: Claude (Opus 4.7,
+high effort) explores the workspace with Read/Glob/Grep/Task/WebFetch/
+WebSearch and Bash limited to the git-safe wrapper plus node/npm verification
+commands. It emits an evidence-backed structured report (verdict, ship
+recommendation, systemic risks, evidence-cited findings, verified claims,
+blind spots, exploration log).
+
+Returns the helper output without paraphrasing it.
 
 ## Commands
 
@@ -24,10 +28,17 @@ Use the exact argument tail the user supplied after
 
 - Preferred:
   `codex-claude-review elite-review <user-arguments>`
-- Fallback:
-  `node /Users/kenmege/codex-plugin-cc/scripts/claude-review-companion.mjs elite-review <user-arguments>`
 
-Keep this command read-only.
+Useful flags:
+
+- `--legacy` for the older structured-output-only mode.
+- `--mcp-config <file-or-json>` (repeatable) to attach MCP servers.
+- `--max-budget-usd <n>` to cap spend.
+- `--system-prompt-extra <text>` to inject workspace-specific reviewer
+  guidance.
+- `--quiet` / `--debug` to adjust rendered detail and job-log diagnostics.
+
+Keep this command read-only. Tools are constrained to read-only operations.
 
 ## Verification
 
@@ -40,4 +51,6 @@ Return the helper stdout verbatim.
 ## Next Steps
 
 If the user wants a persistent record, suggest `--background` plus
-`/claude-review:status`.
+`/claude-review:status`. For the most exhaustive multi-agent pass, suggest
+`/claude-review:deep-review`. For a security-focused pass, suggest
+`/claude-review:security-review`.

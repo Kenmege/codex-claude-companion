@@ -2,27 +2,35 @@
 
 import path from "node:path";
 import process from "node:process";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
 import {
+  ALLOWED_PERMISSION_MODES,
   AUTO_LONG_CONTEXT_BYTES,
+  DEEP_REVIEW_EFFORT,
+  DEFAULT_AGENTIC_BUDGET_USD,
+  DEFAULT_DEEP_REVIEW_BUDGET_USD,
   DEFAULT_EFFORT,
   DEFAULT_MODEL,
+  assertAllowedPermissionMode,
   getClaudeAuthStatus,
   getClaudeAvailability,
+  isSubscriptionAuth,
   probeClaudeStructuredOutput,
   runClaudeStructuredReview,
-  selectClaudeProfile
+  selectClaudeProfile,
+  validateStructuredReviewOutput
 } from "./lib/claude.mjs";
 import { chooseContextMode, collectReviewContext, resolveReviewTarget } from "./lib/git.mjs";
 import { spawnDetached, terminateProcessTree } from "./lib/process.mjs";
 import {
   appendLogLine,
   buildJobRecord,
+  createJob,
   generateJobId,
   listJobs,
-  readJob,
   readJobInput,
   readLogTail,
   updateJob,
@@ -36,27 +44,93 @@ const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const ROOT_DIR = path.resolve(path.dirname(SCRIPT_PATH), "..");
 const SCHEMA_PATH = path.join(ROOT_DIR, "schemas", "review-output.schema.json");
 const ELITE_SCHEMA_PATH = path.join(ROOT_DIR, "schemas", "elite-review-output.schema.json");
+const AGENTIC_SCHEMA_PATH = path.join(ROOT_DIR, "schemas", "agentic-review-output.schema.json");
+const ADD_DIR_BOUNDARY_ENV = "CODEX_CLAUDE_ADD_DIR_BOUNDARY";
+const MAX_MCP_CONFIG_BYTES = 1024 * 1024;
 
 const REVIEW_KIND_CONFIG = {
   review: {
     reviewLabel: "Review",
     title: "Claude review",
     schemaPath: SCHEMA_PATH,
-    jobPrefix: "review"
+    jobPrefix: "review",
+    defaultAgentic: true,
+    defaultEffort: DEFAULT_EFFORT,
+    defaultTimeoutMs: 30 * 60 * 1000,
+    richSchemaWhenAgentic: false
   },
   "adversarial-review": {
     reviewLabel: "Adversarial Review",
     title: "Claude adversarial review",
     schemaPath: SCHEMA_PATH,
-    jobPrefix: "adversarial"
+    jobPrefix: "adversarial",
+    defaultAgentic: true,
+    defaultEffort: DEFAULT_EFFORT,
+    defaultTimeoutMs: 30 * 60 * 1000,
+    richSchemaWhenAgentic: false
   },
   "elite-review": {
     reviewLabel: "Elite Review",
     title: "Claude elite review",
     schemaPath: ELITE_SCHEMA_PATH,
-    jobPrefix: "elite"
+    agenticSchemaPath: AGENTIC_SCHEMA_PATH,
+    jobPrefix: "elite",
+    defaultAgentic: true,
+    defaultEffort: DEFAULT_EFFORT,
+    defaultTimeoutMs: 30 * 60 * 1000,
+    richSchemaWhenAgentic: true
+  },
+  "deep-review": {
+    reviewLabel: "Deep Review",
+    title: "Claude deep review",
+    schemaPath: AGENTIC_SCHEMA_PATH,
+    agenticSchemaPath: AGENTIC_SCHEMA_PATH,
+    jobPrefix: "deep",
+    defaultAgentic: true,
+    defaultEffort: DEEP_REVIEW_EFFORT,
+    defaultTimeoutMs: 30 * 60 * 1000,
+    richSchemaWhenAgentic: true,
+    defaultBudgetUsd: DEFAULT_DEEP_REVIEW_BUDGET_USD
+  },
+  "security-review": {
+    reviewLabel: "Security Review",
+    title: "Claude security review",
+    schemaPath: AGENTIC_SCHEMA_PATH,
+    agenticSchemaPath: AGENTIC_SCHEMA_PATH,
+    jobPrefix: "security",
+    defaultAgentic: true,
+    defaultEffort: DEFAULT_EFFORT,
+    defaultTimeoutMs: 30 * 60 * 1000,
+    richSchemaWhenAgentic: true
   }
 };
+
+const REVIEW_LIKE_BOOLEAN_OPTIONS = [
+  "background",
+  "long-context",
+  "agentic",
+  "legacy",
+  "strict-mcp",
+  "inherit-mcp",
+  "unrestricted",
+  "quiet",
+  "debug"
+];
+const REVIEW_LIKE_VALUE_OPTIONS = [
+  "base",
+  "scope",
+  "model",
+  "effort",
+  "profile",
+  "cwd",
+  "mcp-config",
+  "max-budget-usd",
+  "add-dir",
+  "system-prompt-extra",
+  "permission-mode",
+  "timeout-ms",
+  "web-domain"
+];
 
 function parseCommandInput(argv, config = {}) {
   if (argv.length === 1 && argv[0]?.includes(" ")) {
@@ -70,12 +144,39 @@ function printUsage() {
     [
       "Usage:",
       "  codex-claude-review setup",
-      "  codex-claude-review review [--background] [--base <ref>] [--scope auto|working-tree|branch] [--model <name>] [--effort <low|medium|high|max>] [--profile quality|long-context] [--long-context]",
-      "  codex-claude-review adversarial-review [same flags] [focus text]",
-      "  codex-claude-review elite-review [same flags] [focus text]",
+      "  codex-claude-review review [flags] [focus text]",
+      "  codex-claude-review adversarial-review [flags] [focus text]",
+      "  codex-claude-review elite-review [flags] [focus text]",
+      "  codex-claude-review deep-review [flags] [focus text]",
+      "  codex-claude-review security-review [flags] [focus text]",
       "  codex-claude-review status [job-id]",
       "  codex-claude-review result <job-id>",
-      "  codex-claude-review cancel <job-id>"
+      "  codex-claude-review cancel <job-id>",
+      "",
+      "Flags (review-like commands):",
+      "  --background                run as a detached job",
+      "  --base <ref>                base ref for branch diff",
+      "  --scope auto|working-tree|branch",
+      "  --model <name>              override model (default: claude-opus-4-7)",
+      "  --effort low|medium|high|xhigh|max",
+      "  --profile quality|long-context",
+      "  --long-context              opt into the Sonnet 1M long-context profile",
+      "  --legacy                    disable agentic mode (structured output only)",
+      "  --agentic                   force agentic mode on (default: on)",
+      "  --unrestricted              raw shell access (LOUDLY logged; trust boundary off)",
+      "  --mcp-config <file-or-json> repeatable MCP config",
+      "  --inherit-mcp               also inherit project/local MCPs (default: off, strict-mcp on)",
+      "  --max-budget-usd <n>        cap review spend (api-key auth only; suppressed under subscription)",
+      "  --add-dir <path>            additional dir for tool access (repeatable)",
+      "  --web-domain <pattern>      additional WebFetch allowlist entry (repeatable)",
+      "  --system-prompt-extra <s>   append workspace-specific reviewer guidance",
+      "  --quiet                     suppress non-essential rendered detail",
+      "  --debug                     include extra diagnostic log lines",
+      `  --permission-mode <mode>    one of: ${ALLOWED_PERMISSION_MODES.join(", ")}`,
+      "  --timeout-ms <n>            override review timeout (lane default: 30 minutes)",
+      "",
+      "Flags (setup):",
+      "  --json                      emit machine-parseable setup status"
     ].join("\n")
   );
 }
@@ -84,6 +185,14 @@ function buildSetupPayload(cwd) {
   const claude = getClaudeAvailability(cwd);
   const auth = claude.available ? getClaudeAuthStatus(cwd) : { loggedIn: false, detail: "claude unavailable" };
   const runtime = claude.available && auth.loggedIn ? probeClaudeStructuredOutput(cwd) : { ready: false, detail: "runtime probe skipped" };
+  const subscription = auth.loggedIn ? isSubscriptionAuth(auth) : false;
+  const authReport = {
+    loggedIn: Boolean(auth.loggedIn),
+    detail: auth.detail,
+    authMethod: auth.raw?.authMethod ?? null,
+    apiProvider: auth.raw?.apiProvider ?? null,
+    subscriptionType: auth.raw?.subscriptionType ?? null
+  };
   const nextSteps = [];
   if (!claude.available) {
     nextSteps.push("Install Claude Code CLI and ensure `claude` is on PATH.");
@@ -98,8 +207,9 @@ function buildSetupPayload(cwd) {
   return {
     ready: claude.available && auth.loggedIn && runtime.ready,
     claude,
-    auth,
+    auth: authReport,
     runtime,
+    subscription,
     defaults: {
       model: DEFAULT_MODEL,
       effort: DEFAULT_EFFORT,
@@ -109,23 +219,243 @@ function buildSetupPayload(cwd) {
   };
 }
 
+function coerceMultiValue(value) {
+  if (value == null) return [];
+  if (Array.isArray(value)) return value;
+  return [value];
+}
+
+function hasParentTraversalSegment(value) {
+  return String(value)
+    .split(/[\\/]+/)
+    .some((segment) => segment === "..");
+}
+
+function isPathInsideBoundary(realPath, boundary) {
+  const relative = path.relative(boundary, realPath);
+  return relative === "" || (relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function resolveAddDirBoundary(cwd) {
+  const rawBoundary = process.env[ADD_DIR_BOUNDARY_ENV];
+  const boundary = rawBoundary
+    ? path.resolve(cwd, rawBoundary)
+    : path.dirname(resolveWorkspaceRoot(cwd));
+  return fs.realpathSync(boundary);
+}
+
+function validateAddDir(cwd, value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    throw new Error("--add-dir requires a non-empty path");
+  }
+  if (raw.includes("\0")) {
+    throw new Error(`Invalid --add-dir path: ${raw}`);
+  }
+  const resolved = path.resolve(cwd, raw);
+  let stat;
+  let real;
+  try {
+    stat = fs.statSync(resolved);
+    fs.accessSync(resolved, fs.constants.R_OK);
+    real = fs.realpathSync(resolved);
+  } catch (error) {
+    throw new Error(`Invalid --add-dir path: ${raw} (${error.code ?? error.message})`);
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`Invalid --add-dir path: ${raw} is not a directory`);
+  }
+  const root = path.parse(real).root;
+  if (real === root) {
+    throw new Error("Invalid --add-dir path: refusing to grant filesystem root");
+  }
+  const boundary = resolveAddDirBoundary(cwd);
+  if (!isPathInsideBoundary(real, boundary)) {
+    throw new Error(`Invalid --add-dir path: ${raw} resolves outside allowed boundary ${boundary}`);
+  }
+  return real;
+}
+
+function validateAddDirs(cwd, values) {
+  return coerceMultiValue(values).map((value) => validateAddDir(cwd, value));
+}
+
+function parseMcpConfigJson(source, label) {
+  let parsed;
+  try {
+    parsed = JSON.parse(source);
+  } catch (error) {
+    throw new Error(`Invalid --mcp-config ${label}: JSON parse failed (${error.message})`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Invalid --mcp-config ${label}: expected a JSON object`);
+  }
+  const serverContainer = parsed.mcpServers ?? parsed.servers;
+  if (serverContainer != null && (typeof serverContainer !== "object" || Array.isArray(serverContainer))) {
+    throw new Error(`Invalid --mcp-config ${label}: mcpServers/servers must be an object`);
+  }
+  if (serverContainer == null && !Object.values(parsed).some((value) => value && typeof value === "object" && !Array.isArray(value))) {
+    throw new Error(`Invalid --mcp-config ${label}: no server definitions found`);
+  }
+  return parsed;
+}
+
+function validateMcpConfig(cwd, value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    throw new Error("--mcp-config requires a non-empty file path or JSON object");
+  }
+  if (raw.startsWith("{")) {
+    parseMcpConfigJson(raw, "inline JSON");
+    return raw;
+  }
+  if (raw.includes("\0") || hasParentTraversalSegment(raw)) {
+    throw new Error(`Invalid --mcp-config path: ${raw}`);
+  }
+  const resolved = path.resolve(cwd, raw);
+  const stat = fs.statSync(resolved);
+  if (!stat.isFile()) {
+    throw new Error(`Invalid --mcp-config path: ${raw} is not a file`);
+  }
+  if (stat.size > MAX_MCP_CONFIG_BYTES) {
+    throw new Error(`Invalid --mcp-config path: ${raw} exceeds ${MAX_MCP_CONFIG_BYTES} bytes`);
+  }
+  parseMcpConfigJson(fs.readFileSync(resolved, "utf8"), raw);
+  return resolved;
+}
+
+function validateMcpConfigs(cwd, values) {
+  return coerceMultiValue(values).map((value) => validateMcpConfig(cwd, value));
+}
+
+function resolveAgenticPreference(reviewConfig, options) {
+  if (options.legacy) return false;
+  if (typeof options.agentic === "boolean") return options.agentic;
+  return reviewConfig.defaultAgentic ?? true;
+}
+
+function resolveSchemaPath(reviewConfig, agentic) {
+  if (agentic && reviewConfig.richSchemaWhenAgentic && reviewConfig.agenticSchemaPath) {
+    return reviewConfig.agenticSchemaPath;
+  }
+  return reviewConfig.schemaPath;
+}
+
+function resolveBudget(reviewConfig, options, agentic) {
+  if (options["max-budget-usd"] != null) {
+    const parsed = Number.parseFloat(options["max-budget-usd"]);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  if (!agentic) return null;
+  if (reviewConfig.defaultBudgetUsd) return reviewConfig.defaultBudgetUsd;
+  return DEFAULT_AGENTIC_BUDGET_USD;
+}
+
+function resolveTimeout(options, reviewConfig) {
+  if (options["timeout-ms"] != null) {
+    const parsed = Number.parseInt(options["timeout-ms"], 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return reviewConfig.defaultTimeoutMs ?? null;
+}
+
+function resolvePermissionMode(options) {
+  if (options["permission-mode"] == null) return "default";
+  const value = String(options["permission-mode"]);
+  assertAllowedPermissionMode(value);
+  return value;
+}
+
+function resolveStrictMcp(options) {
+  if (options["inherit-mcp"] === true) return false;
+  if (options["strict-mcp"] === false) return false;
+  return true;
+}
+
+function reviewHasShipBlockers(parsed) {
+  const verdict = String(parsed?.verdict ?? "").toLowerCase();
+  const shipRecommendation = String(parsed?.ship_recommendation ?? "").toLowerCase();
+  const findings = Array.isArray(parsed?.findings) ? parsed.findings : [];
+  return (
+    verdict.includes("request") ||
+    verdict.includes("changes") ||
+    shipRecommendation.includes("no_ship") ||
+    shipRecommendation.includes("no ship") ||
+    findings.some((finding) => ["critical", "high"].includes(String(finding.severity ?? "").toLowerCase()))
+  );
+}
+
+function isProcessAlive(pid) {
+  if (!pid) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+function isUsageOrValidationError(error) {
+  return /^(Invalid --|--.+ requires|run-job requires|result requires|cancel requires|Expected|Missing)/.test(error.message);
+}
+
 function prepareSnapshot(cwd, kind, options, focusText) {
   const reviewConfig = REVIEW_KIND_CONFIG[kind];
+  const agentic = resolveAgenticPreference(reviewConfig, options);
+  const unrestricted = Boolean(options.unrestricted);
   const target = resolveReviewTarget(cwd, options);
   const reviewContext = collectReviewContext(cwd, target);
   const wantsLongContext = options.profile === "long-context" || Boolean(options["long-context"]);
   const contextSelection = chooseContextMode(reviewContext, { longContext: wantsLongContext });
   const selectedProfile = selectClaudeProfile({
     model: options.model,
-    effort: options.effort,
+    effort: options.effort ?? reviewConfig.defaultEffort,
     longContext: wantsLongContext || contextSelection.bytes > AUTO_LONG_CONTEXT_BYTES,
     inputBytes: contextSelection.bytes
   });
 
+  const authStatus = getClaudeAuthStatus(cwd);
+  const subscriptionAuth = isSubscriptionAuth(authStatus);
+
   const notes = [...selectedProfile.notes];
   if (contextSelection.mode === "summarized" && selectedProfile.profile === "quality") {
-    notes.push("The review snapshot was summarized to stay inside the reliable Opus inline context envelope.");
+    if (agentic) {
+      notes.push("The diff snapshot was summarized to fit the inline envelope; the agentic loop will fetch full file content via Read/Grep tools.");
+    } else {
+      notes.push("The review snapshot was summarized to stay inside the reliable Opus inline context envelope.");
+    }
   }
+  if (agentic && !unrestricted) {
+    notes.push("Running in agentic SAFE mode with read-only native tools (Read/Glob/Grep/Task/WebSearch), a fenced git wrapper, and a curated WebFetch domain allowlist.");
+  } else if (agentic && unrestricted) {
+    notes.push("WARNING: --unrestricted set. Trust boundary disabled. Claude has full default tool catalog including raw Bash. Do not use against untrusted diffs.");
+  } else {
+    notes.push("Running in legacy structured-output mode (no tool access).");
+  }
+
+  const schemaPath = resolveSchemaPath(reviewConfig, agentic);
+  const budget = resolveBudget(reviewConfig, options, agentic);
+  if (agentic && budget) {
+    if (subscriptionAuth) {
+      notes.push(`Budget cap of $${budget.toFixed(2)} requested but suppressed: --max-budget-usd is enforced by Claude only on api-key auth. Subscription auth detected. Use --timeout-ms for a wall-clock cap instead.`);
+    } else {
+      notes.push(`Budget cap: $${budget.toFixed(2)} via --max-budget-usd.`);
+    }
+  }
+  if (agentic && selectedProfile.betas?.length && subscriptionAuth) {
+    notes.push("Long-context Sonnet beta header was requested but Claude only honors --betas on api-key auth; suppressed under subscription. The Sonnet model still runs but without the 1M context beta.");
+  }
+  const strictMcp = resolveStrictMcp(options);
+  if (strictMcp) {
+    notes.push("MCP scope: strict (only --mcp-config entries; project/local MCPs not inherited).");
+  } else {
+    notes.push("MCP scope: inheriting project and local MCPs in addition to --mcp-config.");
+  }
+  const timeoutMs = resolveTimeout(options, reviewConfig);
+  const permissionMode = resolvePermissionMode(options);
+  const webDomains = coerceMultiValue(options["web-domain"]);
 
   return {
     reviewKind: kind,
@@ -143,7 +473,21 @@ function prepareSnapshot(cwd, kind, options, focusText) {
     profile: selectedProfile.profile,
     betas: selectedProfile.betas,
     notes,
-    schemaPath: reviewConfig.schemaPath
+    schemaPath,
+    agentic,
+    unrestricted,
+    permissionMode,
+    mcpConfigs: validateMcpConfigs(cwd, options["mcp-config"]),
+    strictMcpConfig: strictMcp,
+    addDirs: validateAddDirs(cwd, options["add-dir"]),
+    maxBudgetUsd: budget,
+    systemPromptExtra: options["system-prompt-extra"] ?? null,
+    timeoutMs,
+    quiet: Boolean(options.quiet),
+    debug: Boolean(options.debug),
+    webDomains,
+    authStatus,
+    subscriptionAuth
   };
 }
 
@@ -157,34 +501,66 @@ function buildBackgroundJob(cwd, kind, snapshot) {
     summary: snapshot.summary,
     model: snapshot.model,
     effort: snapshot.effort,
-    profile: snapshot.profile
+    profile: snapshot.profile,
+    agentic: snapshot.agentic,
+    unrestricted: snapshot.unrestricted
   });
-  writeJob(cwd, jobId, job);
+  createJob(cwd, jobId, job);
   writeJobInput(cwd, jobId, snapshot);
   const pid = spawnDetached(process.execPath, [SCRIPT_PATH, "run-job", jobId, "--cwd", cwd], { cwd });
   writeJob(cwd, jobId, { ...job, pid, status: "running", updatedAt: new Date().toISOString() });
   return { ...job, pid, status: "running" };
 }
 
-function runSnapshot(cwd, jobId, snapshot) {
-  appendLogLine(cwd, jobId, `Starting ${snapshot.reviewKind} with ${snapshot.model}/${snapshot.effort}`);
+async function runSnapshot(cwd, jobId, snapshot) {
+  appendLogLine(
+    cwd,
+    jobId,
+    `Starting ${snapshot.reviewKind} (${snapshot.unrestricted ? "UNRESTRICTED" : snapshot.agentic ? "agentic-safe" : "structured"}) with ${snapshot.model}/${snapshot.effort}`
+  );
   appendLogLine(cwd, jobId, `Context mode: ${snapshot.contextMode} (${snapshot.inputBytes} bytes)`);
-  const result = runClaudeStructuredReview(cwd, snapshot, snapshot.reviewKind, snapshot.schemaPath);
-  appendLogLine(cwd, jobId, `Claude returned ${result.parsed.findings.length} finding(s)`);
+  if (snapshot.debug) {
+    appendLogLine(cwd, jobId, `Changed files: ${snapshot.changedFiles.join(", ") || "(none)"}`, "debug");
+    appendLogLine(cwd, jobId, `MCP scope: ${snapshot.strictMcpConfig ? "strict" : "inherited"}; add-dir count: ${snapshot.addDirs.length}`, "debug");
+  }
+  if (snapshot.maxBudgetUsd && !snapshot.subscriptionAuth) {
+    appendLogLine(cwd, jobId, `Budget cap: $${snapshot.maxBudgetUsd.toFixed(2)}`);
+  } else if (snapshot.maxBudgetUsd && snapshot.subscriptionAuth) {
+    appendLogLine(cwd, jobId, `Budget cap requested ($${snapshot.maxBudgetUsd.toFixed(2)}) but suppressed under subscription auth`);
+  }
+  const result = await runClaudeStructuredReview(cwd, snapshot, snapshot.reviewKind, snapshot.schemaPath);
+  appendLogLine(
+    cwd,
+    jobId,
+    `Claude returned ${result.parsed.findings?.length ?? 0} finding(s) using ${result.activity?.toolUseCount ?? 0} tool call(s)`
+  );
+  if (result.activity?.parseErrors > 0) {
+    appendLogLine(
+      cwd,
+      jobId,
+      `WARNING: stream parser saw ${result.activity.parseErrors} malformed JSON line(s); structured output recovered but some events may have been dropped`,
+      "warn"
+    );
+  }
   return result;
 }
 
 function handleSetup(argv) {
-  const { options } = parseCommandInput(argv, { valueOptions: ["cwd"] });
+  const { options } = parseCommandInput(argv, { booleanOptions: ["json"], valueOptions: ["cwd"] });
   const cwd = path.resolve(options.cwd ?? process.cwd());
-  process.stdout.write(renderSetupReport(buildSetupPayload(cwd)));
+  const payload = buildSetupPayload(cwd);
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(renderSetupReport(payload));
 }
 
-function handleReviewLike(kind, argv) {
+async function handleReviewLike(kind, argv) {
   const reviewConfig = REVIEW_KIND_CONFIG[kind];
   const { options, positionals } = parseCommandInput(argv, {
-    booleanOptions: ["background", "long-context"],
-    valueOptions: ["base", "scope", "model", "effort", "profile", "cwd"]
+    booleanOptions: REVIEW_LIKE_BOOLEAN_OPTIONS,
+    valueOptions: REVIEW_LIKE_VALUE_OPTIONS
   });
   const cwd = path.resolve(options.cwd ?? process.cwd());
   const focusText = kind === "review" ? "" : positionals.join(" ").trim();
@@ -193,7 +569,7 @@ function handleReviewLike(kind, argv) {
   if (options.background) {
     const job = buildBackgroundJob(cwd, kind, snapshot);
     process.stdout.write(
-      `# Claude Review Started\n\nJob: ${job.id}\nStatus: running\nModel: ${snapshot.model}\nUse \`codex-claude-review status ${job.id}\` to check progress.\n`
+      `# Claude Review Started\n\nJob: ${job.id}\nStatus: running\nMode: ${snapshot.unrestricted ? "UNRESTRICTED" : snapshot.agentic ? "agentic-safe" : "structured"}\nModel: ${snapshot.model}\nUse \`codex-claude-review status ${job.id}\` to check progress.\n`
     );
     return;
   }
@@ -206,21 +582,28 @@ function handleReviewLike(kind, argv) {
     model: snapshot.model,
     effort: snapshot.effort,
     profile: snapshot.profile,
+    agentic: snapshot.agentic,
+    unrestricted: snapshot.unrestricted,
     status: "running"
   });
-  writeJob(cwd, jobId, job);
+  createJob(cwd, jobId, job);
   writeJobInput(cwd, jobId, snapshot);
   try {
-    const result = runSnapshot(cwd, jobId, snapshot);
+    const result = await runSnapshot(cwd, jobId, snapshot);
     updateJob(cwd, jobId, {
       status: "completed",
       completedAt: new Date().toISOString(),
-      result: result.parsed
+      result: result.parsed,
+      activity: result.activity,
+      invocationMeta: result.invocationMeta
     });
     process.stdout.write(renderReviewResult(snapshot, result, { id: jobId }));
+    if (reviewHasShipBlockers(result.parsed)) {
+      process.exitCode = 3;
+    }
   } catch (error) {
     updateJob(cwd, jobId, {
-      status: "failed",
+      status: error.code === "EINTERRUPTED" ? "cancelled" : "failed",
       completedAt: new Date().toISOString(),
       error: error.message
     });
@@ -228,7 +611,7 @@ function handleReviewLike(kind, argv) {
   }
 }
 
-function handleRunJob(argv) {
+async function handleRunJob(argv) {
   const { options, positionals } = parseCommandInput(argv, { valueOptions: ["cwd"] });
   const jobId = positionals[0];
   if (!jobId) {
@@ -238,16 +621,18 @@ function handleRunJob(argv) {
   const snapshot = readJobInput(cwd, jobId);
   updateJob(cwd, jobId, { status: "running" });
   try {
-    const result = runSnapshot(cwd, jobId, snapshot);
+    const result = await runSnapshot(cwd, jobId, snapshot);
     updateJob(cwd, jobId, {
       status: "completed",
       completedAt: new Date().toISOString(),
-      result: result.parsed
+      result: result.parsed,
+      activity: result.activity,
+      invocationMeta: result.invocationMeta
     });
   } catch (error) {
     appendLogLine(cwd, jobId, `Failed: ${error.message}`);
     updateJob(cwd, jobId, {
-      status: "failed",
+      status: error.code === "EINTERRUPTED" ? "cancelled" : "failed",
       completedAt: new Date().toISOString(),
       error: error.message
     });
@@ -258,11 +643,38 @@ function handleStatus(argv) {
   const { options, positionals } = parseCommandInput(argv, { valueOptions: ["cwd"] });
   const cwd = path.resolve(options.cwd ?? process.cwd());
   const workspaceRoot = resolveWorkspaceRoot(cwd);
-  let jobs = listJobs(cwd).map((job) => ({ ...job, logTail: readLogTail(cwd, job.id) }));
-  if (positionals[0]) {
-    jobs = jobs.filter((job) => job.id.startsWith(positionals[0]));
+  const allJobs = listJobs(cwd).map((job) => markStaleJob(cwd, job)).map((job) => ({ ...job, logTail: readLogTail(cwd, job.id) }));
+  const filteredJobs = positionals[0]
+    ? allJobs.filter((job) => job.id.startsWith(positionals[0]))
+    : allJobs;
+  process.stdout.write(renderStatusReport(filteredJobs, workspaceRoot));
+}
+
+function jobTimeoutMs(cwd, job) {
+  try {
+    const snapshot = readJobInput(cwd, job.id);
+    return snapshot.timeoutMs ?? 30 * 60 * 1000;
+  } catch {
+    return 30 * 60 * 1000;
   }
-  process.stdout.write(renderStatusReport(jobs, workspaceRoot));
+}
+
+function markStaleJob(cwd, job) {
+  if (job.status !== "running") {
+    return job;
+  }
+  const updatedAt = Date.parse(job.updatedAt ?? job.createdAt ?? "");
+  if (!Number.isFinite(updatedAt)) {
+    return job;
+  }
+  const timeoutMs = jobTimeoutMs(cwd, job);
+  if (Date.now() - updatedAt <= timeoutMs) {
+    return job;
+  }
+  return updateJob(cwd, job.id, {
+    status: "stalled",
+    error: `running job exceeded timeout window of ${timeoutMs}ms`
+  });
 }
 
 function handleResult(argv) {
@@ -281,7 +693,21 @@ function handleResult(argv) {
     throw new Error(`Job ${job.id} is ${job.status}`);
   }
   const snapshot = readJobInput(cwd, job.id);
-  process.stdout.write(renderReviewResult(snapshot, { parsed: job.result }, job));
+  try {
+    validateStructuredReviewOutput(job.result, snapshot.reviewKind);
+  } catch (error) {
+    throw new Error(`Persisted result is invalid for ${job.id}: ${error.message}`);
+  }
+  process.stdout.write(
+    renderReviewResult(
+      snapshot,
+      { parsed: job.result, activity: job.activity, invocationMeta: job.invocationMeta },
+      job
+    )
+  );
+  if (reviewHasShipBlockers(job.result)) {
+    process.exitCode = 3;
+  }
 }
 
 function handleCancel(argv) {
@@ -296,15 +722,23 @@ function handleCancel(argv) {
   if (!job) {
     throw new Error(`Unknown job ${jobId}`);
   }
+  if (!isProcessAlive(job.pid)) {
+    const stalledJob = updateJob(cwd, job.id, {
+      status: "stalled",
+      error: "process is not running"
+    });
+    process.stdout.write(renderCancelReport(stalledJob, false));
+    return;
+  }
   const cancelled = terminateProcessTree(job.pid);
-  updateJob(cwd, job.id, {
+  const updatedJob = updateJob(cwd, job.id, {
     status: cancelled ? "cancelled" : job.status,
     completedAt: cancelled ? new Date().toISOString() : job.completedAt
   });
-  process.stdout.write(renderCancelReport(job, cancelled));
+  process.stdout.write(renderCancelReport(updatedJob, cancelled));
 }
 
-function main() {
+async function main() {
   const [command, ...argv] = process.argv.slice(2);
   try {
     switch (command) {
@@ -312,16 +746,22 @@ function main() {
         handleSetup(argv);
         break;
       case "review":
-        handleReviewLike("review", argv);
+        await handleReviewLike("review", argv);
         break;
       case "adversarial-review":
-        handleReviewLike("adversarial-review", argv);
+        await handleReviewLike("adversarial-review", argv);
         break;
       case "elite-review":
-        handleReviewLike("elite-review", argv);
+        await handleReviewLike("elite-review", argv);
+        break;
+      case "deep-review":
+        await handleReviewLike("deep-review", argv);
+        break;
+      case "security-review":
+        await handleReviewLike("security-review", argv);
         break;
       case "run-job":
-        handleRunJob(argv);
+        await handleRunJob(argv);
         break;
       case "status":
         handleStatus(argv);
@@ -334,11 +774,11 @@ function main() {
         break;
       default:
         printUsage();
-        process.exitCode = command ? 1 : 0;
+        process.exitCode = command ? 2 : 0;
     }
   } catch (error) {
     process.stderr.write(`${error.message}\n`);
-    process.exitCode = 1;
+    process.exitCode = isUsageOrValidationError(error) ? 2 : 1;
   }
 }
 

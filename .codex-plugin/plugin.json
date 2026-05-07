@@ -1,7 +1,7 @@
 {
   "name": "claude-review",
-  "version": "0.1.0",
-  "description": "Run Claude Opus 4.6 and long-context Sonnet review passes from inside Codex CLI sessions.",
+  "version": "1.0.0",
+  "description": "Run agentic Claude Opus 4.7 and long-context Sonnet review passes from inside Codex CLI sessions, with full read-only tool access (Read/Glob/Grep/Bash/Task/WebFetch/WebSearch) and parallel sub-agent dispatch.",
   "author": {
     "name": "Kennedy Umege"
   },
@@ -13,12 +13,17 @@
     "codex",
     "review",
     "opus",
+    "sonnet",
+    "agentic",
+    "adversarial-review",
+    "deep-review",
+    "security-review",
     "long-context"
   ],
   "interface": {
     "displayName": "Claude Review",
-    "shortDescription": "Review Codex changes with Claude quality and adversarial challenge passes",
-    "longDescription": "Use Claude Review to run high-scrutiny code review, adversarial design review, setup checks, and background review jobs from inside Codex CLI sessions using the local Claude CLI runtime.",
+    "shortDescription": "Agentic Claude review of Codex changes (Opus 4.7 / Sonnet 4.6) with read-only tool access and sub-agent dispatch",
+    "longDescription": "Use Claude Review to run agentic high-scrutiny code review, adversarial design review, exhaustive deep multi-agent review, security-focused review, setup checks, and background review jobs from inside Codex CLI sessions using the local Claude CLI runtime. Reviewers operate in read-only mode with Read, Glob, Grep, Task (sub-agents), WebFetch, WebSearch, and Bash limited to a git-safe wrapper plus node/npm verification commands. Edits, writes, and shell mutations are blocked unless the user explicitly opts into --unrestricted.",
     "developerName": "Kennedy Umege",
     "category": "Coding",
     "capabilities": [
@@ -29,8 +34,8 @@
     "websiteURL": "https://github.com/Kenmege/codex-plugin-cc",
     "defaultPrompt": [
       "Review the current Codex-generated changes with Claude and flag anything unsafe, brittle, or under-tested.",
-      "Run an adversarial review on the current diff and challenge the design.",
-      "Check whether the current workspace is ready for a Claude review run."
+      "Run an exhaustive deep adversarial review with sub-agent dispatch on the current diff.",
+      "Run a security-focused Claude review on the current diff and map findings to OWASP/CWE."
     ],
     "brandColor": "#1f2937",
     "screenshots": []
