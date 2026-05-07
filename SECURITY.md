@@ -37,3 +37,9 @@ Please include:
 ## Secrets And Logs
 
 Do not paste API keys, OAuth tokens, private MCP credentials, patient data, or proprietary customer data into prompts, review focus text, MCP JSON, issue reports, or job logs. Job records under `.claude-review/jobs/` are local workspace artifacts and should not be committed.
+
+`codex-claude-review setup --json` redacts local auth identity before printing
+machine-readable readiness output. Still review setup output before sharing it
+outside a trusted private channel because it can include local runtime state
+such as auth method, API provider, subscription type, model defaults, and
+failure details.

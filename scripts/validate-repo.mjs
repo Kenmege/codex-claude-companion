@@ -8,6 +8,7 @@ const root = path.resolve(new URL("..", import.meta.url).pathname);
 
 const required = [
   ".codex-plugin/plugin.json",
+  ".agents/plugins/marketplace.json",
   "commands/review.md",
   "commands/adversarial-review.md",
   "commands/elite-review.md",
@@ -36,6 +37,7 @@ for (const relative of required) {
 }
 
 const pluginManifest = JSON.parse(fs.readFileSync(path.join(root, ".codex-plugin/plugin.json"), "utf8"));
+const marketplaceManifest = JSON.parse(fs.readFileSync(path.join(root, ".agents/plugins/marketplace.json"), "utf8"));
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const packageLock = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
 JSON.parse(fs.readFileSync(path.join(root, "schemas/review-output.schema.json"), "utf8"));
@@ -52,6 +54,19 @@ if (pluginManifest.interface.defaultPrompt.length > 3) {
 
 if (packageJson.version !== pluginManifest.version) {
   throw new Error("package.json and .codex-plugin/plugin.json versions must match.");
+}
+
+if (marketplaceManifest.name !== "claude-review-private") {
+  throw new Error(".agents/plugins/marketplace.json must keep the private marketplace name claude-review-private.");
+}
+
+const marketplacePlugin = marketplaceManifest.plugins?.find((entry) => entry?.name === pluginManifest.name);
+if (!marketplacePlugin) {
+  throw new Error(".agents/plugins/marketplace.json must expose the .codex-plugin plugin name.");
+}
+
+if (marketplacePlugin.source?.source !== "local" || marketplacePlugin.source?.path !== ".") {
+  throw new Error(".agents/plugins/marketplace.json must install claude-review from the private repo root.");
 }
 
 if (packageLock.version !== packageJson.version || packageLock.packages?.[""]?.version !== packageJson.version) {

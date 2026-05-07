@@ -21,7 +21,7 @@ Run the helper once in setup mode and report readiness.
 
 Useful flags:
 
-- `--json` for machine-parseable readiness output.
+- `--json` for machine-parseable readiness output with auth identity redacted.
 
 ## Verification
 

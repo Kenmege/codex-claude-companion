@@ -137,6 +137,16 @@ is:
 
 - `.codex-plugin/plugin.json`
 
+The private Codex lane (this repo's local marketplace) should stay local-only:
+
+```bash
+codex plugin marketplace add <repo-root>
+```
+
+This loads `.agents/plugins/marketplace.json` as the
+`claude-review-private` marketplace. Do not install the private lane from a
+GitHub URL unless intentionally testing the public marketplace path.
+
 ## Direct CLI Usage
 
 ```bash
@@ -154,6 +164,10 @@ codex-claude-review status
 codex-claude-review result <job-id>
 codex-claude-review cancel <job-id>
 ```
+
+`setup --json` redacts local auth identity by default. It may still report
+auth method, API provider, and subscription type so automation can distinguish
+subscription auth from API-key auth without exposing the account address.
 
 ## Slash Commands
 

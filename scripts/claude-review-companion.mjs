@@ -176,9 +176,15 @@ function printUsage() {
       "  --timeout-ms <n>            override review timeout (lane default: 30 minutes)",
       "",
       "Flags (setup):",
-      "  --json                      emit machine-parseable setup status"
+      "  --json                      emit machine-parseable setup status with auth identity redacted"
     ].join("\n")
   );
+}
+
+function redactAuthDetail(auth) {
+  if (!auth.loggedIn) return auth.detail;
+  const method = auth.raw?.authMethod ? String(auth.raw.authMethod) : "authenticated";
+  return `${method} auth detected`;
 }
 
 function buildSetupPayload(cwd) {
@@ -188,10 +194,11 @@ function buildSetupPayload(cwd) {
   const subscription = auth.loggedIn ? isSubscriptionAuth(auth) : false;
   const authReport = {
     loggedIn: Boolean(auth.loggedIn),
-    detail: auth.detail,
+    detail: redactAuthDetail(auth),
     authMethod: auth.raw?.authMethod ?? null,
     apiProvider: auth.raw?.apiProvider ?? null,
-    subscriptionType: auth.raw?.subscriptionType ?? null
+    subscriptionType: auth.raw?.subscriptionType ?? null,
+    redacted: Boolean(auth.loggedIn)
   };
   const nextSteps = [];
   if (!claude.available) {

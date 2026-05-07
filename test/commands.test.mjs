@@ -221,6 +221,32 @@ test("setup supports machine-parseable --json output", () => {
   assert.equal(payload.auth.raw, undefined);
 });
 
+test("setup json redacts authenticated account identity", () => {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-setup-bin-"));
+  const claudePath = path.join(binDir, "claude");
+  fs.writeFileSync(
+    claudePath,
+    [
+      "#!/bin/sh",
+      "if [ \"$1\" = \"--help\" ]; then echo 'Usage: claude'; exit 0; fi",
+      "if [ \"$1\" = \"auth\" ]; then echo '{\"loggedIn\":true,\"email\":\"person@example.com\",\"authMethod\":\"claude.ai\",\"apiProvider\":\"firstParty\",\"subscriptionType\":\"max\"}'; exit 0; fi",
+      "echo '{\"type\":\"result\",\"structured_output\":{\"answer\":\"OK\"}}'"
+    ].join("\n"),
+    { mode: 0o755 }
+  );
+  const result = spawnSync(process.execPath, [helper, "setup", "--cwd", root, "--json"], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}` }
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /person@example\.com/);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.auth.detail, "claude.ai auth detected");
+  assert.equal(payload.auth.subscriptionType, "max");
+  assert.equal(payload.auth.redacted, true);
+});
+
 test("status marks running jobs older than timeout as stalled", () => {
   const cwd = makeDirtyRepo();
   const jobId = "review-stale";
