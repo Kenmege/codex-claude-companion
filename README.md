@@ -404,14 +404,15 @@ npm run check
 npm run pack:check
 ```
 
-The npm package is marked `private: true` by default. The release workflow
-validates tags and only publishes to GitHub Packages when the repository
-variable `GH_PACKAGES_PUBLISH_ENABLED=true` is set. The workflow uses the
-automatic `GITHUB_TOKEN` with `packages: write`; no npm registry token is
-required for the same-repository GitHub Packages release path. Release tags
-must match the package version exactly: `package.json` version `1.0.0` is
-published only from tag `v1.0.0`; a prerelease smoke must first commit matching
-`1.0.0-rc.1` metadata before pushing `v1.0.0-rc.1`.
+The npm package intentionally omits `package.json.private` so GitHub Packages
+publishing can run when explicitly enabled. The release workflow validates tags
+and only publishes when the repository variable
+`GH_PACKAGES_PUBLISH_ENABLED=true` is set. The workflow uses the automatic
+`GITHUB_TOKEN` with `packages: write`; no npm registry token is required for the
+same-repository GitHub Packages release path. Release tags must match the
+package version exactly: `package.json` version `1.0.1` is published only from
+tag `v1.0.1`; a prerelease smoke must first commit matching `1.0.1-rc.1`
+metadata before pushing `v1.0.1-rc.1`.
 
 ## Repository Layout
 

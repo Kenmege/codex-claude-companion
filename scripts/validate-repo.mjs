@@ -22,7 +22,7 @@ const required = [
   "SECURITY.md",
   "CONTRIBUTING.md",
   "CODE_OF_CONDUCT.md",
-  "RELEASE_NOTES_v1.0.0.md",
+  "RELEASE_NOTES_v1.0.1.md",
   ".npmrc",
   ".github/CODEOWNERS",
   ".github/PULL_REQUEST_TEMPLATE.md",
