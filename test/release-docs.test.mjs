@@ -26,13 +26,25 @@ test("package files list excludes bump-version from the shipped tarball surface"
   assert.ok(!packageJson.files.includes("scripts/"));
 });
 
+test("package.json shape supports public npm publish", () => {
+  const packageJson = JSON.parse(read("package.json"));
+
+  assert.notEqual(packageJson.private, true);
+  assert.notEqual(packageJson.private, "true");
+  assert.match(packageJson.name, /^@[\w-]+\/[\w-]+$/);
+  assert.match(packageJson.version, /^\d+\.\d+\.\d+/);
+  assert.ok(Array.isArray(packageJson.files));
+  assert.ok(packageJson.files.length > 0);
+  assert.equal(typeof packageJson.repository?.url, "string");
+  assert.match(packageJson.repository.url, /Kenmege\/codex-plugin-cc/);
+});
+
 test("GitHub Packages release configuration is scoped and token-safe", () => {
   const packageJson = JSON.parse(read("package.json"));
   const npmrc = read(".npmrc");
   const workflow = read(".github/workflows/release.yml");
 
   assert.equal(packageJson.name, "@kenmege/codex-plugin-cc");
-  assert.equal(packageJson.private, true);
   assert.match(
     packageJson.repository.url,
     /^(git\+)?https:\/\/github\.com\/Kenmege\/codex-plugin-cc\.git$/
