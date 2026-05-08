@@ -9,7 +9,7 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 ### Added
 
 - Added public-launch community files: issue templates, PR template,
-  CODEOWNERS, Code of Conduct, and v1.0.0 release notes.
+  CODEOWNERS, Code of Conduct, and v1.0.1 release notes.
 - Added README launch hero, quickstart, CI/license/Node badges, and reviewer
   composition documentation.
 
@@ -20,8 +20,15 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 - Hardened Claude review workflow auth selection so public fork PRs are skipped
   with a notice when GitHub withholds repository Actions secrets.
 
-## [1.0.0] - 2026-05-08
+## [1.0.1] — 2026-05-08
 
+- Workflow fix: removed `npm pkg set private=false` from `release.yml`. The
+  defensive line wrote the string "false" to `package.json.private` (truthy in
+  JS), which caused npm publish to exit `EPRIVATE`. The package.json shape
+  regression test added in PR #2 already enforces the absence of the `private`
+  field at source, so the workflow-side normalization is no longer needed.
+- Initial public release version-bumped to 1.0.1; the v1.0.0 tag was created
+  during launch but never produced a published package or a GitHub release.
 - Removed the legacy `context-1m-2025-08-07` beta-header injection from the
   long-context Sonnet profile. 1M context is GA on Sonnet 4.6 and Opus 4.6+ at
   standard pricing as of 2026-03-13; the legacy header was retired for Sonnet 4

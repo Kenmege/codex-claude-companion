@@ -54,7 +54,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          npm pkg set private=false
           npm publish --provenance --access restricted
 
       - name: Skip GitHub Packages publish
