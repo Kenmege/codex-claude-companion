@@ -53,11 +53,25 @@ jobs:
           printf 'version=%s\n' "$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Publish to GitHub Packages
+        id: publish-package
         if: ${{ env.GH_PACKAGES_PUBLISH_ENABLED == 'true' }}
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          npm publish --access public --provenance
+          VERSION="${{ steps.tag-version-gate.outputs.version }}"
+          PACKAGE_EXISTS="false"
+          if gh api --paginate "/users/${{ github.repository_owner }}/packages/npm/codex-plugin-cc/versions" --jq ".[] | select(.name == \"${VERSION}\") | .name" > .published-version 2>/dev/null; then
+            if [ -s .published-version ]; then
+              PACKAGE_EXISTS="true"
+            fi
+          fi
+          if [ "$PACKAGE_EXISTS" = "true" ]; then
+            echo "Package @kenmege/codex-plugin-cc v${VERSION} already exists; skipping npm publish."
+          else
+            npm publish --access public --provenance
+          fi
+          printf 'package_exists=%s\n' "$PACKAGE_EXISTS" >> "$GITHUB_OUTPUT"
 
       - name: Skip GitHub Packages publish
         if: ${{ env.GH_PACKAGES_PUBLISH_ENABLED != 'true' }}
@@ -70,12 +84,26 @@ jobs:
         run: |
           VERSION="${{ steps.tag-version-gate.outputs.version }}"
           NOTES_FILE="RELEASE_NOTES_v${VERSION}.md"
+          RELEASE_FLAGS=()
+          if [[ "$VERSION" == *-* ]]; then
+            RELEASE_FLAGS=(--prerelease)
+          else
+            RELEASE_FLAGS=(--latest)
+          fi
           if [ ! -f "$NOTES_FILE" ]; then
             echo "First public release of @kenmege/codex-plugin-cc v${VERSION}." > "$NOTES_FILE.gen"
             NOTES_FILE="$NOTES_FILE.gen"
           fi
-          gh release create "v${VERSION}" \
-            --repo "${{ github.repository }}" \
-            --title "v${VERSION}" \
-            --notes-file "$NOTES_FILE" \
-            --latest
+          if gh release view "v${VERSION}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            gh release edit "v${VERSION}" \
+              --repo "${{ github.repository }}" \
+              --title "v${VERSION}" \
+              --notes-file "$NOTES_FILE" \
+              "${RELEASE_FLAGS[@]}"
+          else
+            gh release create "v${VERSION}" \
+              --repo "${{ github.repository }}" \
+              --title "v${VERSION}" \
+              --notes-file "$NOTES_FILE" \
+              "${RELEASE_FLAGS[@]}"
+          fi

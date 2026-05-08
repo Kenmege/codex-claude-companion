@@ -63,10 +63,16 @@ test("GitHub Packages release configuration is scoped and token-safe", () => {
   assert.match(workflow, /NODE_AUTH_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/);
   assert.match(workflow, /GH_PACKAGES_PUBLISH_ENABLED/);
   assert.doesNotMatch(workflow, /npm pkg set private=false/);
+  assert.match(workflow, /id: publish-package/);
+  assert.match(workflow, /gh api --paginate "\/users\/\$\{\{ github\.repository_owner \}\}\/packages\/npm\/codex-plugin-cc\/versions"/);
+  assert.match(workflow, /Package @kenmege\/codex-plugin-cc v\$\{VERSION\} already exists; skipping npm publish/);
   assert.match(workflow, /npm publish --access public --provenance/);
   assert.match(workflow, /GH_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/);
+  assert.match(workflow, /gh release view "v\$\{VERSION\}"/);
+  assert.match(workflow, /gh release edit "v\$\{VERSION\}"/);
   assert.match(workflow, /gh release create "v\$\{VERSION\}"/);
   assert.match(workflow, /--latest/);
+  assert.match(workflow, /--prerelease/);
   assert.doesNotMatch(workflow, /--access restricted/);
   assert.doesNotMatch(workflow, new RegExp("NPM" + "_TOKEN|registry\\.npmjs\\.org"));
 });
@@ -209,6 +215,8 @@ test("release checklist documents GitHub Packages publish switch and v-tag trigg
   assert.doesNotMatch(source, new RegExp("NPM" + "_TOKEN"));
   assert.match(source, /v1\.0\.3/);
   assert.match(source, /matching the package version exactly/);
+  assert.match(source, /RELEASE_NOTES_v\$\{VERSION\}\.md/);
+  assert.match(source, /generated stub/);
 });
 
 test("architecture docs reference the exported structured parser name", () => {

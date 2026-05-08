@@ -83,6 +83,7 @@ Schemas are hand-maintained JSON Schema documents. When changing a schema:
 7. Verify the package landed at https://github.com/Kenmege/codex-plugin-cc/packages.
 
 This package intentionally omits `package.json.private`. The release workflow validates tags and only publishes to GitHub Packages when publishing is explicitly enabled.
+GitHub Releases normally use `RELEASE_NOTES_v${VERSION}.md`; if that file is missing, the workflow intentionally uses a short generated stub so a tag workflow can still complete and be repaired by a follow-up release edit.
 
 When running release hygiene greps for npmjs.org or token placeholders, scope
 the scan to release surfaces such as `.github/workflows/`, `.npmrc`,
