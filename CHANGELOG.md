@@ -9,7 +9,7 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 ### Added
 
 - Added public-launch community files: issue templates, PR template,
-  CODEOWNERS, Code of Conduct, and v1.0.1 release notes.
+  CODEOWNERS, Code of Conduct, and v1.0.2 release notes.
 - Added README launch hero, quickstart, CI/license/Node badges, and reviewer
   composition documentation.
 
@@ -19,6 +19,18 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
   marketplace without breaking `npm run check`.
 - Hardened Claude review workflow auth selection so public fork PRs are skipped
   with a notice when GitHub withholds repository Actions secrets.
+
+## [1.0.2] — 2026-05-08
+
+- Workflow fix: removed npm provenance from the restricted GitHub Packages
+  publish path. The v1.0.1 tag reached `npm publish` but GitHub Packages rejected
+  `npm publish --provenance --access restricted` with `EUSAGE` because npm
+  provenance requires public-access publishing for a first publish.
+- Removed `publishConfig.provenance` and the unused `id-token: write`
+  permission from `release.yml`; the workflow continues to publish to
+  `https://npm.pkg.github.com` with `GITHUB_TOKEN` and `--access restricted`.
+- Initial public release version-bumped to 1.0.2; the v1.0.0 and v1.0.1 tags
+  were launch attempts that never produced a published package or GitHub release.
 
 ## [1.0.1] — 2026-05-08
 

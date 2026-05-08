@@ -1,6 +1,6 @@
-# v1.0.1 Release Notes
+# v1.0.2 Release Notes
 
-`codex-plugin-cc` v1.0.1 turns Claude into a read-only adversarial reviewer for
+`codex-plugin-cc` v1.0.2 turns Claude into a read-only adversarial reviewer for
 Codex CLI workspaces. It gives Codex users five Claude review lanes, fenced
 workspace investigation tools, schema-enforced evidence, and release controls
 intended for high-scrutiny code review rather than casual lint commentary.
@@ -44,11 +44,11 @@ codex-claude-review review
 ```
 
 Existing private-lane users should reinstall from the repo root and reload the
-local Codex marketplace so the command surface and helper binary match v1.0.1.
+local Codex marketplace so the command surface and helper binary match v1.0.2.
 
 ## Security Hardening
 
-The v0.2.x to v1.0.1 hardening pass focused on control-plane correctness:
+The v0.2.x to v1.0.2 hardening pass focused on control-plane correctness:
 
 - Replaced broad shell access with native Claude tools plus `git-safe.mjs`.
 - Added prompt-injection delimiters around diff and focus text.
@@ -68,7 +68,7 @@ The v0.2.x to v1.0.1 hardening pass focused on control-plane correctness:
   preserving fail-closed behavior for misconfigured maintainer branches.
 - GitHub Packages install from developer machines still requires npm auth for
   `npm.pkg.github.com`.
-- Windows is not a first-class tested platform for v1.0.1.
+- Windows is not a first-class tested platform for v1.0.2.
 
 ## Acknowledgments
 

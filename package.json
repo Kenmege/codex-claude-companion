@@ -1,6 +1,6 @@
 {
   "name": "@kenmege/codex-plugin-cc",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "description": "Codex-native Claude review plugin: agentic Opus 4.7 / Sonnet 4.6 reviewers with full read-only tool access for high-scrutiny code review, adversarial review, deep multi-agent review, and security-focused review.",
   "license": "Apache-2.0",
@@ -10,8 +10,7 @@
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
-    "access": "restricted",
-    "provenance": true
+    "access": "restricted"
   },
   "bin": {
     "codex-claude-review": "scripts/claude-review-companion.mjs"

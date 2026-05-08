@@ -1,6 +1,6 @@
 {
   "name": "claude-review",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Run agentic Claude Opus 4.7 and long-context Sonnet review passes from inside Codex CLI sessions, with full read-only tool access (Read/Glob/Grep/Bash/Task/WebFetch/WebSearch) and parallel sub-agent dispatch.",
   "author": {
     "name": "Kennedy Umege"

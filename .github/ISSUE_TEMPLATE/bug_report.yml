@@ -15,7 +15,7 @@ body:
     attributes:
       label: Plugin version
       description: Run `npm ls @kenmege/codex-plugin-cc` from your project, or paste the value from `package.json` of this repo at the SHA you tested.
-      placeholder: "1.0.1"
+      placeholder: "1.0.2"
     validations:
       required: true
 
