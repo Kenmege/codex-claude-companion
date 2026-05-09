@@ -22,6 +22,7 @@ import {
   buildWebFetchAllowlist,
   getClaudeSetupProbeTimeoutMs,
   isSubscriptionAuth,
+  extractClaudeAssistantText,
   parseClaudeStructuredOutput,
   probeClaudeStructuredOutput,
   runClaudeStructuredReview,
@@ -145,6 +146,16 @@ test("parseClaudeStructuredOutput reads the structured result payload", () => {
   );
 
   assert.deepEqual(parsed, { answer: "OK" });
+});
+
+test("extractClaudeAssistantText recovers readable text from stream-json deltas", () => {
+  const stream = [
+    JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "VERDICT: " } } }),
+    JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "needs diagnostics" } } }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "\nBLOCKERS: timeout was opaque" }] } })
+  ].join("\n");
+
+  assert.equal(extractClaudeAssistantText(stream), "VERDICT: needs diagnostics\nBLOCKERS: timeout was opaque");
 });
 
 test("parseClaudeStructuredOutput surfaces malformed-JSON count when no result event", () => {

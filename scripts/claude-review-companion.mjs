@@ -34,11 +34,12 @@ import {
   readJobInput,
   readLogTail,
   resolveJobLogFile,
+  resolveJobPromptFile,
   updateJob,
   writeJob,
   writeJobInput
 } from "./lib/state.mjs";
-import { renderCancelReport, renderReviewResult, renderSetupReport, renderStatusReport } from "./lib/render.mjs";
+import { renderCancelReport, renderFailureReport, renderReviewResult, renderSetupReport, renderStatusReport } from "./lib/render.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -48,6 +49,15 @@ const ELITE_SCHEMA_PATH = path.join(ROOT_DIR, "schemas", "elite-review-output.sc
 const AGENTIC_SCHEMA_PATH = path.join(ROOT_DIR, "schemas", "agentic-review-output.schema.json");
 const ADD_DIR_BOUNDARY_ENV = "CODEX_CLAUDE_ADD_DIR_BOUNDARY";
 const MAX_MCP_CONFIG_BYTES = 1024 * 1024;
+const PACKAGE_JSON_PATH = path.join(ROOT_DIR, "package.json");
+
+function getPackageVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf8")).version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 const REVIEW_KIND_CONFIG = {
   review: {
@@ -523,6 +533,32 @@ function buildBackgroundJob(cwd, kind, snapshot) {
   return { ...job, pid, status: "running" };
 }
 
+function reasonFromError(error) {
+  if (error?.failureReason) return error.failureReason;
+  if (error?.code === "ETIMEDOUT" || error?.code === "ETIMEDOUT_KILL") return "timeout";
+  if (error?.code === "ENOOUTPUT") return "no_output_timeout";
+  if (error?.code === "EINTERRUPTED") return "interrupted";
+  if (error?.code === "EMAXBUFFER") return "output_limit";
+  return "claude_failed";
+}
+
+function mergeDiagnostics(base, patch) {
+  return {
+    ...(base && typeof base === "object" ? base : {}),
+    ...(patch && typeof patch === "object" ? patch : {})
+  };
+}
+
+function persistJobDiagnostics(cwd, jobId, patch) {
+  try {
+    const current = listJobs(cwd).find((job) => job.id === jobId) ?? {};
+    updateJob(cwd, jobId, {
+      diagnostics: mergeDiagnostics(current.diagnostics, patch),
+      currentPhase: patch?.currentPhase ?? current.currentPhase
+    });
+  } catch {}
+}
+
 async function runSnapshot(cwd, jobId, snapshot) {
   appendLogLine(
     cwd,
@@ -530,6 +566,15 @@ async function runSnapshot(cwd, jobId, snapshot) {
     `Starting ${snapshot.reviewKind} (${snapshot.unrestricted ? "UNRESTRICTED" : snapshot.agentic ? "agentic-safe" : "structured"}) with ${snapshot.model}/${snapshot.effort}`
   );
   appendLogLine(cwd, jobId, `Context mode: ${snapshot.contextMode} (${snapshot.inputBytes} bytes)`);
+  persistJobDiagnostics(cwd, jobId, {
+    cwd,
+    model: snapshot.model,
+    effort: snapshot.effort,
+    permissionMode: snapshot.permissionMode,
+    contextBytes: snapshot.inputBytes,
+    currentPhase: "prompt_context_built"
+  });
+  appendLogLine(cwd, jobId, "Prompt/context built");
   if (snapshot.debug) {
     appendLogLine(cwd, jobId, `Changed files: ${snapshot.changedFiles.join(", ") || "(none)"}`, "debug");
     appendLogLine(cwd, jobId, `MCP scope: ${snapshot.strictMcpConfig ? "strict" : "inherited"}; add-dir count: ${snapshot.addDirs.length}`, "debug");
@@ -539,21 +584,84 @@ async function runSnapshot(cwd, jobId, snapshot) {
   } else if (snapshot.maxBudgetUsd && snapshot.subscriptionAuth) {
     appendLogLine(cwd, jobId, `Budget cap requested ($${snapshot.maxBudgetUsd.toFixed(2)}) but suppressed under subscription auth`);
   }
-  const result = await runClaudeStructuredReview(cwd, snapshot, snapshot.reviewKind, snapshot.schemaPath);
-  appendLogLine(
-    cwd,
-    jobId,
-    `Claude returned ${result.parsed.findings?.length ?? 0} finding(s) using ${result.activity?.toolUseCount ?? 0} tool call(s)`
-  );
-  if (result.activity?.parseErrors > 0) {
+  const promptPath = resolveJobPromptFile(cwd, jobId);
+  let stdoutSeen = false;
+  let stderrSeen = false;
+  const hooks = {
+    promptPath,
+    onInvocation(meta) {
+      appendLogLine(cwd, jobId, `Claude invocation built; prompt saved to ${meta.promptPath}`);
+      persistJobDiagnostics(cwd, jobId, meta);
+    },
+    onSpawn(meta) {
+      appendLogLine(cwd, jobId, `Claude process spawned pid=${meta.pid}`);
+      persistJobDiagnostics(cwd, jobId, {
+        childPid: meta.pid,
+        command: meta.command,
+        currentPhase: meta.phase ?? "claude_spawned"
+      });
+    },
+    onFirstStdout(meta) {
+      if (stdoutSeen) return;
+      stdoutSeen = true;
+      appendLogLine(cwd, jobId, "First stdout byte received");
+      persistJobDiagnostics(cwd, jobId, { stdoutTail: meta.text, currentPhase: meta.phase ?? "claude_stdout" });
+    },
+    onFirstStderr(meta) {
+      if (stderrSeen) return;
+      stderrSeen = true;
+      appendLogLine(cwd, jobId, "First stderr byte received");
+      persistJobDiagnostics(cwd, jobId, { stderrTail: meta.text, currentPhase: meta.phase ?? "claude_stderr" });
+    },
+    onDiagnosticUpdate(patch) {
+      persistJobDiagnostics(cwd, jobId, patch);
+    },
+    onExit(meta) {
+      appendLogLine(cwd, jobId, `Claude exited code=${meta.status ?? "null"} signal=${meta.signal ?? "null"}`);
+      persistJobDiagnostics(cwd, jobId, {
+        childPid: meta.pid,
+        command: meta.command,
+        exitCode: meta.status,
+        signal: meta.signal,
+        stdoutTail: meta.stdoutTail,
+        stderrTail: meta.stderrTail,
+        currentPhase: `${meta.phase ?? "claude"}_exited`
+      });
+    },
+    onPhase(phase, meta = {}) {
+      appendLogLine(cwd, jobId, `Phase: ${phase}`);
+      persistJobDiagnostics(cwd, jobId, { currentPhase: phase, ...meta });
+    }
+  };
+
+  try {
+    const result = await runClaudeStructuredReview(cwd, snapshot, snapshot.reviewKind, snapshot.schemaPath, hooks);
     appendLogLine(
       cwd,
       jobId,
-      `WARNING: stream parser saw ${result.activity.parseErrors} malformed JSON line(s); structured output recovered but some events may have been dropped`,
-      "warn"
+      `Claude returned ${result.parsed.findings?.length ?? 0} finding(s) using ${result.activity?.toolUseCount ?? 0} tool call(s)`
     );
+    if (result.invocationMeta?.fallbackUsed) {
+      appendLogLine(cwd, jobId, "Claude-only markdown fallback was used after structured no-output probe timeout", "warn");
+    }
+    if (result.activity?.parseErrors > 0) {
+      appendLogLine(
+        cwd,
+        jobId,
+        `WARNING: stream parser saw ${result.activity.parseErrors} malformed JSON line(s); structured output recovered but some events may have been dropped`,
+        "warn"
+      );
+    }
+    return result;
+  } catch (error) {
+    appendLogLine(cwd, jobId, `Failed: ${error.message}`, "error");
+    persistJobDiagnostics(cwd, jobId, {
+      ...(error.diagnostics ?? {}),
+      reason: reasonFromError(error),
+      currentPhase: error.diagnostics?.currentPhase ?? "failed"
+    });
+    throw error;
   }
-  return result;
 }
 
 function handleSetup(argv) {
@@ -613,10 +721,14 @@ async function handleReviewLike(kind, argv) {
       process.exitCode = 3;
     }
   } catch (error) {
+    const current = listJobs(cwd).find((item) => item.id === jobId) ?? {};
+    const failureReason = reasonFromError(error);
     updateJob(cwd, jobId, {
       status: error.code === "EINTERRUPTED" ? "cancelled" : "failed",
       completedAt: new Date().toISOString(),
-      error: error.message
+      failureReason,
+      error: error.message,
+      diagnostics: mergeDiagnostics(current.diagnostics, { ...(error.diagnostics ?? {}), reason: failureReason })
     });
     throw error;
   }
@@ -641,11 +753,15 @@ async function handleRunJob(argv) {
       invocationMeta: result.invocationMeta
     });
   } catch (error) {
-    appendLogLine(cwd, jobId, `Failed: ${error.message}`);
+    appendLogLine(cwd, jobId, `Failed: ${error.message}`, "error");
+    const current = listJobs(cwd).find((item) => item.id === jobId) ?? {};
+    const failureReason = reasonFromError(error);
     updateJob(cwd, jobId, {
       status: error.code === "EINTERRUPTED" ? "cancelled" : "failed",
       completedAt: new Date().toISOString(),
-      error: error.message
+      failureReason,
+      error: error.message,
+      diagnostics: mergeDiagnostics(current.diagnostics, { ...(error.diagnostics ?? {}), reason: failureReason })
     });
   }
 }
@@ -671,6 +787,19 @@ function jobTimeoutMs(cwd, job) {
 }
 
 function markStaleJob(cwd, job) {
+  if (job.status === "stalled") {
+    appendLogLine(cwd, job.id, "Legacy stalled job finalized as failed", "error");
+    return updateJob(cwd, job.id, {
+      status: "failed",
+      failureReason: job.failureReason ?? "stale_timeout",
+      completedAt: job.completedAt ?? new Date().toISOString(),
+      error: job.error ?? "job was previously marked stalled",
+      diagnostics: mergeDiagnostics(job.diagnostics, {
+        reason: job.failureReason ?? "stale_timeout",
+        currentPhase: job.currentPhase ?? job.diagnostics?.currentPhase ?? "legacy_stalled_job"
+      })
+    });
+  }
   if (job.status !== "running") {
     return job;
   }
@@ -682,9 +811,17 @@ function markStaleJob(cwd, job) {
   if (Date.now() - updatedAt <= timeoutMs) {
     return job;
   }
+  appendLogLine(cwd, job.id, `Stale job finalized: exceeded timeout window of ${timeoutMs}ms`, "error");
   return updateJob(cwd, job.id, {
-    status: "stalled",
-    error: `running job exceeded timeout window of ${timeoutMs}ms`
+    status: "failed",
+    failureReason: "stale_timeout",
+    completedAt: new Date().toISOString(),
+    error: `running job exceeded timeout window of ${timeoutMs}ms`,
+    diagnostics: mergeDiagnostics(job.diagnostics, {
+      reason: "stale_timeout",
+      timeoutMs,
+      currentPhase: job.currentPhase ?? job.diagnostics?.currentPhase ?? "stale_running_job"
+    })
   });
 }
 
@@ -701,7 +838,10 @@ function handleResult(argv) {
     throw new Error(`Unknown job ${jobId}`);
   }
   if (job.status !== "completed") {
-    throw new Error(`Job ${job.id} is ${job.status}`);
+    const withTail = { ...job, logTail: readLogTail(cwd, job.id) };
+    process.stdout.write(renderFailureReport(withTail));
+    process.exitCode = job.status === "failed" || job.status === "stalled" ? 1 : 2;
+    return;
   }
   const snapshot = readJobInput(cwd, job.id);
   try {
@@ -754,6 +894,10 @@ async function main() {
   try {
     if (!command || command === "--help" || command === "-h" || command === "help") {
       printUsage();
+      return;
+    }
+    if (command === "--version" || command === "-v" || command === "version") {
+      process.stdout.write(`${getPackageVersion()}\n`);
       return;
     }
     switch (command) {

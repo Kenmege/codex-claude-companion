@@ -66,6 +66,69 @@ function formatToolUseSummary(activity) {
   return ["Tool usage:", ...ordered.map(([name, count]) => `- ${name}: ${count}`)];
 }
 
+
+function formatDiagnosticBlock(diagnostics = {}) {
+  const lines = [];
+  if (!diagnostics || typeof diagnostics !== "object") return lines;
+  if (diagnostics.cwd) lines.push(`  CWD: ${diagnostics.cwd}`);
+  if (diagnostics.model || diagnostics.effort) lines.push(`  Model: ${diagnostics.model ?? "unknown"} / ${diagnostics.effort ?? "unknown"}`);
+  if (diagnostics.permissionMode) lines.push(`  Permission mode: ${diagnostics.permissionMode}`);
+  if (diagnostics.contextBytes != null) lines.push(`  Context bytes: ${diagnostics.contextBytes}`);
+  if (diagnostics.promptPath) lines.push(`  Prompt: ${diagnostics.promptPath}`);
+  if (diagnostics.command) lines.push(`  Command: ${diagnostics.command}`);
+  if (diagnostics.childPid != null) lines.push(`  Child PID: ${diagnostics.childPid}`);
+  if (diagnostics.currentPhase) lines.push(`  Phase: ${diagnostics.currentPhase}`);
+  if (diagnostics.exitCode != null || diagnostics.signal != null) lines.push(`  Exit: code=${diagnostics.exitCode ?? "null"} signal=${diagnostics.signal ?? "null"}`);
+  if (diagnostics.timeoutMs != null) lines.push(`  Timeout: ${diagnostics.timeoutMs}ms`);
+  if (diagnostics.noOutputTimeoutMs != null) lines.push(`  No-output probe timeout: ${diagnostics.noOutputTimeoutMs}ms`);
+  if (diagnostics.assistantTextTail) {
+    lines.push("  Claude text tail:");
+    for (const line of String(diagnostics.assistantTextTail).trimEnd().split(/\r?\n/).slice(-12)) {
+      lines.push(`    ${line}`);
+    }
+  }
+  if (diagnostics.stdoutTail) {
+    lines.push("  Stdout tail:");
+    for (const line of String(diagnostics.stdoutTail).trimEnd().split(/\r?\n/).slice(-8)) {
+      lines.push(`    ${line}`);
+    }
+  }
+  if (diagnostics.stderrTail) {
+    lines.push("  Stderr tail:");
+    for (const line of String(diagnostics.stderrTail).trimEnd().split(/\r?\n/).slice(-8)) {
+      lines.push(`    ${line}`);
+    }
+  }
+  if (diagnostics.structuredFailure) {
+    lines.push("  Structured path failure:");
+    lines.push(...formatDiagnosticBlock(diagnostics.structuredFailure).map((line) => `  ${line}`));
+  }
+  return lines;
+}
+
+export function renderFailureReport(job) {
+  const lines = [
+    "# Claude Review Failure Diagnostics",
+    "",
+    `Job: ${job.id}`,
+    `Status: ${job.status}`,
+    `Kind: ${job.kind ?? "unknown"}`,
+    `Reason: ${job.failureReason ?? job.diagnostics?.reason ?? "unknown"}`
+  ];
+  if (job.error) {
+    lines.push(`Error: ${job.error}`);
+  }
+  const diagnosticLines = formatDiagnosticBlock(job.diagnostics);
+  if (diagnosticLines.length) {
+    lines.push("", "Failure Diagnostics:", ...diagnosticLines);
+  }
+  if (job.logTail?.length) {
+    lines.push("", "Progress:");
+    for (const line of job.logTail) lines.push(line);
+  }
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
 export function renderSetupReport(report) {
   const lines = [
     "# Claude Review Setup",
@@ -282,6 +345,15 @@ export function renderStatusReport(jobs, cwd) {
     }
     if (job.summary) {
       lines.push(`  Summary: ${job.summary}`);
+    }
+    if (job.failureReason || job.error) {
+      lines.push(`  Reason: ${job.failureReason ?? job.diagnostics?.reason ?? "unknown"}`);
+      if (job.error) lines.push(`  Error: ${job.error}`);
+    }
+    const diagnosticLines = formatDiagnosticBlock(job.diagnostics);
+    if (diagnosticLines.length) {
+      lines.push("  Diagnostics:");
+      lines.push(...diagnosticLines);
     }
     if (job.logTail?.length) {
       lines.push("  Progress:");

@@ -42,6 +42,11 @@ export function resolveJobLogFile(cwd, jobId) {
   return path.join(resolveJobsDir(cwd), `${jobId}.log`);
 }
 
+export function resolveJobPromptFile(cwd, jobId) {
+  ensureStateDir(cwd);
+  return path.join(resolveJobsDir(cwd), `${jobId}.prompt.md`);
+}
+
 function writeJsonAtomic(file, payload) {
   const tmpFile = `${file}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`;
   fs.writeFileSync(tmpFile, `${JSON.stringify(payload, null, 2)}\n`, {

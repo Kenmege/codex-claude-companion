@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { binaryAvailable, runCommand, runCommandCaptureChecked, runCommandChecked } from "./process.mjs";
+import { binaryAvailable, runCommand, runCommandCapture, runCommandChecked } from "./process.mjs";
 
 export const DEFAULT_MODEL = "claude-opus-4-7";
 export const DEFAULT_EFFORT = "high";
@@ -16,6 +16,8 @@ export const DEFAULT_CLAUDE_SETUP_PROBE_TIMEOUT_MS = 60 * 1000;
 export const CLAUDE_SETUP_PROBE_TIMEOUT_ENV = "CODEX_CLAUDE_SETUP_PROBE_TIMEOUT_MS";
 export const DEFAULT_AGENTIC_BUDGET_USD = 8;
 export const DEFAULT_DEEP_REVIEW_BUDGET_USD = 25;
+export const DEFAULT_AGENTIC_NO_OUTPUT_TIMEOUT_MS = 60 * 1000;
+export const CLAUDE_AGENTIC_NO_OUTPUT_TIMEOUT_ENV = "CODEX_CLAUDE_AGENTIC_NO_OUTPUT_TIMEOUT_MS";
 
 export const ALLOWED_PERMISSION_MODES = ["default", "plan"];
 
@@ -284,6 +286,26 @@ function extractStructuredOutput(events, errors) {
 export function parseClaudeStructuredOutput(stdout) {
   const { events, errors } = parseClaudeStreamEvents(stdout);
   return extractStructuredOutput(events, errors);
+}
+
+export function extractClaudeAssistantText(stdout) {
+  const { events } = parseClaudeStreamEvents(stdout);
+  const chunks = [];
+  for (const event of events) {
+    const delta = event.event?.delta;
+    if (event.type === "stream_event" && delta?.type === "text_delta" && typeof delta.text === "string") {
+      chunks.push(delta.text);
+    }
+    const content = event.message?.content;
+    if (Array.isArray(content)) {
+      for (const item of content) {
+        if (item?.type === "text" && typeof item.text === "string") {
+          chunks.push(item.text);
+        }
+      }
+    }
+  }
+  return chunks.join("");
 }
 
 function reduceStreamEvent(state, event) {
@@ -806,6 +828,189 @@ function resolveAgenticToolFences(snapshot, agentic, unrestricted) {
   };
 }
 
+function shellQuote(value) {
+  const raw = String(value ?? "");
+  if (/^[A-Za-z0-9_/:=.,@%+\-]+$/.test(raw)) return raw;
+  return `'${raw.replaceAll("'", "'\\''")}'`;
+}
+
+function redactSecretLikeText(value) {
+  return String(value ?? "")
+    .replace(/sk-[A-Za-z0-9_-]{12,}/g, "<redacted-secret>")
+    .replace(/(?:api[_-]?key|token|secret|password)[=:][^\s'\"]+/gi, (match) => `${match.split(/[=:]/)[0]}=<redacted>`);
+}
+
+function summarizeRedactedValue(label, value) {
+  return `<${label}:${Buffer.byteLength(String(value ?? ""), "utf8")} bytes>`;
+}
+
+function redactClaudeArgs(args) {
+  const redacted = [];
+  const redactedValueAfter = new Map([
+    ["-p", "prompt"],
+    ["--json-schema", "json-schema"],
+    ["--append-system-prompt", "system-prompt"]
+  ]);
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    redacted.push(redactSecretLikeText(arg));
+    const label = redactedValueAfter.get(arg);
+    if (label && index + 1 < args.length) {
+      redacted.push(summarizeRedactedValue(label, args[index + 1]));
+      index += 1;
+    }
+  }
+  return redacted;
+}
+
+export function redactClaudeCommandShape(args) {
+  return ["claude", ...redactClaudeArgs(args)].map(shellQuote).join(" ");
+}
+
+function resolveAgenticNoOutputTimeoutMs(snapshot) {
+  const envOverride = parsePositiveInteger(process.env?.[CLAUDE_AGENTIC_NO_OUTPUT_TIMEOUT_ENV]);
+  if (envOverride) return envOverride;
+  const totalTimeout = parsePositiveInteger(snapshot.timeoutMs) ?? CLAUDE_REVIEW_TIMEOUT_MS;
+  return Math.max(1, Math.min(DEFAULT_AGENTIC_NO_OUTPUT_TIMEOUT_MS, Math.floor(totalTimeout / 4)));
+}
+
+function processDiagnostics(result, commandShape, currentPhase, extra = {}) {
+  const stdout = String(result?.stdout ?? "");
+  const stdoutTail = String(result?.stdoutTail ?? stdout).slice(-65536);
+  const assistantTextTail = extractClaudeAssistantText(stdout || stdoutTail).slice(-65536);
+  return {
+    command: commandShape,
+    childPid: result?.pid ?? null,
+    currentPhase,
+    stdoutTail,
+    stderrTail: String(result?.stderrTail ?? result?.stderr ?? "").slice(-65536),
+    assistantTextTail,
+    exitCode: result?.status ?? null,
+    signal: result?.signal ?? null,
+    reason: result?.reason ?? null,
+    timeoutMs: result?.timeoutMs ?? null,
+    noOutputTimeoutMs: result?.noOutputTimeoutMs ?? null,
+    ...extra
+  };
+}
+
+function attachDiagnostics(error, diagnostics, reason = null) {
+  error.diagnostics = diagnostics;
+  error.failureReason = reason ?? diagnostics?.reason ?? error.code ?? "claude_failed";
+  return error;
+}
+
+function createInvocationError(result, commandShape, currentPhase, extra = {}) {
+  const diagnostics = processDiagnostics(result, commandShape, currentPhase, extra);
+  const base = result?.error ?? new Error(result?.status === 0 ? "Claude invocation failed" : `Claude exited with ${result?.status ?? "unknown"}`);
+  const reason = result?.error?.code === "ETIMEDOUT" || result?.error?.code === "ETIMEDOUT_KILL"
+    ? "timeout"
+    : result?.error?.code === "ENOOUTPUT"
+      ? "no_output_timeout"
+      : result?.error?.code === "EMAXBUFFER"
+        ? "output_limit"
+        : result?.error?.code === "EINTERRUPTED"
+          ? "interrupted"
+          : result?.status !== 0
+            ? "non_zero_exit"
+            : "claude_failed";
+  const tail = diagnostics.stderrTail || diagnostics.assistantTextTail || diagnostics.stdoutTail;
+  const error = new Error(
+    [`Claude invocation failed (${reason}).`, base.message, tail ? `Tail: ${tail.slice(-1000)}` : null]
+      .filter(Boolean)
+      .join(" ")
+  );
+  error.code = base.code;
+  return attachDiagnostics(error, diagnostics, reason);
+}
+
+function buildPlainClaudeArgs(prompt, snapshot) {
+  const args = [
+    "-p",
+    prompt,
+    "--setting-sources",
+    CLAUDE_SETTING_SOURCES,
+    "--model",
+    snapshot.model,
+    "--effort",
+    snapshot.effort,
+    "--no-session-persistence"
+  ];
+  return args;
+}
+
+function buildMarkdownFallbackPrompt(snapshot, reviewKind, structuredError) {
+  return [
+    `You are performing a Claude-only ${reviewKind} fallback review because the structured agentic path did not emit output before its internal probe timeout.`,
+    "Do not use or mention GPT. Do not edit files. Return plain markdown only.",
+    "Return these sections: VERDICT, BLOCKERS, MISSING PIECES, EXACT CHANGES NEEDED, DIAGNOSTICS QUALITY.",
+    `Structured-path failure: ${structuredError?.message ?? "unknown"}`,
+    `Review target: ${snapshot.targetLabel}`,
+    "Focus:",
+    wrapUntrusted("untrusted_focus", snapshot.focusText || "(no focus provided)"),
+    "Review snapshot:",
+    wrapUntrusted("untrusted_diff", snapshot.contextText)
+  ].join("\n");
+}
+
+function markdownToReviewResult(markdown, reviewKind, activity = {}) {
+  const text = String(markdown ?? "").trim() || "Fallback produced no markdown content.";
+  const shipRecommendation = /\b(no[_ -]?ship|request changes|blocker|blocked|do not ship)\b/i.test(text)
+    ? "NO_SHIP_REVIEW_MARKDOWN"
+    : "REVIEW_MARKDOWN";
+  const commonActivity = {
+    toolUseCount: 0,
+    taskDispatchCount: 0,
+    toolUses: [],
+    totalTokensIn: 0,
+    totalTokensOut: 0,
+    parseErrors: 0,
+    fallbackUsed: true,
+    ...activity
+  };
+  if (reviewKind === "elite-review" || reviewKind === "deep-review" || reviewKind === "security-review") {
+    return {
+      parsed: {
+        verdict: "FALLBACK_MARKDOWN_REVIEW",
+        ship_recommendation: shipRecommendation,
+        executive_summary: `Fallback Markdown Review:\n${text}`,
+        systemic_risks: [],
+        findings: [],
+        verified_claims: [
+          {
+            claim: "Claude-only markdown fallback returned a review.",
+            verification: "The structured agentic process produced no output before the internal probe timeout; fallback used claude -p --model."
+          }
+        ],
+        blind_spots: [
+          "The structured agentic schema path did not produce output before the internal probe timeout, so this fallback may lack schema-grade tool evidence."
+        ],
+        exploration_log: [
+          {
+            step: 1,
+            tool: "Claude CLI markdown fallback",
+            rationale: "Recover review output after structured agentic no-output timeout.",
+            outcome: "Plain markdown review captured and persisted."
+          }
+        ],
+        next_steps: ["Inspect fallback markdown and rerun structured mode after fixing the underlying Claude CLI stall if schema-grade evidence is required."]
+      },
+      activity: commonActivity,
+      fallbackMarkdown: text
+    };
+  }
+  return {
+    parsed: {
+      verdict: "FALLBACK_MARKDOWN_REVIEW",
+      summary: `Fallback Markdown Review:\n${text}`,
+      findings: [],
+      next_steps: ["Inspect fallback markdown and rerun structured mode if schema-grade evidence is required."]
+    },
+    activity: commonActivity,
+    fallbackMarkdown: text
+  };
+}
+
 export function buildReviewInvocation(snapshot, reviewKind, schemaPath, options = {}) {
   const schema = fs.readFileSync(schemaPath, "utf8");
   const prompt = buildReviewPrompt(snapshot, reviewKind);
@@ -844,30 +1049,155 @@ export function buildReviewInvocation(snapshot, reviewKind, schemaPath, options 
   };
 }
 
-export async function runClaudeStructuredReview(cwd, snapshot, reviewKind, schemaPath) {
+export async function runClaudeStructuredReview(cwd, snapshot, reviewKind, schemaPath, hooks = {}) {
   const authStatus = snapshot.authStatus ?? getClaudeAuthStatus(cwd);
   const subscriptionAuth = isSubscriptionAuth(authStatus);
   const invocation = buildReviewInvocation(snapshot, reviewKind, schemaPath, { subscriptionAuth });
+  const timeoutMs = snapshot.timeoutMs ?? CLAUDE_REVIEW_TIMEOUT_MS;
+  const outputMaxBytes = snapshot.maxOutputBytes ?? CLAUDE_STREAM_MAX_BYTES;
+  const commandShape = redactClaudeCommandShape(invocation.args);
+  const promptPath = hooks.promptPath ?? null;
 
-  const result = await runCommandCaptureChecked("claude", invocation.args, {
+  if (promptPath) {
+    fs.mkdirSync(path.dirname(promptPath), { recursive: true });
+    fs.writeFileSync(promptPath, invocation.prompt, { encoding: "utf8", mode: 0o600 });
+  }
+
+  hooks.onInvocation?.({
     cwd,
-    maxBuffer: snapshot.maxOutputBytes ?? CLAUDE_STREAM_MAX_BYTES,
-    timeout: snapshot.timeoutMs ?? CLAUDE_REVIEW_TIMEOUT_MS
+    model: snapshot.model,
+    effort: snapshot.effort,
+    permissionMode: snapshot.permissionMode ?? null,
+    contextBytes: snapshot.inputBytes ?? Buffer.byteLength(snapshot.contextText ?? "", "utf8"),
+    promptPath,
+    command: commandShape,
+    timeoutMs,
+    outputMaxBytes,
+    currentPhase: "claude_structured_invocation_built"
   });
-  const structured = parseClaudeValidatedReviewOutput(result.stdout, reviewKind);
 
-  return {
-    stdout: String(result.stdout ?? ""),
-    parsed: structured.parsed,
-    activity: structured.activity,
-    invocationMeta: {
-      subscriptionAuth,
-      suppressedBudget: invocation.suppressedBudget,
-      suppressedBetas: invocation.suppressedBetas,
-      timeoutMs: snapshot.timeoutMs ?? CLAUDE_REVIEW_TIMEOUT_MS,
-      outputMaxBytes: snapshot.maxOutputBytes ?? CLAUDE_STREAM_MAX_BYTES
+  let sawStdout = false;
+  let sawStderr = false;
+  let currentPhase = "claude_structured_running";
+  const noOutputTimeout = snapshot.agentic ? resolveAgenticNoOutputTimeoutMs(snapshot) : null;
+
+  const runStructured = () => runCommandCapture("claude", invocation.args, {
+    cwd,
+    maxBuffer: outputMaxBytes,
+    timeout: timeoutMs,
+    noOutputTimeout,
+    onSpawn: (meta) => hooks.onSpawn?.({ ...meta, command: commandShape, phase: currentPhase }),
+    onStdout: (meta) => {
+      if (!sawStdout) {
+        sawStdout = true;
+        hooks.onFirstStdout?.({ ...meta, phase: currentPhase });
+      }
+      hooks.onDiagnosticUpdate?.({ stdoutTail: meta.text, currentPhase });
+    },
+    onStderr: (meta) => {
+      if (!sawStderr) {
+        sawStderr = true;
+        hooks.onFirstStderr?.({ ...meta, phase: currentPhase });
+      }
+      hooks.onDiagnosticUpdate?.({ stderrTail: meta.text, currentPhase });
+    },
+    onTimeout: (meta) => hooks.onPhase?.("claude_timeout", meta),
+    onNoOutputTimeout: (meta) => hooks.onPhase?.("claude_no_output_timeout", meta),
+    onClose: (meta) => hooks.onExit?.({ ...meta, command: commandShape, phase: currentPhase })
+  });
+
+  const structuredResult = await runStructured();
+  const structuredDiagnostics = processDiagnostics(structuredResult, commandShape, currentPhase, {
+    cwd,
+    model: snapshot.model,
+    effort: snapshot.effort,
+    permissionMode: snapshot.permissionMode ?? null,
+    contextBytes: snapshot.inputBytes ?? Buffer.byteLength(snapshot.contextText ?? "", "utf8"),
+    promptPath
+  });
+
+  if (structuredResult.error || structuredResult.status !== 0) {
+    const structuredError = createInvocationError(structuredResult, commandShape, currentPhase, structuredDiagnostics);
+    if (snapshot.agentic && structuredResult.error?.code === "ENOOUTPUT") {
+      hooks.onPhase?.("claude_markdown_fallback_started", { reason: structuredError.failureReason });
+      const fallbackPrompt = buildMarkdownFallbackPrompt(snapshot, reviewKind, structuredError);
+      const fallbackArgs = buildPlainClaudeArgs(fallbackPrompt, snapshot);
+      const fallbackCommandShape = redactClaudeCommandShape(fallbackArgs);
+      const fallbackStartedAt = Date.now();
+      const fallbackResult = await runCommandCapture("claude", fallbackArgs, {
+        cwd,
+        maxBuffer: outputMaxBytes,
+        timeout: Math.max(1000, timeoutMs - (structuredResult.noOutputTimeoutMs ?? 0)),
+        onSpawn: (meta) => hooks.onSpawn?.({ ...meta, command: fallbackCommandShape, phase: "claude_markdown_fallback_running" }),
+        onStdout: (meta) => hooks.onDiagnosticUpdate?.({ fallbackStdoutTail: meta.text, currentPhase: "claude_markdown_fallback_running" }),
+        onStderr: (meta) => hooks.onDiagnosticUpdate?.({ fallbackStderrTail: meta.text, currentPhase: "claude_markdown_fallback_running" }),
+        onClose: (meta) => hooks.onExit?.({ ...meta, command: fallbackCommandShape, phase: "claude_markdown_fallback_running" })
+      });
+      const fallbackDiagnostics = processDiagnostics(fallbackResult, fallbackCommandShape, "claude_markdown_fallback_running", {
+        cwd,
+        model: snapshot.model,
+        effort: snapshot.effort,
+        permissionMode: snapshot.permissionMode ?? null,
+        contextBytes: snapshot.inputBytes ?? Buffer.byteLength(snapshot.contextText ?? "", "utf8"),
+        promptPath,
+        structuredFailure: structuredDiagnostics
+      });
+      if (fallbackResult.error || fallbackResult.status !== 0 || !String(fallbackResult.stdout ?? "").trim()) {
+        throw createInvocationError(fallbackResult, fallbackCommandShape, "claude_markdown_fallback_running", fallbackDiagnostics);
+      }
+      const fallback = markdownToReviewResult(fallbackResult.stdout, reviewKind, {
+        durationMs: Date.now() - fallbackStartedAt
+      });
+      hooks.onPhase?.("claude_markdown_fallback_completed", { bytes: Buffer.byteLength(fallbackResult.stdout ?? "", "utf8") });
+      return {
+        stdout: String(fallbackResult.stdout ?? ""),
+        parsed: fallback.parsed,
+        activity: fallback.activity,
+        fallbackMarkdown: fallback.fallbackMarkdown,
+        invocationMeta: {
+          subscriptionAuth,
+          suppressedBudget: invocation.suppressedBudget,
+          suppressedBetas: invocation.suppressedBetas,
+          timeoutMs,
+          outputMaxBytes,
+          promptPath,
+          command: fallbackCommandShape,
+          structuredCommand: commandShape,
+          fallbackUsed: true,
+          structuredFailure: structuredDiagnostics
+        }
+      };
     }
-  };
+    throw structuredError;
+  }
+
+  hooks.onPhase?.("parser_started", { bytes: Buffer.byteLength(structuredResult.stdout ?? "", "utf8") });
+  try {
+    const structured = parseClaudeValidatedReviewOutput(structuredResult.stdout, reviewKind);
+    hooks.onPhase?.("parser_completed", { findings: structured.parsed.findings?.length ?? 0 });
+    return {
+      stdout: String(structuredResult.stdout ?? ""),
+      parsed: structured.parsed,
+      activity: structured.activity,
+      invocationMeta: {
+        subscriptionAuth,
+        suppressedBudget: invocation.suppressedBudget,
+        suppressedBetas: invocation.suppressedBetas,
+        timeoutMs,
+        outputMaxBytes,
+        promptPath,
+        command: commandShape,
+        fallbackUsed: false
+      }
+    };
+  } catch (error) {
+    throw attachDiagnostics(error, {
+      ...structuredDiagnostics,
+      currentPhase: "parser_failed",
+      stdoutTail: structuredResult.stdoutTail,
+      stderrTail: structuredResult.stderrTail
+    }, "parse_failed");
+  }
 }
 
 export function runClaudeAgenticReview(cwd, snapshot, reviewKind, schemaPath) {

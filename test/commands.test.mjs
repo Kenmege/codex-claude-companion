@@ -287,7 +287,7 @@ test("setup json redacts authenticated account identity", () => {
   assert.equal(payload.auth.redacted, true);
 });
 
-test("status marks running jobs older than timeout as stalled", () => {
+test("status finalizes running jobs older than timeout as failed with a reason", () => {
   const cwd = makeDirtyRepo();
   const jobId = "review-stale";
   createJob(
@@ -304,7 +304,34 @@ test("status marks running jobs older than timeout as stalled", () => {
     encoding: "utf8"
   });
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /review-stale \| stalled/);
+  assert.match(result.stdout, /review-stale \| failed/);
+  assert.match(result.stdout, /Reason: stale_timeout/);
+});
+
+
+
+test("status finalizes legacy stalled jobs as failed instead of leaving ambiguity", () => {
+  const cwd = makeDirtyRepo();
+  const jobId = "review-legacy-stalled";
+  createJob(
+    cwd,
+    jobId,
+    {
+      ...buildJobRecord(cwd, jobId, { kind: "review", title: "legacy stalled job", status: "stalled" }),
+      updatedAt: "2000-01-01T00:00:00.000Z",
+      error: "process is not running"
+    }
+  );
+  writeJobInput(cwd, jobId, { timeoutMs: 1 });
+
+  const result = spawnSync(process.execPath, [helper, "status", "--cwd", cwd, jobId], {
+    cwd,
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /review-legacy-stalled \| failed/);
+  assert.match(result.stdout, /Reason: stale_timeout/);
 });
 
 test("result exits 3 for a persisted job with ship-blocking findings", () => {
@@ -375,4 +402,103 @@ test("cancel marks a running job stalled when the detached pid is already dead",
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Status: stalled/);
   assert.equal(readJob(cwd, jobId).status, "stalled");
+});
+
+
+test("--version prints the package version", () => {
+  const result = spawnSync(process.execPath, [helper, "--version"], {
+    cwd: root,
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), JSON.parse(read("package.json")).version);
+});
+
+function withFakeClaudeScript(lines) {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-command-bin-"));
+  const claudePath = path.join(binDir, "claude");
+  fs.writeFileSync(claudePath, ["#!/bin/sh", ...lines].join("\n"), { mode: 0o755 });
+  return {
+    env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}` }
+  };
+}
+
+function onlyJob(cwd) {
+  const jobsDir = path.join(cwd, ".claude-review", "jobs");
+  const jobFile = fs.readdirSync(jobsDir).find((entry) => entry.endsWith(".job.json"));
+  assert.ok(jobFile, "expected a job record");
+  return JSON.parse(fs.readFileSync(path.join(jobsDir, jobFile), "utf8"));
+}
+
+test("failed foreground reviews persist actionable timeout diagnostics visible in status and result", () => {
+  const cwd = makeDirtyRepo();
+  const fake = withFakeClaudeScript([
+    "if [ \"$1\" = \"--help\" ]; then echo 'Usage: claude'; exit 0; fi",
+    "if [ \"$1\" = \"auth\" ]; then echo '{\"loggedIn\":true,\"authMethod\":\"api-key\"}'; exit 0; fi",
+    "echo 'stdout-before-timeout'",
+    "echo 'stderr-before-timeout' >&2",
+    "sleep 2"
+  ]);
+
+  const run = spawnSync(process.execPath, [helper, "review", "--legacy", "--cwd", cwd, "--timeout-ms", "50", "diagnose timeout"], {
+    cwd,
+    encoding: "utf8",
+    env: fake.env
+  });
+
+  assert.equal(run.status, 1);
+  assert.doesNotMatch(run.stderr, /^timed out after 50ms\s*$/);
+  assert.match(run.stderr, /timeout/);
+  const job = onlyJob(cwd);
+  assert.equal(job.status, "failed");
+  assert.equal(job.failureReason, "timeout");
+  assert.equal(job.diagnostics.cwd, cwd);
+  assert.equal(job.diagnostics.model, "claude-opus-4-7");
+  assert.equal(job.diagnostics.effort, "high");
+  assert.equal(job.diagnostics.timeoutMs, 50);
+  assert.equal(typeof job.diagnostics.childPid, "number");
+  assert.match(job.diagnostics.promptPath, /\.prompt\.md$/);
+  assert.match(job.diagnostics.command, /^claude /);
+  assert.doesNotMatch(job.diagnostics.command, /API[_-]?KEY|sk-/i);
+  assert.match(job.diagnostics.stdoutTail, /stdout-before-timeout/);
+  assert.match(job.diagnostics.stderrTail, /stderr-before-timeout/);
+  assert.match(job.diagnostics.currentPhase, /claude/);
+
+  const status = spawnSync(process.execPath, [helper, "status", "--cwd", cwd, job.id], { cwd, encoding: "utf8" });
+  assert.equal(status.status, 0, status.stderr);
+  assert.match(status.stdout, /Reason: timeout/);
+  assert.match(status.stdout, /stdout-before-timeout/);
+  assert.match(status.stdout, /stderr-before-timeout/);
+
+  const result = spawnSync(process.execPath, [helper, "result", "--cwd", cwd, job.id], { cwd, encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /Failure Diagnostics/);
+  assert.match(result.stdout, /Reason: timeout/);
+  assert.match(result.stdout, /stderr-before-timeout/);
+});
+
+test("agentic no-output probe falls back to Claude-only markdown review", () => {
+  const cwd = makeDirtyRepo();
+  const fake = withFakeClaudeScript([
+    "if [ \"$1\" = \"--help\" ]; then echo 'Usage: claude'; exit 0; fi",
+    "if [ \"$1\" = \"auth\" ]; then echo '{\"loggedIn\":true,\"authMethod\":\"api-key\"}'; exit 0; fi",
+    "case \"$*\" in",
+    "  *--output-format*) sleep 2 ;;",
+    "  *) echo 'VERDICT: ship after diagnostics fix'; echo 'BLOCKERS: none in fallback path' ;;",
+    "esac"
+  ]);
+
+  const run = spawnSync(process.execPath, [helper, "elite-review", "--cwd", cwd, "--timeout-ms", "120", "validate fallback"], {
+    cwd,
+    encoding: "utf8",
+    env: fake.env
+  });
+
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /Fallback Markdown Review/);
+  assert.match(run.stdout, /ship after diagnostics fix/);
+  const job = onlyJob(cwd);
+  assert.equal(job.status, "completed");
+  assert.equal(job.invocationMeta.fallbackUsed, true);
 });

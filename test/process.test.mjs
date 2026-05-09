@@ -41,3 +41,33 @@ test("spawnDetached redirects early stdout and stderr to a log file", async () =
 
   assert.fail(`detached child output was not written to ${logFile}`);
 });
+
+
+test("runCommandCapture exposes timeout diagnostics and lifecycle callbacks", async () => {
+  const events = [];
+  const result = await runCommandCapture(
+    "sh",
+    ["-c", "echo before-timeout; echo err-before-timeout >&2; sleep 2"],
+    {
+      timeout: 50,
+      terminationGraceMs: 50,
+      onSpawn: (meta) => events.push(["spawn", meta.pid]),
+      onStdout: () => events.push(["stdout"]),
+      onStderr: () => events.push(["stderr"]),
+      onTimeout: (meta) => events.push(["timeout", meta.timeoutMs]),
+      onClose: (meta) => events.push(["close", meta.status, meta.signal])
+    }
+  );
+
+  assert.equal(result.error?.code, "ETIMEDOUT");
+  assert.equal(result.reason, "timeout");
+  assert.equal(result.timeoutMs, 50);
+  assert.equal(typeof result.pid, "number");
+  assert.match(result.stdoutTail, /before-timeout/);
+  assert.match(result.stderrTail, /err-before-timeout/);
+  assert.equal(events[0][0], "spawn");
+  assert.ok(events.some(([name]) => name === "stdout"));
+  assert.ok(events.some(([name]) => name === "stderr"));
+  assert.ok(events.some(([name]) => name === "timeout"));
+  assert.equal(events.at(-1)[0], "close");
+});
