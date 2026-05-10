@@ -1,0 +1,83 @@
+# Dependabot config for Kenmege/codex-plugin-cc.
+#
+# Scope: keep direct + transitive npm deps and pinned-by-SHA GitHub Actions current.
+# Security advisories are emitted by Dependabot independent of the weekly schedule.
+# No `applies-to: security-updates` group is configured (see Codex review on PR #7),
+# so each advisory generates its own PR — a weekly version-update cadence does not
+# delay vulnerability fixes.
+#
+# Reviewer expectations: every Dependabot PR runs through Pull Request CI (Node
+# 18.18/20/22), CodeQL (`javascript-typescript` + `actions` languages), Dependency
+# Review, and the four-reviewer setup as a human PR. The OpenSSF Scorecard
+# workflow is NOT a per-PR gate — it runs weekly and on push to `main` only — but
+# the published score on scorecard.dev informs maintainer judgment when reviewing
+# Dependabot bumps. Maintainer signs off the merge; auto-merge is intentionally
+# not configured.
+
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    # NB: target-branch is NOT set. Per Codex review on PR #7,
+    # GitHub's Dependabot docs state that when target-branch is
+    # explicitly set, security updates fall back to the default
+    # branch and ignore the per-update-config options (groups,
+    # labels, commit-message). Since main IS the default branch
+    # here, declaring `target-branch: main` was redundant for
+    # version-updates AND silently broke security-update routing.
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/London
+    open-pull-requests-limit: 5
+    versioning-strategy: increase
+    labels:
+      - dependencies
+      - npm
+    commit-message:
+      prefix: chore(deps)
+      prefix-development: chore(deps-dev)
+      include: scope
+    # Groups apply ONLY to version-updates. Security-update grouping
+    # was removed (Codex review on PR #7, 2026-05-10): a security
+    # group with no `patterns` narrowing matches every advisory, so
+    # one incompatible bump can block the rest of the security PRs
+    # that landed in the same window — the opposite of the doc-
+    # comment promise that "advisories flow individually."
+    groups:
+      npm-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    # NB: target-branch is NOT set. Per Codex review on PR #7,
+    # GitHub's Dependabot docs state that when target-branch is
+    # explicitly set, security updates fall back to the default
+    # branch and ignore the per-update-config options (groups,
+    # labels, commit-message). Since main IS the default branch
+    # here, declaring `target-branch: main` was redundant for
+    # version-updates AND silently broke security-update routing.
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/London
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: chore(actions)
+      include: scope
+    # Security-update group removed for the same reason as in the
+    # npm block above — see the comment there.
+    groups:
+      actions-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch

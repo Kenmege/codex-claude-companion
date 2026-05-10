@@ -1,0 +1,78 @@
+name: OpenSSF Scorecard
+
+# Continuously scores this repository against the OpenSSF Scorecard checks
+# (branch-protection, code-review, dependency-update-tool, sast, signed-releases,
+# pinned-dependencies, token-permissions, dangerous-workflow, etc.) and publishes
+# the result to the public scorecard.dev viewer so consumers can verify supply-
+# chain hygiene at a glance.
+
+on:
+  branch_protection_rule:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays 07:23 UTC. Decoupled from CodeQL's slot to spread runner load.
+    - cron: "23 7 * * 1"
+  workflow_dispatch:
+
+# Workflow-level permissions are intentionally minimal. The OpenSSF
+# Scorecard canonical example uses `read-all`, but the analysis job
+# below already declares the specific scopes it needs (id-token: write
+# for Sigstore, security-events: write for SARIF, contents/actions:
+# read for repo metadata). Workflow-level scope only acts as the
+# default for jobs that don't explicitly declare their own; keeping
+# it at `contents: read` ensures any future job added without explicit
+# permissions inherits a safe, narrow default rather than `read-all`.
+permissions:
+  contents: read
+
+concurrency:
+  group: scorecard-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Required for keyless signing of the published Scorecard result via Sigstore.
+      id-token: write
+      # Required to upload SARIF to GitHub code scanning so findings show up
+      # under the Security tab alongside CodeQL.
+      security-events: write
+      # Required by Scorecard to read repository metadata and Actions runs.
+      contents: read
+      actions: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Public results are core to the value proposition: scorecard.dev
+          # publishes the score so external consumers (and the README badge)
+          # can verify it without trusting this repo to self-report.
+          publish_results: true
+
+      # Persist the raw SARIF for 30 days. Useful for diffing checks across
+      # weekly runs without round-tripping through code scanning.
+      - name: Upload SARIF artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scorecard-sarif
+          path: results.sarif
+          retention-days: 30
+
+      - name: Upload to GitHub code scanning
+        uses: github/codeql-action/upload-sarif@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3.35.4
+        with:
+          sarif_file: results.sarif
+          category: ossf-scorecard

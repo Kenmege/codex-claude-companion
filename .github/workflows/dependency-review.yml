@@ -1,0 +1,67 @@
+name: Dependency Review
+
+# Blocks pull requests that introduce npm dependencies (direct or transitive) with
+# known vulnerabilities at moderate severity or above, or with denied licenses.
+# When the gate fails, the action posts a summary comment so reviewers can see
+# exactly what changed in the dependency closure (`comment-summary-in-pr:
+# on-failure` — successful runs intentionally stay quiet to avoid per-PR noise).
+# Runs only on pull_request because GitHub's dependency-review API is scoped to
+# diff head vs. base; weekly Dependabot + Scorecard cover the at-rest signal.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dep-review-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Review dependency changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Required so the action can post the summary comment.
+      pull-requests: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Dependency review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # Block merges that introduce moderate-or-higher CVEs. Reviewers can
+          # still approve the PR; the gate exists so no one ships unknowingly.
+          fail-on-severity: moderate
+          # The action's default `fail-on-scopes` is `runtime` only, which lets
+          # vulnerable `devDependency` and `unknown`-scoped transitive packages
+          # slip through. The doc-comment promise for this gate is "block
+          # PRs that introduce CVEs in the npm dependency closure" — that is
+          # the entire closure, not just runtime. Codex flagged the gap on
+          # PR #7 (2026-05-10).
+          fail-on-scopes: runtime, development, unknown
+          # AGPL-3.0 forces network-service consumers into copyleft. Apache-2.0
+          # downstream consumers cannot accept that without re-licensing, so
+          # AGPL deps are blocked at the gate and must be discussed explicitly.
+          # The deprecated bare IDs (`AGPL-1.0`, `AGPL-3.0`) are still valid
+          # SPDX identifiers and can appear in npm package metadata; without
+          # them the deny list silently misses legacy AGPL-licensed deps
+          # (Codex review on PR #7, 2026-05-10).
+          deny-licenses: >-
+            AGPL-1.0,
+            AGPL-1.0-only,
+            AGPL-1.0-or-later,
+            AGPL-3.0,
+            AGPL-3.0-only,
+            AGPL-3.0-or-later
+          comment-summary-in-pr: on-failure
+          warn-only: false

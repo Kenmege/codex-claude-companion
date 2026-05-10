@@ -1,0 +1,74 @@
+name: CodeQL
+
+# Static analysis across the JavaScript/TypeScript surface (helper, schemas,
+# tests) AND the GitHub Actions workflows. Triggers on every PR against main,
+# every push to main, and weekly to catch newly-shipped CodeQL rules against
+# unchanged code. Findings surface under the repository's Security tab and as
+# inline PR annotations.
+#
+# Notes from PR #7 review (Codex, 2026-05-10):
+# - No `paths` filter. A path-filtered required check leaves non-matching PRs
+#   (e.g., README-only) permanently "Pending" because the workflow never runs;
+#   GitHub's docs are explicit that skipped-by-paths checks do not auto-pass.
+#   The cost of running on every PR is ~1m14s per language; cheap.
+# - Matrix language set is `javascript-typescript` plus `actions`. The repo
+#   ships several workflows whose hardening (SHA-pinning, permissions, secret
+#   exposure) is part of the supply-chain trust boundary; CodeQL's `actions`
+#   pack covers exactly that surface.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Mondays 06:13 UTC. Off the top-of-hour to dodge GitHub's runner contention.
+    - cron: "13 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, actions]
+    permissions:
+      # Required so CodeQL can upload SARIF results to code scanning.
+      security-events: write
+      # Required for private repos / advanced setup; harmless on public.
+      actions: read
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3.35.4
+        with:
+          languages: ${{ matrix.language }}
+          # security-extended adds higher-signal queries beyond the default pack.
+          # security-and-quality is broader; we hold to security-extended to keep
+          # the noise floor low and the signal-to-effort ratio high.
+          queries: security-extended
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3.35.4
+        with:
+          category: "/language:${{ matrix.language }}"
+          # Fail the run if CodeQL itself errors. SARIF upload is best-effort
+          # and does not gate merges by default; the security tab is the
+          # primary surface for findings.
+          upload: always
