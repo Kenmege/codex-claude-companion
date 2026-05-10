@@ -20,6 +20,35 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 - Hardened Claude review workflow auth selection so public fork PRs are skipped
   with a notice when GitHub withholds repository Actions secrets.
 
+### Security
+
+- `.github/workflows/claude.yml` hardening pass (PR C, 2026-05-10), surfaced
+  by an external review of the same workflow file when ported to a sister
+  repo:
+  - Removed workflow-level `id-token: write`. No step in this workflow uses
+    GitHub OIDC; granting it broadened the blast radius if claude-code-action
+    or its transitive deps were ever supply-chain compromised.
+  - Added `Bash`, `BashOutput`, and `KillShell` to `--disallowedTools` for
+    both auto-review steps. Closes a prompt-injection-to-secret-exfil vector
+    where a crafted file in an internal-branch PR could instruct Claude to
+    `curl` the runner's `CLAUDE_CODE_OAUTH_TOKEN` out of the environment.
+    The `interactive` job intentionally still permits Bash because it is
+    invoked by an authenticated maintainer.
+  - Added a fork-PR guard to the `interactive` job, matching the guard
+    already in place for `auto-review`. Without it, a fork contributor
+    commenting `@claude` on their own PR would trigger the action against
+    fork-controlled diff content with the OAuth token in scope.
+  - Skip Dependabot PRs in both `auto-review` and `interactive` jobs.
+    Dependabot-triggered workflows do not receive repository Actions
+    secrets by default, so the auth preflight always failed; routing
+    around it cleanly avoids noisy red checks on dep-update PRs.
+  - Deduplicated the OAuth and API-key prompt blocks via workflow-level
+    env vars (`CLAUDE_AUTO_REVIEW_PROMPT`, `CLAUDE_INTERACTIVE_PROMPT`)
+    so future prompt edits only need to land in one place.
+  - Added `persist-credentials: false` to all `actions/checkout` steps so
+    the default `GITHUB_TOKEN` is not left on disk inside the runner's
+    `.git/config`.
+
 ## [1.0.3] — 2026-05-08
 
 First public OSS release of @kenmege/codex-plugin-cc.
