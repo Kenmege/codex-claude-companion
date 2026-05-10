@@ -11,18 +11,35 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 - Supply-chain quality bundle for the public repo:
   - `.github/dependabot.yml` for weekly grouped npm + GitHub Actions
     updates (security advisories still flow individually and bypass the
-    grouping schedule).
+    grouping schedule). `target-branch` is intentionally NOT set:
+    GitHub's Dependabot docs document that an explicit `target-branch`
+    causes security updates to fall back to the default branch and
+    ignore the per-update-config options (groups, labels, commit-
+    message), which silently breaks the security-update routing this
+    config relies on (Codex review on PR #7, 2026-05-10).
   - `.github/workflows/codeql.yml` running CodeQL `security-extended`
-    against the unified `javascript-typescript` analysis target on every
-    PR, every push to `main`, and weekly. Results land in the Security
-    tab and as inline PR annotations.
+    on a matrix of `javascript-typescript` AND `actions` languages on
+    every PR, every push to `main`, and weekly. The `actions` language
+    covers `.github/workflows/*.yml` (workflow injection, permissions,
+    SHA-pinning) — part of the supply-chain trust boundary the
+    matrix is meant to defend (Codex review on PR #7). No `paths`
+    filter: a path-filtered required check leaves non-matching PRs
+    (e.g., README-only) permanently "Pending" since GitHub's docs
+    are explicit that skipped-by-paths checks do not auto-pass.
+    Results land in the Security tab and as inline PR annotations.
   - `.github/workflows/scorecard.yml` running OpenSSF Scorecard weekly
     and on push to `main`, with `publish_results: true` so the score is
     visible publicly via scorecard.dev and surfaced as a README badge.
+    Workflow-level permissions narrowed from `read-all` to `contents:
+    read` per Copilot review on PR #7; the `analysis` job already
+    declares its full required scope (id-token, security-events,
+    contents, actions) explicitly.
   - `.github/workflows/dependency-review.yml` blocking PRs that
     introduce moderate-or-higher CVEs in the npm dependency closure
-    and denying AGPL-* licenses at the gate to protect Apache-2.0
-    downstream consumers.
+    and denying AGPL-* licenses (`AGPL-1.0-only`, `AGPL-1.0-or-later`,
+    `AGPL-3.0-only`, `AGPL-3.0-or-later` — all current SPDX
+    identifiers) at the gate to protect Apache-2.0 downstream
+    consumers.
 - Added CodeQL and OpenSSF Scorecard badges to the README badge row.
 - Added public-launch community files: issue templates, PR template,
   CODEOWNERS, Code of Conduct, and v1.0.2 release notes.

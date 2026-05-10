@@ -12,7 +12,13 @@ version: 2
 updates:
   - package-ecosystem: npm
     directory: "/"
-    target-branch: main
+    # NB: target-branch is NOT set. Per Codex review on PR #7,
+    # GitHub's Dependabot docs state that when target-branch is
+    # explicitly set, security updates fall back to the default
+    # branch and ignore the per-update-config options (groups,
+    # labels, commit-message). Since main IS the default branch
+    # here, declaring `target-branch: main` was redundant for
+    # version-updates AND silently broke security-update routing.
     schedule:
       interval: weekly
       day: monday
@@ -42,7 +48,13 @@ updates:
 
   - package-ecosystem: github-actions
     directory: "/"
-    target-branch: main
+    # NB: target-branch is NOT set. Per Codex review on PR #7,
+    # GitHub's Dependabot docs state that when target-branch is
+    # explicitly set, security updates fall back to the default
+    # branch and ignore the per-update-config options (groups,
+    # labels, commit-message). Since main IS the default branch
+    # here, declaring `target-branch: main` was redundant for
+    # version-updates AND silently broke security-update routing.
     schedule:
       interval: weekly
       day: monday
