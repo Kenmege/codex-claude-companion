@@ -26,11 +26,18 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
   surfaced by an external review of the same workflow file when ported
   to a sister repo:
   - Added `Bash`, `BashOutput`, and `KillShell` to `--disallowedTools`
-    for both auto-review steps. Closes a prompt-injection-to-secret-exfil
-    vector where a crafted file in an internal-branch PR could instruct
-    Claude to `curl` the runner's `CLAUDE_CODE_OAUTH_TOKEN` out of the
-    environment. The `interactive` job intentionally still permits Bash
-    because it is invoked by an authenticated maintainer.
+    on **both** the `auto-review` and `interactive` jobs. Closes a
+    prompt-injection-to-secret-exfil vector where a crafted file in a
+    PR diff could instruct Claude to `curl` the runner's
+    `CLAUDE_CODE_OAUTH_TOKEN` out of the environment. The interactive
+    fence was added in a follow-up commit on this same branch after a
+    residual maintainer-on-fork-PR exfil path was identified mid-
+    review (the env-level fork-head check cannot detect fork PRs from
+    `issue_comment` events because the PR object is not in that
+    payload). Cost is the occasional ability to ask Claude to run
+    shell during interactive sessions; that capability is mostly
+    covered by Pull Request CI anyway, and the token is the higher-
+    value asset.
   - Restricted the `interactive` job trigger to OWNER, MEMBER, and
     COLLABORATOR `author_association` values across all four event
     types (`issue_comment`, `pull_request_review_comment`,
@@ -50,9 +57,13 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
     workflows do not receive repository Actions secrets by default,
     so the auth preflight always failed; routing around it cleanly
     avoids noisy red checks on dep-update PRs.
-  - Deduplicated the OAuth and API-key prompt blocks via workflow-level
-    env vars (`CLAUDE_AUTO_REVIEW_PROMPT`, `CLAUDE_INTERACTIVE_PROMPT`)
-    so future prompt edits only need to land in one place.
+  - Deduplicated the OAuth and API-key prompt blocks via job-scoped
+    env vars (`CLAUDE_AUTO_REVIEW_PROMPT` on `auto-review`,
+    `CLAUDE_INTERACTIVE_PROMPT` on `interactive`) so future prompt
+    edits only need to land in one place. Job-scope rather than
+    workflow-scope means the auto-review prompt's interpolation of
+    `github.event.pull_request.number` only fires for `pull_request`
+    events (fix #6 from Copilot's second-pass review on PR #8).
   - Added `persist-credentials: false` to all `actions/checkout` steps
     so the default `GITHUB_TOKEN` is not left on disk inside the
     runner's `.git/config`.
@@ -66,20 +77,6 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
     you remember to add id-token: write to your workflow permissions?`
     (verified on PR #8 run 25627012564). The scope is restored with a
     comment block explaining why it is load-bearing.
-  - **M1 fix (Codex review of PR #8)**: extended the Bash fence to the
-    `interactive` job. Previously the `interactive` job intentionally
-    permitted Bash because it is invoked by an authenticated
-    maintainer; the residual exfil path is a maintainer @-mentioning
-    Claude on a fork-authored PR thread, where prompt-injected diff
-    content can steer Claude into running Bash with the OAuth token in
-    scope. The author_association gate at the trigger level blocks
-    non-collaborators; the env-level IS_UNTRUSTED_FORK_PR cannot
-    detect fork PRs from `issue_comment` events because the PR object
-    is not in that payload. Adding `--disallowedTools Edit,Write,
-    NotebookEdit,Bash,BashOutput,KillShell` to both interactive steps
-    closes the path. Cost is the occasional ability to ask Claude to
-    run shell during interactive sessions, which is mostly covered by
-    Pull Request CI anyway.
   - **L1 fix (Codex review of PR #8)**: added `|| ''` defensiveness on
     `github.event.comment.body` references in the `issue_comment` and
     `pull_request_review_comment` arms of the `interactive` trigger
@@ -90,6 +87,15 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
     action would re-fire the @claude trigger every time someone is
     assigned to an issue whose title or body contains @claude — a
     redundant trigger surface without added signal.
+  - **Comment + notice cleanup (fixes #7 and #9 from Copilot's
+    second-pass review on PR #8)**: removed the obsolete "interactive
+    job has Bash permitted" wording from the trigger-gate comment
+    block; rewrote the fork-PR skip notice to accurately describe
+    *why* the guard exists (CLAUDE_CODE_OAUTH_TOKEN is in scope on
+    `issue_comment` / `pull_request_review*` events; the guard skips
+    so Claude is not run with token access against fork-controlled
+    diff content). The previous notice incorrectly claimed secrets
+    were withheld, which is the opposite of why the guard is needed.
 
 ## [1.0.3] — 2026-05-08
 
