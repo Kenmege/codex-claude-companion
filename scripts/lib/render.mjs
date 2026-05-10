@@ -228,7 +228,21 @@ export function renderReviewResult(snapshot, result, job = null) {
 }
 
 function renderRichReviewResult(snapshot, result, job = null) {
-  const findings = [...(Array.isArray(result.parsed.findings) ? result.parsed.findings : [])].sort((left, right) => severityRank(left.severity) - severityRank(right.severity));
+  // Build a finding-identity → verification-entry map BEFORE sorting.
+  // `result.evidenceVerification.perFinding` is indexed by the original
+  // `parsed.findings` order; the severity-sort below would otherwise misalign
+  // a positional lookup (Copilot finding on PR #11). Using object identity
+  // keeps the lookup stable across any post-sort reordering, slicing, or
+  // future filtering.
+  const originalFindings = Array.isArray(result.parsed.findings) ? result.parsed.findings : [];
+  const verificationByFinding = new Map();
+  const perFinding = Array.isArray(result.evidenceVerification?.perFinding)
+    ? result.evidenceVerification.perFinding
+    : [];
+  for (let i = 0; i < originalFindings.length; i++) {
+    if (perFinding[i]) verificationByFinding.set(originalFindings[i], perFinding[i]);
+  }
+  const findings = [...originalFindings].sort((left, right) => severityRank(left.severity) - severityRank(right.severity));
   const lines = [
     `# Claude ${snapshot.reviewLabel}`,
     "",
@@ -290,7 +304,7 @@ function renderRichReviewResult(snapshot, result, job = null) {
           const source = ev.source ? ` [${ev.source}]` : "";
           lines.push(`- ${ev.tool}${source}: ${ev.query} -> ${ev.confirmed}`);
         }
-        const verification = result.evidenceVerification?.perFinding?.[index];
+        const verification = verificationByFinding.get(finding);
         if (verification && verification.unverified > 0) {
           // M2 cross-check signal: schema validation accepted the
           // citation, but the cited tool was not observed in the live

@@ -234,6 +234,97 @@ test("renderReviewResult surfaces M2 evidence cross-check warnings and aggregate
   assert.match(output, /1 finding\(s\) cite tools not observed/);
 });
 
+test("renderReviewResult attaches evidence cross-check to the right finding after severity sort", () => {
+  // Regression test for the Copilot finding on PR #11: renderRichReviewResult
+  // sorts findings by severity, but the verification array is indexed by the
+  // original parsed.findings order. Without an identity-keyed lookup, the
+  // ⚠ warning attaches to the wrong finding (or misses).
+  // Setup: parsed.findings is [LOW (verified), HIGH (unverified)]. After sort,
+  // HIGH renders first — so the ⚠ must appear under HIGH, not LOW.
+  const output = renderReviewResult(
+    {
+      reviewKind: "elite-review",
+      reviewLabel: "Elite Review",
+      targetLabel: "working tree diff",
+      model: "claude-opus-4-7",
+      effort: "max",
+      profile: "quality",
+      contextMode: "full"
+    },
+    {
+      parsed: {
+        verdict: "REQUEST_CHANGES",
+        ship_recommendation: "NO_SHIP",
+        executive_summary: "Sort-order regression check.",
+        systemic_risks: [],
+        findings: [
+          {
+            severity: "low",
+            confidence: 0.5,
+            risk_category: "style",
+            title: "LOW finding (verified)",
+            body: "Cited tool was actually invoked.",
+            failure_scenario: "n/a",
+            why_vulnerable: "n/a",
+            impact: "n/a",
+            exploitability: "n/a",
+            file: "src/low.js",
+            line_start: null,
+            line_end: null,
+            recommendation: "n/a",
+            test_gap: "n/a",
+            evidence: [{ tool: "Read", query: "src/low.js", confirmed: "ok" }]
+          },
+          {
+            severity: "high",
+            confidence: 0.9,
+            risk_category: "correctness",
+            title: "HIGH finding (UNVERIFIED)",
+            body: "Cited tool was NOT in the stream.",
+            failure_scenario: "n/a",
+            why_vulnerable: "n/a",
+            impact: "n/a",
+            exploitability: "n/a",
+            file: "src/high.js",
+            line_start: null,
+            line_end: null,
+            recommendation: "n/a",
+            test_gap: "n/a",
+            evidence: [{ tool: "Phantom", query: "x", confirmed: "made up" }]
+          }
+        ],
+        verified_claims: [],
+        blind_spots: [],
+        exploration_log: [],
+        next_steps: []
+      },
+      activity: { toolUseCount: 1, toolUses: [{ name: "Read", input: {} }] },
+      evidenceVerification: {
+        findingCount: 2,
+        findingsWithUnverifiedEvidence: 1,
+        perFinding: [
+          { index: 0, total: 1, verified: 1, unverified: 0, unverifiedTools: [] },
+          { index: 1, total: 1, verified: 0, unverified: 1, unverifiedTools: ["Phantom"] }
+        ]
+      }
+    }
+  );
+  // After severity sort HIGH comes first: per-finding warning must appear
+  // UNDER HIGH and BEFORE the LOW block.
+  const highIdx = output.indexOf("HIGH finding (UNVERIFIED)");
+  const lowIdx = output.indexOf("LOW finding (verified)");
+  // Match only the per-finding warning shape `⚠ Evidence cross-check: N/M
+  // cited tools observed`, not the aggregate footer's prose reference to
+  // `⚠ Evidence cross-check lines above`.
+  const perFindingRe = /⚠ Evidence cross-check: \d+\/\d+ cited tools observed/g;
+  const matches = [...output.matchAll(perFindingRe)];
+  const warnIdx = matches[0]?.index ?? -1;
+  assert.ok(highIdx !== -1 && lowIdx !== -1 && warnIdx !== -1, "all sections must render");
+  assert.ok(highIdx < warnIdx, "warning must appear after the HIGH header");
+  assert.ok(warnIdx < lowIdx, "warning must appear before the LOW header (i.e., attached to HIGH, not LOW)");
+  assert.equal(matches.length, 1, "expected exactly one per-finding cross-check warning");
+});
+
 test("renderSetupReport surfaces subscription-auth detection and safe-mode banner", () => {
   const subscriptionOutput = renderSetupReport({
     ready: true,

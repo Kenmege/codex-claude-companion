@@ -717,7 +717,11 @@ async function handleReviewLike(kind, argv) {
       completedAt: new Date().toISOString(),
       result: result.parsed,
       activity: result.activity,
-      invocationMeta: result.invocationMeta
+      invocationMeta: result.invocationMeta,
+      // Persist the M2 cross-check verification so background jobs and the
+      // `result` reconstruction in handleResult render the same warnings as
+      // foreground runs (Codex P2 finding on PR #11).
+      evidenceVerification: result.evidenceVerification ?? null
     });
     process.stdout.write(renderReviewResult(snapshot, result, { id: jobId }));
     if (reviewHasShipBlockers(result.parsed)) {
@@ -753,7 +757,11 @@ async function handleRunJob(argv) {
       completedAt: new Date().toISOString(),
       result: result.parsed,
       activity: result.activity,
-      invocationMeta: result.invocationMeta
+      invocationMeta: result.invocationMeta,
+      // Persist M2 cross-check verification so the `result` reconstruction
+      // in handleStatus/handleResult shows the same warnings as foreground
+      // runs (Codex P2 finding on PR #11).
+      evidenceVerification: result.evidenceVerification ?? null
     });
   } catch (error) {
     appendLogLine(cwd, jobId, `Failed: ${error.message}`, "error");
@@ -855,7 +863,15 @@ function handleResult(argv) {
   process.stdout.write(
     renderReviewResult(
       snapshot,
-      { parsed: job.result, activity: job.activity, invocationMeta: job.invocationMeta },
+      {
+        parsed: job.result,
+        activity: job.activity,
+        invocationMeta: job.invocationMeta,
+        // Surface the persisted M2 cross-check on `result` reconstruction.
+        // null is acceptable — the renderer already guards
+        // result.evidenceVerification?.findingCount.
+        evidenceVerification: job.evidenceVerification ?? null
+      },
       job
     )
   );
