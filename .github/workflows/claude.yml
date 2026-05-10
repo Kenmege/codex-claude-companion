@@ -10,7 +10,11 @@ on:
   pull_request_review:
     types: [submitted]
   issues:
-    types: [opened, assigned]
+    # `assigned` was removed (INFO-1 from Codex review of PR #8): it
+    # would re-fire the @claude trigger every time someone is assigned
+    # to an issue whose title or body contains @claude, which adds a
+    # redundant trigger surface without adding signal.
+    types: [opened]
 
 # id-token: write is required by anthropics/claude-code-action itself
 # (not by any user step in this workflow). The action exchanges an OIDC
@@ -126,8 +130,14 @@ jobs:
           # security review on currentness-guardian. A crafted file in an
           # internal-branch PR could otherwise prompt-inject Claude into
           # `curl`-ing the runner's CLAUDE_CODE_OAUTH_TOKEN out of the
-          # environment. The interactive job intentionally permits Bash
-          # because it is invoked by an authenticated maintainer.
+          # environment. The interactive job applies the same fence
+          # (M1 fix from Codex review of PR #8): even authenticated
+          # maintainers can be steered into invoking @claude on a fork-
+          # authored PR whose diff content is attacker-controlled, so
+          # the token is the highest-value asset to protect across both
+          # lanes. Both jobs now block Bash; cost is the occasional
+          # ability to ask @claude to run shell during interactive
+          # sessions, which is mostly covered by Pull Request CI anyway.
           claude_args: |
             --model claude-opus-4-7
             --max-turns 35
@@ -167,10 +177,10 @@ jobs:
     if: >-
       (
         (github.event_name == 'issue_comment'
-          && contains(github.event.comment.body, '@claude')
+          && contains(github.event.comment.body || '', '@claude')
           && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
         (github.event_name == 'pull_request_review_comment'
-          && contains(github.event.comment.body, '@claude')
+          && contains(github.event.comment.body || '', '@claude')
           && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
         (github.event_name == 'pull_request_review'
           && contains(github.event.review.body || '', '@claude')
@@ -228,9 +238,19 @@ jobs:
           # unset secret poisons SDK init and yields 401 Invalid bearer
           # token. Reference: https://code.claude.com/docs/en/authentication
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: >
+          # M1 fix (Codex review of PR #8): apply the same Bash fence
+          # as auto-review. Closes the residual exfil path where a
+          # maintainer @claude'ing a fork-authored PR would otherwise
+          # let prompt-injected diff content drive Claude into Bash
+          # with CLAUDE_CODE_OAUTH_TOKEN in scope. The author_association
+          # gate at the trigger level already blocks non-collaborators;
+          # this fence is the second layer for the maintainer-on-fork-PR
+          # case the env-level IS_UNTRUSTED_FORK_PR cannot detect on
+          # `issue_comment` events.
+          claude_args: >-
             --model claude-opus-4-7
             --max-turns 10
+            --disallowedTools Edit,Write,NotebookEdit,Bash,BashOutput,KillShell
             --append-system-prompt "${{ env.CLAUDE_INTERACTIVE_PROMPT }}"
 
       - name: Run Claude interactive response with API key
@@ -238,7 +258,8 @@ jobs:
         uses: anthropics/claude-code-action@9db782c3a17ef2bfc274cd17411bc3e0a5ba1345 # v1 -> v1.0.115 (pinned 2026-05-07)
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: >
+          claude_args: >-
             --model claude-opus-4-7
             --max-turns 10
+            --disallowedTools Edit,Write,NotebookEdit,Bash,BashOutput,KillShell
             --append-system-prompt "${{ env.CLAUDE_INTERACTIVE_PROMPT }}"

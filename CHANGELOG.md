@@ -66,6 +66,30 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
     you remember to add id-token: write to your workflow permissions?`
     (verified on PR #8 run 25627012564). The scope is restored with a
     comment block explaining why it is load-bearing.
+  - **M1 fix (Codex review of PR #8)**: extended the Bash fence to the
+    `interactive` job. Previously the `interactive` job intentionally
+    permitted Bash because it is invoked by an authenticated
+    maintainer; the residual exfil path is a maintainer @-mentioning
+    Claude on a fork-authored PR thread, where prompt-injected diff
+    content can steer Claude into running Bash with the OAuth token in
+    scope. The author_association gate at the trigger level blocks
+    non-collaborators; the env-level IS_UNTRUSTED_FORK_PR cannot
+    detect fork PRs from `issue_comment` events because the PR object
+    is not in that payload. Adding `--disallowedTools Edit,Write,
+    NotebookEdit,Bash,BashOutput,KillShell` to both interactive steps
+    closes the path. Cost is the occasional ability to ask Claude to
+    run shell during interactive sessions, which is mostly covered by
+    Pull Request CI anyway.
+  - **L1 fix (Codex review of PR #8)**: added `|| ''` defensiveness on
+    `github.event.comment.body` references in the `issue_comment` and
+    `pull_request_review_comment` arms of the `interactive` trigger
+    gate, matching the pattern already used for `review.body` and
+    `issue.body`/`issue.title`.
+  - **INFO-1 fix (Codex review of PR #8)**: narrowed the `issues`
+    trigger from `[opened, assigned]` to `[opened]`. The `assigned`
+    action would re-fire the @claude trigger every time someone is
+    assigned to an issue whose title or body contains @claude — a
+    redundant trigger surface without added signal.
 
 ## [1.0.3] — 2026-05-08
 
