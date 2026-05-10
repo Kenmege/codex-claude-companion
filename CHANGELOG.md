@@ -96,6 +96,29 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
     so Claude is not run with token access against fork-controlled
     diff content). The previous notice incorrectly claimed secrets
     were withheld, which is the opposite of why the guard is needed.
+  - **`--disallowedTools` argument format**: switched all four
+    `--disallowedTools` invocations from comma-separated
+    (`Edit,Write,...`) to space-separated multi-value
+    (`Edit Write NotebookEdit Bash BashOutput KillShell`). Both
+    forms are documented as supported by the Claude Code CLI, but
+    the repo's own helper (`scripts/lib/claude.mjs:194-196`) builds
+    the argv as `args.push("--disallowedTools", ...disallowedTools)`
+    — i.e., one flag followed by individual tool values as separate
+    args. Aligning the workflow with that convention removes any
+    parser-version ambiguity (Copilot review on PR #8, 2026-05-10).
+  - **`issue_comment` fork-PR resolution (Codex P1, 2026-05-10)**:
+    added a `resolve_pr_head` step that, on `issue_comment` events
+    on PR threads, calls `gh api repos/<repo>/pulls/<n>` to fetch
+    `head.repo.full_name` and exposes `is_fork` as a step output.
+    The preflight step now consults both the env-level
+    `IS_UNTRUSTED_FORK_PR` (which works for `pull_request_review*`
+    events where the PR object is in the payload) and the resolved
+    `IC_FORK` from the lookup step. Without this, a maintainer
+    commenting `@claude` on a fork-authored PR thread would still
+    pass the author_association gate and reach the Claude action
+    with `CLAUDE_CODE_OAUTH_TOKEN` in scope, with only the Bash
+    fence as a defense — closing the residual M1 path Codex
+    flagged in the second round.
 
 ## [1.0.3] — 2026-05-08
 
