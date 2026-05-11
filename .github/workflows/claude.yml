@@ -140,7 +140,7 @@ jobs:
           # sessions, which is mostly covered by Pull Request CI anyway.
           claude_args: |
             --model claude-opus-4-7
-            --max-turns 35
+            --max-turns 80
             --disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell
 
       - name: Run Claude auto review with API key
@@ -152,7 +152,7 @@ jobs:
           prompt: ${{ env.CLAUDE_AUTO_REVIEW_PROMPT }}
           claude_args: |
             --model claude-opus-4-7
-            --max-turns 35
+            --max-turns 80
             --disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell
 
   interactive:
