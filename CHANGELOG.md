@@ -6,6 +6,18 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- `.github/workflows/claude.yml`: bumped `--max-turns` from 35 to 80 on
+  both auto-review steps (OAuth + API-key). PR #11's substantive M2
+  implementation diff exhausted the 35-turn budget mid-review (the action
+  surfaced `error_max_turns`), even though Codex on the same diff
+  returned "no major issues." Interactive jobs stay at 10 turns — short
+  Q&A doesn't need more, and the interactive lane has its own
+  defense-in-depth (author_association gate + Bash fence + fork-PR
+  resolution via `gh api`) so a longer budget there only enlarges the
+  blast radius for prompt-injection without comparable benefit.
+
 ### Added
 
 - Supply-chain quality bundle for the public repo:
