@@ -603,6 +603,34 @@ test("enable inserts missing enabled key into an existing plugin stanza", () => 
   assert.match(written, /enabled = true/, "enabled key must be inserted when absent");
 });
 
+test("enable treats [[array_table]] as a stanza boundary", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-enable-arraytbl-"));
+  const configPath = path.join(tmpDir, "config.toml");
+  // Marketplace stanza has source_type but no source; followed by an array-of-tables.
+  // The missing source key MUST land inside the marketplace stanza, not under [[profiles]].
+  const arrayTableConfig =
+    `[marketplaces.claude-review-private]\nsource_type = "local"\n\n` +
+    `[[profiles]]\nname = "default"\n\n` +
+    `[[profiles]]\nname = "alt"\n\n` +
+    `[plugins."claude-review@claude-review-private"]\nenabled = true\n`;
+  fs.writeFileSync(configPath, arrayTableConfig, "utf8");
+  const result = spawnSync(process.execPath, [helper, "enable", "--config", configPath], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const written = fs.readFileSync(configPath, "utf8");
+  // The inserted source= line must appear BEFORE the first [[profiles]] header.
+  const marketplaceIdx = written.indexOf("[marketplaces.claude-review-private]");
+  const firstProfileIdx = written.indexOf("[[profiles]]");
+  const sourceIdx = written.search(/\nsource\s*=\s*"/);
+  assert.ok(marketplaceIdx >= 0 && firstProfileIdx >= 0 && sourceIdx >= 0);
+  assert.ok(sourceIdx < firstProfileIdx, "source key must be inserted before [[profiles]], not after");
+  assert.ok(sourceIdx > marketplaceIdx, "source key must be inserted after the marketplace header");
+  // Array-of-tables content must be intact.
+  assert.match(written, /\[\[profiles\]\]\nname = "default"/);
+});
+
 test("enable bounds stanza correctly when next header is indented", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-enable-indentnext-"));
   const configPath = path.join(tmpDir, "config.toml");

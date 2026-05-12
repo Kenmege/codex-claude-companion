@@ -710,7 +710,8 @@ function findNextSectionStart(content, fromOffset) {
     const lineEnd = nlIdx === -1 ? content.length : nlIdx;
     const line = content.slice(pos, lineEnd);
     const normalized = normalizeTomlLine(line);
-    if (normalized !== null && normalized.startsWith("[") && !normalized.startsWith("[[")) {
+    if (normalized !== null && normalized.startsWith("[")) {
+      // Treat both bare tables [foo] and array-of-tables [[foo]] as stanza boundaries.
       return pos;
     }
     if (nlIdx === -1) return -1;
