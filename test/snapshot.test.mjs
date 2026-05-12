@@ -163,6 +163,17 @@ test("runCommandCapture inputData pipes prompt bytes via stdin (no temp file)", 
   assert.equal(result.stdout, "hello-from-memory-stdin");
 });
 
+test("runCommandCapture inputData survives EPIPE when child closes stdin early", async () => {
+  // Child exits immediately (status 7) without reading stdin. The parent must not
+  // crash on EPIPE — we should still observe status 7 and the original exit reason.
+  const result = await runCommandCapture(
+    process.execPath,
+    ["-e", "process.exit(7);"],
+    { inputData: "x".repeat(64 * 1024), timeout: 5_000 }
+  );
+  assert.equal(result.status, 7);
+});
+
 test("runCommandCapture inputPath pipes a file via stdin (persisted prompt)", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rcap-inputpath-"));
   const file = path.join(dir, "input.txt");

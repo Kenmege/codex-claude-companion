@@ -122,6 +122,12 @@ export function runCommandCapture(command, args, options = {}) {
       // JUSTIFIED: close-on-already-closed fd is harmless and uncommon — node owns fd lifecycle for the child after spawn
       try { fs.closeSync(stdinFd); } catch (_closeErr) { /* fd handed to child */ }
     } else if (stdinMode === "pipe") {
+      // Some children (notably stub binaries that exit quickly, or claude in error
+      // states) close stdin before we finish writing — surfaces as EPIPE here. The
+      // child's exit code and stderr already tell the caller what happened; this
+      // handler prevents the EPIPE from crashing the parent.
+      // JUSTIFIED: EPIPE means the child closed stdin early — that's the child's signal, not our error
+      child.stdin.on("error", (_err) => { /* child closed stdin — observed via exit code */ });
       // Write the entire prompt and close stdin so the child receives EOF.
       child.stdin.end(options.inputData);
     }
