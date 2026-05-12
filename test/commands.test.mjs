@@ -140,6 +140,112 @@ test("folder subcommand requires a positional path argument", () => {
   assert.match(result.stderr, /Expected a directory path/);
 });
 
+test("doctor --json emits the full diagnostic payload with all expected keys", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-doctor-json-"));
+  const fakeConfig = path.join(tmpDir, "config.toml");
+  fs.writeFileSync(fakeConfig, "", "utf8");
+  const result = spawnSync(process.execPath, [helper, "doctor", "--json", "--config", fakeConfig], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.ok(result.stdout, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  for (const key of [
+    "ok",
+    "plugin_configured",
+    "plugin_loaded_in_current_session",
+    "requires_codex_reload",
+    "helper_available",
+    "helper_version",
+    "claude_cli_available",
+    "claude_authenticated",
+    "job_dir",
+    "job_dir_writable",
+    "supports_non_git_directory",
+    "prompt_transport",
+    "codex_config_path",
+    "codex_config_exists",
+    "problems",
+    "recommended_action"
+  ]) {
+    assert.ok(key in payload, `doctor payload missing key: ${key}`);
+  }
+  assert.equal(payload.prompt_transport, "stdin");
+  assert.equal(payload.helper_available, true);
+});
+
+test("doctor reports PLUGIN_NOT_CONFIGURED when config is empty", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-doctor-noplug-"));
+  const fakeConfig = path.join(tmpDir, "config.toml");
+  fs.writeFileSync(fakeConfig, "model = \"gpt-5.5\"\n", "utf8");
+  const result = spawnSync(process.execPath, [helper, "doctor", "--json", "--config", fakeConfig], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.plugin_configured, false);
+  assert.ok(payload.problems.some((p) => p.code === "PLUGIN_NOT_CONFIGURED"));
+  assert.match(payload.recommended_action, /enable/);
+});
+
+test("doctor JSON output is parseable on the human-readable path too", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-doctor-human-"));
+  const fakeConfig = path.join(tmpDir, "config.toml");
+  fs.writeFileSync(fakeConfig, "", "utf8");
+  const result = spawnSync(process.execPath, [helper, "doctor", "--config", fakeConfig], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  // Human-readable path: assert key labels are present.
+  assert.match(result.stdout, /Helper version:/);
+  assert.match(result.stdout, /Plugin configured in Codex:/);
+  assert.match(result.stdout, /Claude CLI available:/);
+  assert.match(result.stdout, /Prompt transport:\s+stdin/);
+  assert.match(result.stdout, /Recommended action:/);
+});
+
+test("CODEX_CLAUDE_REVIEW_JOB_DIR env var redirects job dir via fallback chain", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-jobdir-env-"));
+  const customJobDir = path.join(tmpDir, "custom-jobs");
+  const fakeConfig = path.join(tmpDir, "config.toml");
+  fs.writeFileSync(fakeConfig, "", "utf8");
+  const result = spawnSync(process.execPath, [helper, "doctor", "--json", "--config", fakeConfig], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, CODEX_CLAUDE_REVIEW_JOB_DIR: customJobDir }
+  });
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.job_dir, path.resolve(customJobDir));
+  assert.equal(payload.job_dir_writable, true);
+});
+
+test("errors emitted from any command honour --json with the structured envelope", () => {
+  const result = spawnSync(process.execPath, [helper, "folder", "--json"], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.notEqual(result.status, 0);
+  // stdout should carry the JSON envelope so callers parsing piped output get a useful object.
+  const envelope = JSON.parse(result.stdout);
+  assert.equal(envelope.ok, false);
+  assert.ok(typeof envelope.error_code === "string" && envelope.error_code.length > 0);
+  assert.ok(typeof envelope.message === "string" && envelope.message.length > 0);
+});
+
+test("--job-dir flag overrides everything else", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-jobdir-flag-"));
+  const customJobDir = path.join(tmpDir, "flag-jobs");
+  const fakeConfig = path.join(tmpDir, "config.toml");
+  fs.writeFileSync(fakeConfig, "", "utf8");
+  const result = spawnSync(
+    process.execPath,
+    [helper, "doctor", "--json", "--config", fakeConfig, "--job-dir", customJobDir],
+    { cwd: root, encoding: "utf8" }
+  );
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.job_dir, path.resolve(customJobDir));
+});
+
 test("adversarial command stays read-only", () => {
   const source = read("commands/adversarial-review.md");
   assert.match(source, /Keep this command read-only/i);

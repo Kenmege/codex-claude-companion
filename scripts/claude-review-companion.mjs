@@ -26,8 +26,9 @@ import {
 } from "./lib/claude.mjs";
 import { chooseContextMode, collectReviewContext, resolveReviewTarget } from "./lib/git.mjs";
 import { createDirectorySnapshot, isGitRepository } from "./lib/snapshot.mjs";
-import { spawnDetached, terminateProcessTree } from "./lib/process.mjs";
+import { runCommand, spawnDetached, terminateProcessTree } from "./lib/process.mjs";
 import {
+  JOB_DIR_ENV_VAR,
   appendLogLine,
   buildJobRecord,
   createJob,
@@ -37,6 +38,7 @@ import {
   readLogTail,
   resolveJobLogFile,
   resolveJobPromptFile,
+  resolveJobsDir,
   updateJob,
   writeJob,
   writeJobInput
@@ -164,6 +166,7 @@ function printUsage() {
       "Usage:",
       "  codex-claude-review enable",
       "  codex-claude-review setup",
+      "  codex-claude-review doctor [--json]",
       "  codex-claude-review folder <path> [flags] [focus text]",
       "  codex-claude-review review [flags] [focus text]",
       "  codex-claude-review adversarial-review [flags] [focus text]",
@@ -181,6 +184,7 @@ function printUsage() {
       "  --scope auto|working-tree|branch|directory",
       "  --exclude <basename>        repeatable; extra dirs to exclude from non-Git snapshot",
       "  --snapshot-temp-root <dir>  override temp root for the snapshot (default: os.tmpdir())",
+      "  --job-dir <path>            override job artifact directory (env: CODEX_CLAUDE_REVIEW_JOB_DIR)",
       "  --model <name>              override model (default: claude-opus-4-7)",
       "  --effort low|medium|high|xhigh|max",
       "  --profile quality|long-context",
@@ -957,6 +961,182 @@ function handleSetup(argv) {
   process.stdout.write(renderSetupReport(payload));
 }
 
+/**
+ * Deep diagnostic — reports the live state of every dependency the helper needs:
+ * plugin config in ~/.codex/config.toml, Codex session awareness (best-effort),
+ * Claude CLI availability + auth, job-dir writability, snapshot capability,
+ * prompt transport mode. Emits a structured `problems[]` and a `recommended_action`
+ * so the user (or Codex) can fix the first failure deterministically.
+ */
+function handleDoctor(argv) {
+  const { options } = parseCommandInput(argv, { booleanOptions: ["json"], valueOptions: ["cwd", "config", "job-dir"] });
+  const cwd = path.resolve(options.cwd ?? process.cwd());
+
+  // Plugin configuration in ~/.codex/config.toml (or --config override).
+  const codexConfigPath = options.config
+    ? path.resolve(options.config)
+    : path.join(os.homedir(), ".codex", "config.toml");
+  let pluginConfigured = false;
+  let configPathExists = false;
+  let configReadError = null;
+  try {
+    const raw = fs.readFileSync(codexConfigPath, "utf8");
+    configPathExists = true;
+    pluginConfigured =
+      raw.includes(`[marketplaces.${CODEX_MARKETPLACE_KEY}]`) &&
+      raw.includes(`[plugins."${CODEX_PLUGIN_KEY}"]`);
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      configReadError = err.message;
+    }
+  }
+
+  // Codex session awareness — heuristic. Codex doesn't expose a public env var yet,
+  // so we look for any CODEX_* env var or the well-known CODEX_PLUGIN_ROOT marker.
+  // When unknown we return `null` rather than `false` so the caller can disambiguate.
+  const codexEnvSignals = Object.keys(process.env).filter((k) => k.startsWith("CODEX_"));
+  const pluginLoadedInCurrentSession =
+    process.env.CODEX_PLUGIN_ROOT
+      ? true
+      : codexEnvSignals.length > 0
+        ? null
+        : false;
+
+  // Helper itself is by definition available — we are running it.
+  const helperAvailable = true;
+  const helperVersion = getPackageVersion();
+
+  // Claude availability + auth — reuse the existing setup payload (without the
+  // expensive runtime probe to keep doctor fast).
+  const claude = getClaudeAvailability(cwd);
+  const auth = claude.available ? getClaudeAuthStatus(cwd) : { loggedIn: false, detail: "claude unavailable" };
+  const claudeCliAvailable = Boolean(claude.available);
+  const claudeAuthenticated = Boolean(claude.available && auth.loggedIn);
+
+  // Job-dir writability — probe the fallback chain.
+  let jobDir = null;
+  let jobDirWritable = false;
+  let jobDirError = null;
+  try {
+    jobDir = resolveJobsDir(cwd, options["job-dir"] ? { jobDir: options["job-dir"] } : {});
+    jobDirWritable = true;
+  } catch (err) {
+    jobDirError = err.message;
+  }
+
+  // Snapshot capability — gated only on git binary being available.
+  const gitProbe = runCommand("git", ["--version"], { cwd });
+  const supportsNonGitDirectory = !gitProbe.error && gitProbe.status === 0;
+
+  // Prompt transport — Wave 1 sets this to "stdin" unconditionally.
+  const promptTransport = "stdin";
+
+  // Problems + recommended action.
+  const problems = [];
+  if (!pluginConfigured) {
+    problems.push({
+      code: "PLUGIN_NOT_CONFIGURED",
+      message: configPathExists
+        ? `Codex config at ${codexConfigPath} does not contain the claude-review marketplace/plugin stanzas.`
+        : `Codex config not found at ${codexConfigPath}.`,
+      recovery: "Run `codex-claude-review enable` to register the plugin."
+    });
+  }
+  if (!claudeCliAvailable) {
+    problems.push({
+      code: "CLAUDE_CLI_MISSING",
+      message: claude.detail,
+      recovery: "Install Claude Code CLI and ensure `claude` is on PATH."
+    });
+  } else if (!claudeAuthenticated) {
+    problems.push({
+      code: "CLAUDE_NOT_AUTHENTICATED",
+      message: auth.detail || "Claude CLI is not signed in.",
+      recovery: "Run `claude auth login`."
+    });
+  }
+  if (!jobDirWritable) {
+    problems.push({
+      code: "JOB_DIR_UNWRITABLE",
+      message: jobDirError || "No writable job directory in the fallback chain.",
+      recovery: `Set ${JOB_DIR_ENV_VAR}=<path> or pass --job-dir <path>.`
+    });
+  }
+  if (!supportsNonGitDirectory) {
+    problems.push({
+      code: "GIT_BINARY_MISSING",
+      message: "git binary not found; snapshot mode for non-Git directories will fail.",
+      recovery: "Install git and ensure it is on PATH."
+    });
+  }
+  if (pluginLoadedInCurrentSession === false && pluginConfigured) {
+    problems.push({
+      code: "PLUGIN_NOT_LOADED_IN_SESSION",
+      message: "Plugin is registered in config but the current shell does not appear to be a Codex session.",
+      recovery: "Restart Codex CLI, or use the helper directly (`codex-claude-review folder <path>`)."
+    });
+  }
+
+  const recommendedAction = problems.length > 0
+    ? problems[0].recovery
+    : "All checks passed. Run `codex-claude-review folder <path>` to review a directory.";
+
+  const payload = {
+    ok: problems.length === 0,
+    plugin_configured: pluginConfigured,
+    plugin_loaded_in_current_session: pluginLoadedInCurrentSession,
+    requires_codex_reload: pluginConfigured && pluginLoadedInCurrentSession !== true,
+    helper_available: helperAvailable,
+    helper_version: helperVersion,
+    claude_cli_available: claudeCliAvailable,
+    claude_authenticated: claudeAuthenticated,
+    job_dir: jobDir,
+    job_dir_writable: jobDirWritable,
+    supports_non_git_directory: supportsNonGitDirectory,
+    prompt_transport: promptTransport,
+    codex_config_path: codexConfigPath,
+    codex_config_exists: configPathExists,
+    codex_config_read_error: configReadError,
+    problems,
+    recommended_action: recommendedAction
+  };
+
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+
+  const lines = [
+    "codex-claude-review doctor",
+    "==========================",
+    "",
+    `Helper version:                 ${payload.helper_version}`,
+    `Plugin configured in Codex:     ${payload.plugin_configured ? "YES" : "NO"} (${codexConfigPath})`,
+    `Plugin loaded in current session: ${payload.plugin_loaded_in_current_session === null ? "UNKNOWN" : payload.plugin_loaded_in_current_session ? "YES" : "NO"}`,
+    `Claude CLI available:           ${payload.claude_cli_available ? "YES" : "NO"}`,
+    `Claude authenticated:           ${payload.claude_authenticated ? "YES" : "NO"}`,
+    `Job dir writable:               ${payload.job_dir_writable ? "YES" : "NO"} (${payload.job_dir ?? "—"})`,
+    `Supports non-Git directory:     ${payload.supports_non_git_directory ? "YES" : "NO"}`,
+    `Prompt transport:               ${payload.prompt_transport}`,
+    ""
+  ];
+  if (problems.length > 0) {
+    lines.push(`Problems (${problems.length}):`);
+    for (const p of problems) {
+      lines.push(`  - [${p.code}] ${p.message}`);
+      lines.push(`        → ${p.recovery}`);
+    }
+    lines.push("");
+  }
+  lines.push(`Recommended action: ${recommendedAction}`);
+  lines.push("");
+  process.stdout.write(lines.join("\n"));
+
+  if (problems.length > 0) {
+    process.exitCode = 1;
+  }
+}
+
 async function handleFolder(argv) {
   // Extract the first positional that does not look like a flag and rewrite the argv
   // into `--path <positional> [...remaining]` so handleReviewLike can do the rest.
@@ -990,6 +1170,13 @@ async function handleReviewLike(kind, argv) {
   // `--path` is the new directory-targeting flag; `--cwd` is retained for back-compat.
   const userCwd = path.resolve(options.path ?? options.cwd ?? process.cwd());
   const focusText = positionals.join(" ").trim();
+
+  // `--job-dir <path>` is the highest-priority job-storage override. We surface it as
+  // an env var so every state.mjs helper picks it up without threading the option
+  // through every call site.
+  if (options["job-dir"]) {
+    process.env.CODEX_CLAUDE_REVIEW_JOB_DIR = path.resolve(options["job-dir"]);
+  }
 
   // Decide whether we need a directory snapshot:
   //   - explicit --scope directory
@@ -1270,6 +1457,9 @@ async function main() {
       case "setup":
         handleSetup(argv);
         break;
+      case "doctor":
+        handleDoctor(argv);
+        break;
       case "review":
         await handleReviewLike("review", argv);
         break;
@@ -1307,7 +1497,21 @@ async function main() {
         process.exitCode = 2;
     }
   } catch (error) {
-    process.stderr.write(`${error.message}\n`);
+    const jsonRequested = process.argv.slice(2).includes("--json");
+    if (jsonRequested) {
+      // Structured error envelope — same shape Codex expects from the doctor
+      // command so error handling is uniform across the CLI.
+      const envelope = {
+        ok: false,
+        error_code: error.code ?? (isUsageOrValidationError(error) ? "USAGE_ERROR" : "INTERNAL_ERROR"),
+        message: error.message,
+        recovery: error.recovery ?? null,
+        retryable: Boolean(error.retryable ?? false)
+      };
+      process.stdout.write(`${JSON.stringify(envelope, null, 2)}\n`);
+    } else {
+      process.stderr.write(`${error.message}\n`);
+    }
     process.exitCode = isUsageOrValidationError(error) ? 2 : 1;
   }
 }

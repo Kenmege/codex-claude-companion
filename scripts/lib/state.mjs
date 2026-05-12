@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { resolveWorkspaceRoot } from "./workspace.mjs";
@@ -6,6 +7,7 @@ import { resolveWorkspaceRoot } from "./workspace.mjs";
 const STATE_DIR_NAME = ".claude-review";
 const JOBS_DIR_NAME = "jobs";
 export const JOB_SCHEMA_VERSION = 1;
+export const JOB_DIR_ENV_VAR = "CODEX_CLAUDE_REVIEW_JOB_DIR";
 
 function nowIso() {
   return new Date().toISOString();
@@ -19,12 +21,65 @@ export function resolveStateDir(cwd) {
   return path.join(resolveWorkspaceRoot(cwd), STATE_DIR_NAME);
 }
 
-export function resolveJobsDir(cwd) {
-  return path.join(resolveStateDir(cwd), JOBS_DIR_NAME);
+/**
+ * Test whether `dir` can be created and written to. Used by the fallback chain
+ * to skip un-writable candidates (e.g. sandboxed home dirs on Windows).
+ */
+function canWriteDir(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const probe = path.join(dir, `.write-probe-${process.pid}-${Date.now().toString(36)}`);
+    fs.writeFileSync(probe, "ok", { mode: 0o600 });
+    fs.unlinkSync(probe);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-export function ensureStateDir(cwd) {
-  fs.mkdirSync(resolveJobsDir(cwd), { recursive: true });
+/**
+ * Resolve the jobs directory using the configured fallback chain. Order:
+ *   1. options.jobDir (explicit --job-dir)
+ *   2. process.env[CODEX_CLAUDE_REVIEW_JOB_DIR]
+ *   3. <project>/.claude-review/jobs (legacy default — preserves existing flows)
+ *   4. <home>/.claude-review/jobs
+ *   5. <os.tmpdir>/claude-review/jobs
+ *
+ * Returns the first candidate that can be created + written to. Returning a
+ * tmpdir fallback never raises — sandboxed environments always get a writable
+ * dir even when $HOME is read-only.
+ */
+export function resolveJobsDir(cwd, options = {}) {
+  const explicit = options.jobDir ? path.resolve(options.jobDir) : null;
+  const envOverride = process.env[JOB_DIR_ENV_VAR]
+    ? path.resolve(process.env[JOB_DIR_ENV_VAR])
+    : null;
+
+  let projectDefault = null;
+  try {
+    projectDefault = path.join(resolveStateDir(cwd), JOBS_DIR_NAME);
+  } catch {
+    // resolveWorkspaceRoot fails outside a git repo; that branch is fine for
+    // snapshot mode where cwd is a fresh git repo, but be defensive anyway.
+    projectDefault = null;
+  }
+
+  const homeDefault = path.join(os.homedir(), ".claude-review", "jobs");
+  const tmpFallback = path.join(os.tmpdir(), "claude-review", "jobs");
+
+  const candidates = [explicit, envOverride, projectDefault, homeDefault, tmpFallback].filter(Boolean);
+  for (const candidate of candidates) {
+    if (canWriteDir(candidate)) return candidate;
+  }
+  // tmpdir should always be writable; if not, throw with the full attempted list.
+  throw new Error(
+    `Could not find a writable job directory. Tried: ${candidates.join(", ")}. ` +
+    `Set ${JOB_DIR_ENV_VAR}=<path> or pass --job-dir <path> to override.`
+  );
+}
+
+export function ensureStateDir(cwd, options = {}) {
+  fs.mkdirSync(resolveJobsDir(cwd, options), { recursive: true });
 }
 
 export function resolveJobFile(cwd, jobId) {
