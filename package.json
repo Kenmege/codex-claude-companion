@@ -16,6 +16,7 @@
     "codex-claude-review": "scripts/claude-review-companion.mjs"
   },
   "files": [
+    ".agents/",
     ".codex-plugin/",
     "commands/",
     "schemas/",

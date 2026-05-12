@@ -287,6 +287,132 @@ test("setup json redacts authenticated account identity", () => {
   assert.equal(payload.auth.redacted, true);
 });
 
+test("enable writes marketplace and plugin stanzas to a fresh config", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-enable-fresh-"));
+  const configPath = path.join(tmpDir, "config.toml");
+  const result = spawnSync(process.execPath, [helper, "enable", "--config", configPath], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Plugin registered/);
+  assert.match(result.stdout, /Changed:/);
+  assert.match(result.stdout, /Restart Codex CLI/);
+  const written = fs.readFileSync(configPath, "utf8");
+  assert.match(written, /\[marketplaces\.claude-review-private\]/);
+  assert.match(written, /source_type = "local"/);
+  assert.match(written, /\[plugins\."claude-review@claude-review-private"\]/);
+  assert.match(written, /enabled = true/);
+});
+
+test("enable is idempotent — running twice does not duplicate stanzas", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-enable-idempotent-"));
+  const configPath = path.join(tmpDir, "config.toml");
+  spawnSync(process.execPath, [helper, "enable", "--config", configPath], { cwd: root, encoding: "utf8" });
+  const result = spawnSync(process.execPath, [helper, "enable", "--config", configPath], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /already registered/);
+  const written = fs.readFileSync(configPath, "utf8");
+  const marketplaceCount = (written.match(/\[marketplaces\.claude-review-private\]/g) ?? []).length;
+  const pluginCount = (written.match(/\[plugins\."claude-review@claude-review-private"\]/g) ?? []).length;
+  assert.equal(marketplaceCount, 1);
+  assert.equal(pluginCount, 1);
+});
+
+test("enable --dry-run reports what would be added without writing the config file", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-enable-dryrun-"));
+  const configPath = path.join(tmpDir, "config.toml");
+  const result = spawnSync(process.execPath, [helper, "enable", "--dry-run", "--config", configPath], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /\[dry-run\]/);
+  assert.match(result.stdout, /claude-review-private/);
+  assert.equal(fs.existsSync(configPath), false, "--dry-run must not write the config file");
+});
+
+test("enable --json emits machine-parseable registration result", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-enable-json-"));
+  const configPath = path.join(tmpDir, "config.toml");
+  const result = spawnSync(process.execPath, [helper, "enable", "--json", "--config", configPath], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(typeof payload.configPath, "string");
+  assert.equal(typeof payload.pluginRoot, "string");
+  assert.equal(payload.alreadyEnabled, false);
+  assert.equal(payload.dryRun, false);
+  assert.ok(Array.isArray(payload.added) && payload.added.length > 0);
+});
+
+test("enable preserves existing config content when appending stanzas", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-enable-preserve-"));
+  const configPath = path.join(tmpDir, "config.toml");
+  const existing = `model = "gpt-5.5"\n\n[agents]\nmax_depth = 2\n`;
+  fs.writeFileSync(configPath, existing, "utf8");
+  const result = spawnSync(process.execPath, [helper, "enable", "--config", configPath], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const written = fs.readFileSync(configPath, "utf8");
+  assert.ok(written.startsWith(existing), "existing config content must be preserved verbatim");
+  assert.match(written, /\[marketplaces\.claude-review-private\]/);
+});
+
+test("enable source path uses forward slashes on all platforms", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-enable-slashes-"));
+  const configPath = path.join(tmpDir, "config.toml");
+  spawnSync(process.execPath, [helper, "enable", "--config", configPath], { cwd: root, encoding: "utf8" });
+  const written = fs.readFileSync(configPath, "utf8");
+  assert.doesNotMatch(written, /source = ".*\\.*"/, "TOML source path must use forward slashes");
+});
+
+test("enable updates a stale marketplace source path", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-enable-stale-"));
+  const configPath = path.join(tmpDir, "config.toml");
+  const staleConfig =
+    `[marketplaces.claude-review-private]\nsource_type = "local"\nsource = "/old/stale/path"\n\n` +
+    `[plugins."claude-review@claude-review-private"]\nenabled = true\n`;
+  fs.writeFileSync(configPath, staleConfig, "utf8");
+  const result = spawnSync(process.execPath, [helper, "enable", "--config", configPath], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Changed:/);
+  const written = fs.readFileSync(configPath, "utf8");
+  assert.doesNotMatch(written, /\/old\/stale\/path/, "stale source path must be replaced");
+  assert.ok(
+    written.includes(root.split(path.sep).join("/")),
+    "source must reflect current install path"
+  );
+});
+
+test("enable flips enabled = false to true for a disabled plugin", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-enable-reenable-"));
+  const configPath = path.join(tmpDir, "config.toml");
+  const disabledConfig =
+    `[marketplaces.claude-review-private]\nsource_type = "local"\nsource = "/some/path"\n\n` +
+    `[plugins."claude-review@claude-review-private"]\nenabled = false\n`;
+  fs.writeFileSync(configPath, disabledConfig, "utf8");
+  const result = spawnSync(process.execPath, [helper, "enable", "--config", configPath], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Changed:/);
+  const written = fs.readFileSync(configPath, "utf8");
+  assert.doesNotMatch(written, /enabled = false/);
+  assert.match(written, /enabled = true/);
+});
+
 test("status finalizes running jobs older than timeout as failed with a reason", () => {
   const cwd = makeDirtyRepo();
   const jobId = "review-stale";

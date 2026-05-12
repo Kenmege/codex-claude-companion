@@ -23,8 +23,11 @@ Malformed structured output fails closed.
 git clone https://github.com/Kenmege/codex-plugin-cc.git
 cd codex-plugin-cc
 npm install -g .
+codex-claude-review enable
 codex-claude-review setup
 ```
+
+`enable` writes the marketplace and plugin stanzas to `~/.codex/config.toml` (cross-platform). Run it once after install; it is idempotent. Restart Codex CLI after running it.
 
 Then run a review from any git workspace:
 

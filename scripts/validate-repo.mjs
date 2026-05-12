@@ -14,6 +14,7 @@ const required = [
   "commands/elite-review.md",
   "commands/deep-review.md",
   "commands/security-review.md",
+  "commands/enable.md",
   "commands/setup.md",
   "commands/status.md",
   "commands/result.md",
@@ -141,7 +142,7 @@ if (!marketplacePlugin) {
   throw new Error(".agents/plugins/marketplace.json must expose the .codex-plugin plugin name.");
 }
 
-if (marketplacePlugin.source?.source !== "local" || marketplacePlugin.source?.path !== ".") {
+if (marketplacePlugin.source?.source !== "local" || marketplacePlugin.source?.path !== "./") {
   throw new Error(".agents/plugins/marketplace.json must install the plugin from the local repo root.");
 }
 
