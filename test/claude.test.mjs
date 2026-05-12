@@ -1090,6 +1090,43 @@ test("crossCheckEvidenceAgainstStream flags fabricated tool citations not in the
   assert.deepEqual(verification.perFinding[0].unverifiedTools, ["FabricatedScanner"]);
 });
 
+test("crossCheckEvidenceAgainstStream rejects fabricated parametrized Bash citations (Copilot PR #11)", () => {
+  // Regression: pre-fix logic added every observed name's base-family as a
+  // shadow entry to the observed set, so a fabricated parametrized citation
+  // matched against an unrelated observed parametrization purely on shared
+  // family name. Post-fix: parametrized cited needs either an exact literal
+  // match OR a bare-family observed (`Bash` literal); parametrized cited
+  // against a different parametrized observed must NOT match.
+  const parsed = {
+    findings: [
+      { evidence: [{ tool: "Bash(rm -rf /:*)", query: "x", confirmed: "made up" }] }
+    ]
+  };
+  const activity = {
+    toolUses: [{ name: "Bash(node scripts/bin/git-safe.mjs:*)", input: {} }]
+  };
+  const verification = crossCheckEvidenceAgainstStream(parsed, activity);
+  assert.equal(verification.findingsWithUnverifiedEvidence, 1);
+  assert.equal(verification.perFinding[0].unverified, 1);
+  assert.deepEqual(verification.perFinding[0].unverifiedTools, ["Bash(rm -rf /:*)"]);
+});
+
+test("crossCheckEvidenceAgainstStream still allows bare/parametrized leniency on one side", () => {
+  // Post-fix the legitimate one-side-bare matching still works:
+  //   bare cited matches parametrized observed (cited side unparametrized);
+  //   parametrized cited matches bare observed (observed side unparametrized).
+  const v1 = crossCheckEvidenceAgainstStream(
+    { findings: [{ evidence: [{ tool: "Bash", query: "x", confirmed: "ok" }] }] },
+    { toolUses: [{ name: "Bash(node --check:*)", input: {} }] }
+  );
+  assert.equal(v1.findingsWithUnverifiedEvidence, 0);
+  const v2 = crossCheckEvidenceAgainstStream(
+    { findings: [{ evidence: [{ tool: "Bash(node --check:*)", query: "x", confirmed: "ok" }] }] },
+    { toolUses: [{ name: "Bash", input: {} }] }
+  );
+  assert.equal(v2.findingsWithUnverifiedEvidence, 0);
+});
+
 test("crossCheckEvidenceAgainstStream matches Bash family on parametrized observed names", () => {
   // The agent may cite the parametrized form `Bash(node scripts/bin/git-safe.mjs:*)`
   // OR the bare family `Bash` — either should match an observed call of either.

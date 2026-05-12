@@ -13,9 +13,9 @@ high-scrutiny adversarial review of any diff. The reviewer gets read-only
 workspace access through `Read`, `Glob`, `Grep`, Task sub-agents, a
 domain-fenced `WebFetch`, and a narrow git wrapper. It does not get `Edit`,
 `Write`, raw shell, or arbitrary git by default. Every elite-tier finding must
-cite tool-call evidence, the cited tool is cross-checked against the live
-tool-use stream so a fabricated citation surfaces in the rendered output, and
-malformed structured output fails closed.
+cite tool-call evidence, and the cited tool is cross-checked against the live
+tool-use stream so a fabricated citation surfaces in the rendered output.
+Malformed structured output fails closed.
 
 ## 60-Second Quickstart
 

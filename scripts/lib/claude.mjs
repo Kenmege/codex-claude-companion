@@ -426,19 +426,48 @@ function parseClaudeValidatedReviewOutput(stdout, reviewKind) {
 function collectObservedToolNames(activity) {
   // The Claude Code stream emits tool-use events with names like `Read`,
   // `Grep`, `WebFetch`, `Task`, or parametrized forms like
-  // `Bash(node scripts/bin/git-safe.mjs:*)`. Evidence citations may use
-  // the parametrized form, the bare-name form, or just the tool family
-  // (`Bash`). Index both the literal name AND the bare-family base so a
-  // citation of either matches an observed call of either.
+  // `Bash(node scripts/bin/git-safe.mjs:*)`. Return the set of LITERAL
+  // observed names — we deliberately do NOT pre-synthesize a base-family
+  // shadow set for parametrized observed names. Pre-synthesizing would
+  // let a fabricated parametrized citation (e.g., `Bash(rm -rf:*)`) match
+  // against an unrelated observed parametrization (`Bash(node --check:*)`)
+  // purely on shared family, hiding evidence fabrication. Base-family
+  // equivalence is now computed at compare time and only when one side is
+  // bare (Copilot finding on PR #11).
   const names = new Set();
   for (const use of activity?.toolUses ?? []) {
     const raw = typeof use?.name === "string" ? use.name.trim() : "";
     if (!raw) continue;
     names.add(raw);
-    const baseName = raw.split("(")[0].trim();
-    if (baseName && baseName !== raw) names.add(baseName);
   }
   return names;
+}
+
+function citationBaseFamily(name) {
+  return name.split("(")[0].trim();
+}
+
+function citationMatchesObserved(cited, observedSet) {
+  // Exact literal match — always counts (parametrized↔parametrized same
+  // form, bare↔bare same name).
+  if (observedSet.has(cited)) return true;
+  const citedBase = citationBaseFamily(cited);
+  const citedIsBare = citedBase === cited;
+  if (citedIsBare) {
+    // Bare citation matches any parametrized observed of the same family
+    // (e.g., cited `Bash` vs observed `Bash(node scripts/...)`). This is
+    // the legitimate "I used some Bash" loose claim.
+    for (const obs of observedSet) {
+      const obsBase = citationBaseFamily(obs);
+      if (obsBase === cited && obsBase !== obs) return true;
+    }
+    return false;
+  }
+  // Parametrized citation matches bare observed of the same family
+  // (e.g., cited `Bash(node --check:*)` vs observed `Bash`). It does NOT
+  // match a different parametrized observed — that's the fabrication
+  // path the M2 cross-check exists to surface.
+  return observedSet.has(citedBase);
 }
 
 export function crossCheckEvidenceAgainstStream(parsed, activity) {
@@ -481,9 +510,7 @@ export function crossCheckEvidenceAgainstStream(parsed, activity) {
         unverifiedTools.push("(unnamed)");
         continue;
       }
-      const baseName = cited.split("(")[0].trim();
-      const matches = observed.has(cited) || (baseName && observed.has(baseName));
-      if (matches) {
+      if (citationMatchesObserved(cited, observed)) {
         verified += 1;
       } else {
         unverifiedTools.push(cited);
@@ -1336,6 +1363,13 @@ export async function runClaudeStructuredReview(cwd, snapshot, reviewKind, schem
         parsed: fallback.parsed,
         activity: fallback.activity,
         fallbackMarkdown: fallback.fallbackMarkdown,
+        // Shape parity with the structured success return — the markdown
+        // fallback produces no structured findings to cross-check, so the
+        // verification is a benign zero-shape. Keeping the field present
+        // (rather than absent) means consumers (persistence, renderer,
+        // status reconstruction) don't have to branch on whether the
+        // fallback was used (Copilot finding on PR #11).
+        evidenceVerification: { findingCount: 0, findingsWithUnverifiedEvidence: 0, perFinding: [] },
         invocationMeta: {
           subscriptionAuth,
           suppressedBudget: invocation.suppressedBudget,

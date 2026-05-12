@@ -35,6 +35,19 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
   (sub-agent `Task` calls do not appear in the parent stream, so an
   unverified annotation can be a sub-agent signal rather than a
   fabrication). Operator judgment, not hard failure.
+  - Tightened Bash-family equivalence post-Copilot review on PR #11:
+    parametrized citations must match exactly (or against a bare-family
+    observed). Pre-fix, any `Bash(...)` citation matched if any
+    `Bash(...)` had been observed — hiding fabricated citations like
+    `Bash(rm -rf /:*)` when the run only invoked the git-safe wrapper.
+    Bare-family leniency remains for one-side-bare cases (cited `Bash`
+    vs observed `Bash(...)`, or cited `Bash(...)` vs observed `Bash`).
+  - Markdown fallback path now also returns the
+    `evidenceVerification` field (zero-shape — no structured findings
+    in the fallback) so the function's return shape is consistent
+    regardless of whether the structured probe or the markdown
+    fallback ran. Avoids consumer-side branching on
+    `result.evidenceVerification == null` (Copilot review on PR #11).
 - Supply-chain quality bundle for the public repo:
   - `.github/dependabot.yml` for weekly grouped npm + GitHub Actions
     version-updates. Security advisories flow individually (no
