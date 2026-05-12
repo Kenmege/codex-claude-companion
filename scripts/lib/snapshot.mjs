@@ -180,8 +180,17 @@ export function createDirectorySnapshot(sourceRoot, options = {}) {
   const { copiedFiles, totalBytes, skipped } = copyTree(absSourceRoot, snapshotRoot, excludes, limits);
 
   // Write a defensive .gitignore so review job artifacts never get committed.
+  // Use a single readFileSync with try/catch instead of existsSync-then-read to
+  // avoid a TOCTOU race (js/file-system-race) — the snapshot dir is freshly
+  // mkdtemp'd and exclusive to us, but the pattern is still safer.
   const gitignorePath = path.join(snapshotRoot, ".gitignore");
-  const existingIgnore = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
+  let existingIgnore;
+  try {
+    existingIgnore = fs.readFileSync(gitignorePath, "utf8");
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+    existingIgnore = "";
+  }
   const requiredIgnoreLines = [".claude-review/", "*.codex-snapshot.meta.json"];
   let newIgnore = existingIgnore;
   for (const line of requiredIgnoreLines) {
