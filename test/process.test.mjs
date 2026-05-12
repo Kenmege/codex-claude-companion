@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { runCommandCapture, spawnDetached } from "../scripts/lib/process.mjs";
+import { runCommandCapture, spawnDetached, killProcessTree, terminateProcessTree } from "../scripts/lib/process.mjs";
 
 test("runCommandCapture escalates timeout to SIGKILL when SIGTERM is ignored", { skip: process.platform === "win32" }, async () => {
   const result = await runCommandCapture(
@@ -70,6 +70,67 @@ test("runCommandCapture exposes timeout diagnostics and lifecycle callbacks", as
   assert.ok(events.some(([name]) => name === "stderr"));
   assert.ok(events.some(([name]) => name === "timeout"));
   assert.equal(events.at(-1)[0], "close");
+});
+
+test("killProcessTree kills a parent AND its descendant — cross-platform", async () => {
+  // Spawn a parent that itself spawns a long-running child, then send
+  // killProcessTree at the parent. On POSIX we use `-pid` group semantics;
+  // on Windows we use taskkill /t. Either way the descendant must be reaped.
+  // We avoid relying on shell quirks by using node -e on both branches.
+  const { spawn } = await import("node:child_process");
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      // Parent spawns a long-lived child, prints the child PID, then sleeps.
+      "const{spawn}=require('node:child_process');" +
+      "const k=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:false});" +
+      "process.stdout.write(String(k.pid));" +
+      "setInterval(()=>{},1000);"
+    ],
+    {
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"]
+    }
+  );
+
+  // Read the descendant PID from the parent's stdout.
+  const descendantPid = await new Promise((resolve, reject) => {
+    let buf = "";
+    const timer = setTimeout(() => reject(new Error("timed out reading descendant pid")), 5000);
+    child.stdout.on("data", (chunk) => {
+      buf += chunk.toString();
+      if (buf.length > 0) {
+        clearTimeout(timer);
+        resolve(parseInt(buf.trim(), 10));
+      }
+    });
+    child.on("error", reject);
+  });
+
+  assert.ok(Number.isInteger(descendantPid) && descendantPid > 0, `bad descendant pid: ${descendantPid}`);
+
+  // Kill the parent's tree. On POSIX this signals the group; on Windows it invokes taskkill /t /f.
+  const killed = killProcessTree(child.pid);
+  assert.equal(killed, true, "killProcessTree must return true");
+
+  // Wait briefly for the OS to reap both processes.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  // Verify BOTH parent AND descendant are dead. process.kill(pid, 0) throws ESRCH when dead.
+  let parentAlive = false;
+  try { process.kill(child.pid, 0); parentAlive = true; } catch (_e) { parentAlive = false; }
+  let descendantAlive = false;
+  try { process.kill(descendantPid, 0); descendantAlive = true; } catch (_e) { descendantAlive = false; }
+
+  assert.equal(parentAlive, false, "parent must be dead after killProcessTree");
+  assert.equal(descendantAlive, false, "descendant must also be dead — proves tree kill works");
+});
+
+test("terminateProcessTree returns true for a live pid and false for pid 0", () => {
+  assert.equal(terminateProcessTree(0), false);
+  assert.equal(terminateProcessTree(null), false);
+  assert.equal(terminateProcessTree(undefined), false);
 });
 
 test("runCommandCapture can stop early when the expected output is complete", async () => {

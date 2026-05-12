@@ -408,16 +408,35 @@ export function spawnDetached(command, args, options = {}) {
   return child.pid;
 }
 
+// On Windows, `process.kill(pid, signal)` only signals the single PID — descendants
+// survive. The native equivalent of "kill the process tree" is `taskkill /t` (which
+// recursively terminates child processes). We invoke it synchronously via spawnSync
+// so existing callers (which assume sync termination) keep working unchanged.
+function windowsTaskkill(pid, { force }) {
+  const args = force ? ["/pid", String(pid), "/t", "/f"] : ["/pid", String(pid), "/t"];
+  const result = spawnSync("taskkill", args, { windowsHide: true });
+  if (result.error) return false;
+  // taskkill returns 0 on success and 128 when the process is already gone — both
+  // are "tree is dead" from our caller's perspective.
+  return result.status === 0 || result.status === 128;
+}
+
 export function terminateProcessTree(pid) {
   if (!pid) {
     return false;
+  }
+
+  if (process.platform === "win32") {
+    return windowsTaskkill(pid, { force: false });
   }
 
   for (const target of [-Math.abs(pid), Math.abs(pid)]) {
     try {
       process.kill(target, "SIGTERM");
       return true;
-    } catch {}
+    } catch (_err) {
+      // JUSTIFIED: kill races with the child exiting; try the next target form (group then direct)
+    }
   }
 
   return false;
@@ -428,12 +447,17 @@ export function killProcessTree(pid) {
     return false;
   }
 
-  const targets = process.platform === "win32" ? [Math.abs(pid)] : [-Math.abs(pid), Math.abs(pid)];
-  for (const target of targets) {
+  if (process.platform === "win32") {
+    return windowsTaskkill(pid, { force: true });
+  }
+
+  for (const target of [-Math.abs(pid), Math.abs(pid)]) {
     try {
       process.kill(target, "SIGKILL");
       return true;
-    } catch {}
+    } catch (_err) {
+      // JUSTIFIED: kill races with the child exiting; try the next target form (group then direct)
+    }
   }
 
   return false;
