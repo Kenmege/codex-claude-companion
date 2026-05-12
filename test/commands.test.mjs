@@ -119,6 +119,27 @@ test("helper help exits successfully while unknown commands remain usage errors"
   assert.match(unknown.stdout, /Usage:/);
 });
 
+test("helper usage advertises folder subcommand and --path flag", () => {
+  const result = spawnSync(process.execPath, [helper, "--help"], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /codex-claude-review folder <path>/);
+  assert.match(result.stdout, /--path <dir>\s+target directory/);
+  assert.match(result.stdout, /--exclude <basename>/);
+  assert.match(result.stdout, /--scope auto\|working-tree\|branch\|directory/);
+});
+
+test("folder subcommand requires a positional path argument", () => {
+  const result = spawnSync(process.execPath, [helper, "folder"], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.notEqual(result.status, 0, "folder must fail without a path");
+  assert.match(result.stderr, /Expected a directory path/);
+});
+
 test("adversarial command stays read-only", () => {
   const source = read("commands/adversarial-review.md");
   assert.match(source, /Keep this command read-only/i);

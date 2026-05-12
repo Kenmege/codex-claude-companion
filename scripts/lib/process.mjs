@@ -72,12 +72,45 @@ export function runCommandCapture(command, args, options = {}) {
     const stderrChunks = [];
     const maxBuffer = options.maxBuffer ?? 16 * 1024 * 1024;
     const tailBytes = options.tailBytes ?? DEFAULT_CAPTURE_TAIL_BYTES;
+
+    // Optional input transport: pipe a file's contents into the child's stdin so the
+    // caller does not have to put a large prompt into argv. Avoids platform argv
+    // length limits (Windows ~32K, macOS ~256K) and removes a class of quoting bugs.
+    let stdinFd = null;
+    if (options.inputPath) {
+      try {
+        stdinFd = fs.openSync(options.inputPath, "r");
+      } catch (err) {
+        resolve({
+          pid: null,
+          command,
+          args,
+          cwd: options.cwd,
+          status: null,
+          signal: null,
+          stdout: "",
+          stderr: "",
+          stdoutTail: "",
+          stderrTail: "",
+          reason: "input_open_error",
+          error: err
+        });
+        return;
+      }
+    }
+
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
       detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: [stdinFd ?? "ignore", "pipe", "pipe"]
     });
+
+    if (stdinFd !== null) {
+      // Once spawn() dup's the fd into the child, our handle is no longer needed.
+      // JUSTIFIED: close-on-already-closed fd is harmless and uncommon — node owns fd lifecycle for the child after spawn
+      try { fs.closeSync(stdinFd); } catch (_closeErr) { /* fd handed to child */ }
+    }
 
     let stdoutBytes = 0;
     let stderrBytes = 0;
@@ -318,13 +351,23 @@ export function binaryAvailable(command, args = ["--help"], options = {}) {
 
 export function spawnDetached(command, args, options = {}) {
   const openFds = [];
-  let stdio = "ignore";
+  let stdinFd = "ignore";
+
+  // Pipe a file's contents to the detached child's stdin (avoid putting large
+  // prompts into argv, which hits the Windows command-line length limit).
+  if (options.inputPath) {
+    const fd = fs.openSync(options.inputPath, "r");
+    openFds.push(fd);
+    stdinFd = fd;
+  }
+
+  let stdio = stdinFd === "ignore" ? "ignore" : [stdinFd, "ignore", "ignore"];
 
   if (options.logFile) {
     fs.mkdirSync(path.dirname(options.logFile), { recursive: true });
     const logFd = fs.openSync(options.logFile, "a", 0o600);
     openFds.push(logFd);
-    stdio = ["ignore", logFd, logFd];
+    stdio = [stdinFd === "ignore" ? "ignore" : stdinFd, logFd, logFd];
   }
 
   let child;
@@ -337,9 +380,8 @@ export function spawnDetached(command, args, options = {}) {
     });
   } finally {
     for (const fd of openFds) {
-      try {
-        fs.closeSync(fd);
-      } catch {}
+      // JUSTIFIED: fds have been dup'd into the spawned child; closing the parent handle is best-effort
+      try { fs.closeSync(fd); } catch (_closeErr) { /* parent handle release */ }
     }
   }
   child.unref();

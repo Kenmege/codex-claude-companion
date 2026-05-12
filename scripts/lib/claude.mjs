@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -159,12 +160,18 @@ function buildClaudeCommandArgs(prompt, options = {}) {
     maxBudgetUsd = null,
     strictMcpConfig = false,
     extraArgs = [],
-    suppressBudget = false
+    suppressBudget = false,
+    stdinPrompt = false
   } = options;
 
+  // When stdinPrompt is true, the prompt is piped to claude via stdin instead of
+  // being placed in argv. This avoids platform argv length limits (Windows ~32KB).
+  // The caller is responsible for writing `prompt` to a file and passing the path
+  // as `inputPath` to runCommandCapture / spawnDetached.
+  const promptPositional = stdinPrompt ? [] : [prompt];
   const args = [
     "-p",
-    prompt,
+    ...promptPositional,
     "--setting-sources",
     CLAUDE_SETTING_SOURCES,
     "--output-format",
@@ -1084,10 +1091,12 @@ function createInvocationError(result, commandShape, currentPhase, extra = {}) {
   return attachDiagnostics(error, diagnostics, reason);
 }
 
-function buildPlainClaudeArgs(prompt, snapshot) {
+function buildPlainClaudeArgs(prompt, snapshot, options = {}) {
+  const { stdinPrompt = false } = options;
+  const promptPositional = stdinPrompt ? [] : [prompt];
   const args = [
     "-p",
-    prompt,
+    ...promptPositional,
     "--setting-sources",
     CLAUDE_SETTING_SOURCES,
     "--model",
@@ -1206,7 +1215,8 @@ export function buildReviewInvocation(snapshot, reviewKind, schemaPath, options 
     maxBudgetUsd: parsePositiveNumber(snapshot.maxBudgetUsd) ?? null,
     strictMcpConfig: snapshot.strictMcpConfig !== false,
     extraArgs: snapshot.extraArgs ?? [],
-    suppressBudget: subscriptionAuth
+    suppressBudget: subscriptionAuth,
+    stdinPrompt: true
   });
 
   return {
@@ -1227,12 +1237,21 @@ export async function runClaudeStructuredReview(cwd, snapshot, reviewKind, schem
   const timeoutMs = snapshot.timeoutMs ?? CLAUDE_REVIEW_TIMEOUT_MS;
   const outputMaxBytes = snapshot.maxOutputBytes ?? CLAUDE_STREAM_MAX_BYTES;
   const commandShape = redactClaudeCommandShape(invocation.args);
-  const promptPath = hooks.promptPath ?? null;
 
-  if (promptPath) {
-    fs.mkdirSync(path.dirname(promptPath), { recursive: true });
-    fs.writeFileSync(promptPath, invocation.prompt, { encoding: "utf8", mode: 0o600 });
+  // stdin transport requires a prompt file on disk that we can open for the child.
+  // If the caller didn't supply hooks.promptPath, generate a temp file in os.tmpdir()
+  // and schedule its cleanup on parent process exit (best-effort; OS cleans tmp anyway).
+  let promptPath = hooks.promptPath ?? null;
+  if (!promptPath) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-prompt-"));
+    promptPath = path.join(tmpDir, "prompt.md");
+    process.on("exit", () => {
+      // JUSTIFIED: best-effort cleanup of ephemeral prompt dir; OS tmp cleanup is the safety net
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_cleanupErr) { /* OS will reap */ }
+    });
   }
+  fs.mkdirSync(path.dirname(promptPath), { recursive: true });
+  fs.writeFileSync(promptPath, invocation.prompt, { encoding: "utf8", mode: 0o600 });
 
   const noOutputTimeout = snapshot.agentic ? resolveAgenticNoOutputTimeoutMs(snapshot) : null;
   const structuredProbeTimeoutMs = snapshot.agentic ? resolveAgenticStructuredProbeTimeoutMs(snapshot, timeoutMs) : timeoutMs;
@@ -1261,6 +1280,7 @@ export async function runClaudeStructuredReview(cwd, snapshot, reviewKind, schem
 
   const runStructured = () => runCommandCapture("claude", invocation.args, {
     cwd,
+    inputPath: promptPath,
     maxBuffer: outputMaxBytes,
     timeout: structuredProbeTimeoutMs,
     terminationGraceMs: structuredProbeTimeoutMs < timeoutMs ? 50 : undefined,
@@ -1321,13 +1341,17 @@ export async function runClaudeStructuredReview(cwd, snapshot, reviewKind, schem
     if (snapshot.agentic && (structuredErrorCode === "ENOOUTPUT" || canFallbackFromStructuredTimeout)) {
       hooks.onPhase?.("claude_markdown_fallback_started", { reason: structuredError.failureReason, structuredProbeTimeoutMs });
       const fallbackPrompt = buildMarkdownFallbackPrompt(snapshot, reviewKind, structuredError);
-      const fallbackArgs = buildPlainClaudeArgs(fallbackPrompt, snapshot);
+      const fallbackArgs = buildPlainClaudeArgs(fallbackPrompt, snapshot, { stdinPrompt: true });
       const fallbackCommandShape = redactClaudeCommandShape(fallbackArgs);
       const fallbackStartedAt = Date.now();
       const fallbackRemainingTimeoutMs = Math.max(1000, timeoutMs - Math.min(timeoutMs, structuredResult.timeoutMs ?? structuredProbeTimeoutMs));
       const fallbackNoOutputTimeoutMs = Math.max(1000, Math.min(30_000, Math.floor(fallbackRemainingTimeoutMs / 3)));
+      // Pipe the fallback prompt via stdin too — same argv-length protection as the structured path.
+      const fallbackPromptPath = path.join(path.dirname(promptPath), "fallback-prompt.md");
+      fs.writeFileSync(fallbackPromptPath, fallbackPrompt, { encoding: "utf8", mode: 0o600 });
       const fallbackResult = await runCommandCapture("claude", fallbackArgs, {
         cwd,
+        inputPath: fallbackPromptPath,
         maxBuffer: outputMaxBytes,
         timeout: fallbackRemainingTimeoutMs,
         noOutputTimeout: fallbackNoOutputTimeoutMs,

@@ -25,6 +25,7 @@ import {
   validateStructuredReviewOutput
 } from "./lib/claude.mjs";
 import { chooseContextMode, collectReviewContext, resolveReviewTarget } from "./lib/git.mjs";
+import { createDirectorySnapshot, isGitRepository } from "./lib/snapshot.mjs";
 import { spawnDetached, terminateProcessTree } from "./lib/process.mjs";
 import {
   appendLogLine,
@@ -137,13 +138,17 @@ const REVIEW_LIKE_VALUE_OPTIONS = [
   "effort",
   "profile",
   "cwd",
+  "path",
   "mcp-config",
   "max-budget-usd",
   "add-dir",
   "system-prompt-extra",
   "permission-mode",
   "timeout-ms",
-  "web-domain"
+  "web-domain",
+  "snapshot-temp-root",
+  "exclude",
+  "job-dir"
 ];
 
 function parseCommandInput(argv, config = {}) {
@@ -159,6 +164,7 @@ function printUsage() {
       "Usage:",
       "  codex-claude-review enable",
       "  codex-claude-review setup",
+      "  codex-claude-review folder <path> [flags] [focus text]",
       "  codex-claude-review review [flags] [focus text]",
       "  codex-claude-review adversarial-review [flags] [focus text]",
       "  codex-claude-review elite-review [flags] [focus text]",
@@ -169,9 +175,12 @@ function printUsage() {
       "  codex-claude-review cancel <job-id>",
       "",
       "Flags (review-like commands):",
+      "  --path <dir>                target directory (default: cwd). Works for Git and non-Git dirs.",
       "  --background                run as a detached job",
       "  --base <ref>                base ref for branch diff",
-      "  --scope auto|working-tree|branch",
+      "  --scope auto|working-tree|branch|directory",
+      "  --exclude <basename>        repeatable; extra dirs to exclude from non-Git snapshot",
+      "  --snapshot-temp-root <dir>  override temp root for the snapshot (default: os.tmpdir())",
       "  --model <name>              override model (default: claude-opus-4-7)",
       "  --effort low|medium|high|xhigh|max",
       "  --profile quality|long-context",
@@ -948,15 +957,80 @@ function handleSetup(argv) {
   process.stdout.write(renderSetupReport(payload));
 }
 
+async function handleFolder(argv) {
+  // Extract the first positional that does not look like a flag and rewrite the argv
+  // into `--path <positional> [...remaining]` so handleReviewLike can do the rest.
+  // Multiple positionals are not supported — extra positionals after the first are
+  // forwarded as focus text via the existing positional-passthrough in handleReviewLike.
+  let folderPath = null;
+  const rewritten = [];
+  let seenPath = false;
+  for (let i = 0; i < argv.length; i += 1) {
+    const tok = argv[i];
+    if (!seenPath && typeof tok === "string" && !tok.startsWith("-")) {
+      folderPath = tok;
+      seenPath = true;
+      continue;
+    }
+    rewritten.push(tok);
+  }
+  if (!folderPath) {
+    throw new Error("Expected a directory path: codex-claude-review folder <path> [flags]");
+  }
+  rewritten.unshift("--path", folderPath);
+  await handleReviewLike("review", rewritten);
+}
+
 async function handleReviewLike(kind, argv) {
   const reviewConfig = REVIEW_KIND_CONFIG[kind];
   const { options, positionals } = parseCommandInput(argv, {
     booleanOptions: REVIEW_LIKE_BOOLEAN_OPTIONS,
     valueOptions: REVIEW_LIKE_VALUE_OPTIONS
   });
-  const cwd = path.resolve(options.cwd ?? process.cwd());
+  // `--path` is the new directory-targeting flag; `--cwd` is retained for back-compat.
+  const userCwd = path.resolve(options.path ?? options.cwd ?? process.cwd());
   const focusText = positionals.join(" ").trim();
+
+  // Decide whether we need a directory snapshot:
+  //   - explicit --scope directory
+  //   - or the target directory is not a Git repo
+  // Either way, the snapshot creates an isolated, git-initialised temp workspace and
+  // becomes the effective cwd for the rest of the review flow. Source-relative paths
+  // stay intact for the user; absolute snapshot paths in results are rewritten back.
+  const scope = options.scope ?? "auto";
+  const wantsDirectoryScope = scope === "directory";
+  const targetIsGit = isGitRepository(userCwd);
+  const needsSnapshot = wantsDirectoryScope || !targetIsGit;
+
+  let directorySnapshot = null;
+  let cwd = userCwd;
+  if (needsSnapshot) {
+    directorySnapshot = createDirectorySnapshot(userCwd, {
+      tempRoot: options["snapshot-temp-root"],
+      excludes: coerceMultiValue(options.exclude)
+    });
+    cwd = directorySnapshot.snapshotRoot;
+    // After snapshotting, resolveReviewTarget should default to scanning the working
+    // tree of the fresh snapshot — there is no meaningful "branch diff" to compute.
+    if (!options.scope) options.scope = "working-tree";
+  }
   const snapshot = prepareSnapshot(cwd, kind, options, focusText);
+  if (directorySnapshot) {
+    snapshot.directorySnapshot = {
+      sourceRoot: directorySnapshot.sourceRoot,
+      snapshotRoot: directorySnapshot.snapshotRoot,
+      copiedFiles: directorySnapshot.copiedFiles,
+      totalBytes: directorySnapshot.totalBytes,
+      skippedCount: directorySnapshot.skipped.length
+    };
+    snapshot.notes.push(
+      `Directory snapshot mode: copied ${directorySnapshot.copiedFiles} file(s) ` +
+      `(${directorySnapshot.totalBytes} bytes) from ${directorySnapshot.sourceRoot} ` +
+      `to temp git workspace ${directorySnapshot.snapshotRoot}. ` +
+      `Skipped ${directorySnapshot.skipped.length} path(s) by excludes/symlinks/caps. ` +
+      `Source directory is not mutated.`
+    );
+  }
 
   if (options.background) {
     const job = buildBackgroundJob(cwd, kind, snapshot);
@@ -1198,6 +1272,11 @@ async function main() {
         break;
       case "review":
         await handleReviewLike("review", argv);
+        break;
+      case "folder":
+        // `folder <path>` is shorthand for `review --path <path>` — the snapshot
+        // path inside handleReviewLike auto-activates for non-Git directories.
+        await handleFolder(argv);
         break;
       case "adversarial-review":
         await handleReviewLike("adversarial-review", argv);
