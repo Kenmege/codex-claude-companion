@@ -1,6 +1,4 @@
-import crypto from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -1239,24 +1237,18 @@ export async function runClaudeStructuredReview(cwd, snapshot, reviewKind, schem
   const outputMaxBytes = snapshot.maxOutputBytes ?? CLAUDE_STREAM_MAX_BYTES;
   const commandShape = redactClaudeCommandShape(invocation.args);
 
-  // stdin transport requires a prompt file on disk that we can open for the child.
-  // If the caller didn't supply hooks.promptPath, generate a temp file in os.tmpdir()
-  // and schedule its cleanup on parent process exit (best-effort; OS cleans tmp anyway).
-  // The temp dir is mkdtemp'd (random, 0o700) AND the filename inside is randomised so
-  // that even if a CodeQL data-flow analyser traces back to `os.tmpdir()` it sees no
-  // predictable component along the path.
-  let promptPath = hooks.promptPath ?? null;
-  if (!promptPath) {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-prompt-"));
-    const randomName = `prompt-${crypto.randomBytes(12).toString("hex")}.md`;
-    promptPath = path.join(tmpDir, randomName);
-    process.on("exit", () => {
-      // JUSTIFIED: best-effort cleanup of ephemeral prompt dir; OS tmp cleanup is the safety net
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_cleanupErr) { /* OS will reap */ }
-    });
+  // Two stdin-transport strategies:
+  //   - hooks.promptPath supplied (job dir, persisted) → write to disk, pass file path
+  //     to runCommandCapture as inputPath. The on-disk prompt is useful for later
+  //     inspection / replay via `result` / `run-job`.
+  //   - no hooks.promptPath → keep the prompt in memory and pipe it directly to the
+  //     child's stdin via inputData. No temp file on disk, no tmpdir taint for
+  //     CodeQL to flag, no cleanup hook needed.
+  const promptPath = hooks.promptPath ?? null;
+  if (promptPath) {
+    fs.mkdirSync(path.dirname(promptPath), { recursive: true });
+    fs.writeFileSync(promptPath, invocation.prompt, { encoding: "utf8", mode: 0o600 });
   }
-  fs.mkdirSync(path.dirname(promptPath), { recursive: true });
-  fs.writeFileSync(promptPath, invocation.prompt, { encoding: "utf8", mode: 0o600 });
 
   const noOutputTimeout = snapshot.agentic ? resolveAgenticNoOutputTimeoutMs(snapshot) : null;
   const structuredProbeTimeoutMs = snapshot.agentic ? resolveAgenticStructuredProbeTimeoutMs(snapshot, timeoutMs) : timeoutMs;
@@ -1285,7 +1277,9 @@ export async function runClaudeStructuredReview(cwd, snapshot, reviewKind, schem
 
   const runStructured = () => runCommandCapture("claude", invocation.args, {
     cwd,
-    inputPath: promptPath,
+    // File-based stdin when the caller wants the prompt persisted (job replay);
+    // memory-piped stdin when ephemeral — no temp file, no CodeQL alert.
+    ...(promptPath ? { inputPath: promptPath } : { inputData: invocation.prompt }),
     maxBuffer: outputMaxBytes,
     timeout: structuredProbeTimeoutMs,
     terminationGraceMs: structuredProbeTimeoutMs < timeoutMs ? 50 : undefined,
@@ -1351,17 +1345,11 @@ export async function runClaudeStructuredReview(cwd, snapshot, reviewKind, schem
       const fallbackStartedAt = Date.now();
       const fallbackRemainingTimeoutMs = Math.max(1000, timeoutMs - Math.min(timeoutMs, structuredResult.timeoutMs ?? structuredProbeTimeoutMs));
       const fallbackNoOutputTimeoutMs = Math.max(1000, Math.min(30_000, Math.floor(fallbackRemainingTimeoutMs / 3)));
-      // Pipe the fallback prompt via stdin too — same argv-length protection as the structured path.
-      // Randomise filename so a CodeQL data-flow analyser sees no predictable component
-      // even when the dir originated from os.tmpdir().
-      const fallbackPromptPath = path.join(
-        path.dirname(promptPath),
-        `fallback-prompt-${crypto.randomBytes(12).toString("hex")}.md`
-      );
-      fs.writeFileSync(fallbackPromptPath, fallbackPrompt, { encoding: "utf8", mode: 0o600 });
+      // The fallback prompt is fully ephemeral — pipe it directly via inputData.
+      // No temp file, no CodeQL alert, no cleanup needed.
       const fallbackResult = await runCommandCapture("claude", fallbackArgs, {
         cwd,
-        inputPath: fallbackPromptPath,
+        inputData: fallbackPrompt,
         maxBuffer: outputMaxBytes,
         timeout: fallbackRemainingTimeoutMs,
         noOutputTimeout: fallbackNoOutputTimeoutMs,

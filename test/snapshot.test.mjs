@@ -9,6 +9,7 @@ import {
   isGitRepository,
   DEFAULT_SNAPSHOT_EXCLUDES
 } from "../scripts/lib/snapshot.mjs";
+import { runCommandCapture } from "../scripts/lib/process.mjs";
 
 function makeTempDir(prefix = "snapshot-source-") {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -147,4 +148,30 @@ test("createDirectorySnapshot refuses to run on a non-directory path", () => {
 test("createDirectorySnapshot refuses to run on a missing path", () => {
   const ghost = path.join(os.tmpdir(), `does-not-exist-${Date.now()}`);
   assert.throws(() => createDirectorySnapshot(ghost), /does not exist/);
+});
+
+test("runCommandCapture inputData pipes prompt bytes via stdin (no temp file)", async () => {
+  // Cross-platform stdin echo: node prints stdin to stdout. This proves the
+  // inputData transport actually delivers bytes to the child's stdin without
+  // requiring a temp file on disk.
+  const result = await runCommandCapture(
+    process.execPath,
+    ["-e", "process.stdin.setEncoding('utf8');let b='';process.stdin.on('data',c=>b+=c);process.stdin.on('end',()=>process.stdout.write(b));"],
+    { inputData: "hello-from-memory-stdin", timeout: 10_000 }
+  );
+  assert.equal(result.error, null, result.stderr);
+  assert.equal(result.stdout, "hello-from-memory-stdin");
+});
+
+test("runCommandCapture inputPath pipes a file via stdin (persisted prompt)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rcap-inputpath-"));
+  const file = path.join(dir, "input.txt");
+  fs.writeFileSync(file, "hello-from-file-stdin", "utf8");
+  const result = await runCommandCapture(
+    process.execPath,
+    ["-e", "process.stdin.setEncoding('utf8');let b='';process.stdin.on('data',c=>b+=c);process.stdin.on('end',()=>process.stdout.write(b));"],
+    { inputPath: file, timeout: 10_000 }
+  );
+  assert.equal(result.error, null, result.stderr);
+  assert.equal(result.stdout, "hello-from-file-stdin");
 });

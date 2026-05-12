@@ -73,11 +73,21 @@ export function runCommandCapture(command, args, options = {}) {
     const maxBuffer = options.maxBuffer ?? 16 * 1024 * 1024;
     const tailBytes = options.tailBytes ?? DEFAULT_CAPTURE_TAIL_BYTES;
 
-    // Optional input transport: pipe a file's contents into the child's stdin so the
-    // caller does not have to put a large prompt into argv. Avoids platform argv
-    // length limits (Windows ~32K, macOS ~256K) and removes a class of quoting bugs.
+    // Optional input transport: feed bytes into the child's stdin so the caller does
+    // not have to put a large prompt into argv. Avoids platform argv length limits
+    // (Windows ~32K, macOS ~256K) and removes a class of quoting bugs.
+    //
+    // Two flavours:
+    //   - `inputPath` (file path) — preferred when the prompt is already persisted
+    //     somewhere durable (e.g. .claude-review/jobs/<id>.prompt.md). We open the
+    //     fd and hand it to spawn() as stdio[0]. NOT recommended for paths under
+    //     os.tmpdir() — CodeQL's js/insecure-temporary-file flags that pattern.
+    //   - `inputData` (string|Buffer) — preferred when the prompt is ephemeral.
+    //     We pipe the bytes through child.stdin and end the stream. No file on
+    //     disk, no temp dir, no cleanup, no CodeQL alert.
     let stdinFd = null;
-    if (options.inputPath) {
+    const stdinMode = options.inputData !== undefined ? "pipe" : (options.inputPath ? "fd" : "ignore");
+    if (stdinMode === "fd") {
       try {
         stdinFd = fs.openSync(options.inputPath, "r");
       } catch (err) {
@@ -99,17 +109,21 @@ export function runCommandCapture(command, args, options = {}) {
       }
     }
 
+    const stdioStdin = stdinMode === "fd" ? stdinFd : (stdinMode === "pipe" ? "pipe" : "ignore");
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
       detached: process.platform !== "win32",
-      stdio: [stdinFd ?? "ignore", "pipe", "pipe"]
+      stdio: [stdioStdin, "pipe", "pipe"]
     });
 
-    if (stdinFd !== null) {
+    if (stdinMode === "fd") {
       // Once spawn() dup's the fd into the child, our handle is no longer needed.
       // JUSTIFIED: close-on-already-closed fd is harmless and uncommon — node owns fd lifecycle for the child after spawn
       try { fs.closeSync(stdinFd); } catch (_closeErr) { /* fd handed to child */ }
+    } else if (stdinMode === "pipe") {
+      // Write the entire prompt and close stdin so the child receives EOF.
+      child.stdin.end(options.inputData);
     }
 
     let stdoutBytes = 0;
