@@ -105,9 +105,9 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 - Directory snapshots now exclude common secret-bearing files and source
   `.gitignore` matches before content is copied into the review prompt, and
   stale temp snapshots older than 24 hours are reaped on the next snapshot run.
-- Raised the default agentic structured-probe window and fallback no-output
-  window so Opus reviews that are actively using tools are not killed before
-  they can return a structured result or markdown fallback.
+- Raised default agentic timeout behavior so structured reviews can use the
+  full review timeout by default, while no-output guards act as long stall
+  detectors rather than short ceilings on real Opus work.
 - Relaxed marketplace-name validation so forks can rename their private Codex
   marketplace without breaking `npm run check`.
 - Hardened Claude review workflow auth selection so public fork PRs are skipped
