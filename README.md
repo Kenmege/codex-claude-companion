@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/pull-request-ci.yml/badge.svg)](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/pull-request-ci.yml)
 [![CodeQL](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/codeql.yml/badge.svg)](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/codeql.yml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Kenmege/codex-plugin-cc/badge)](https://scorecard.dev/viewer/?uri=github.com/Kenmege/codex-plugin-cc)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18.18-brightgreen.svg)](#requirements)
 
@@ -485,9 +484,9 @@ The npm package intentionally omits `package.json.private` so npmjs publishing
 can run when explicitly enabled. The release workflow validates tags and only
 publishes when repository variable `NPMJS_PUBLISH_ENABLED=true` and secret
 `NPM_TOKEN` are configured. Release tags must match the package version exactly:
-`package.json` version `1.0.9` is published only from tag `v1.0.9`; a
-prerelease smoke must first commit matching `1.0.9-rc.1` metadata before
-pushing `v1.0.9-rc.1`.
+`package.json` version `1.0.10` is published only from tag `v1.0.10`; a
+prerelease smoke must first commit matching `1.0.10-rc.1` metadata before
+pushing `v1.0.10-rc.1`.
 
 ## Repository Layout
 

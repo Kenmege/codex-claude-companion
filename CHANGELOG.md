@@ -6,6 +6,15 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.0.10] — 2026-05-13
+
+### Changed
+
+- Removed the OpenSSF Scorecard badge from the README until the public score
+  reflects the repository's intended trust posture.
+- Updated the bug-report template to reference the public unscoped
+  `codex-plugin-cc` package and current CLI version flow.
+
 ## [1.0.9] — 2026-05-13
 
 ### Changed

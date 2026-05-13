@@ -1,6 +1,6 @@
 {
   "name": "codex-plugin-cc",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "type": "module",
   "description": "Codex-native Claude review plugin: agentic Opus 4.7 reviewers, including explicit Opus 4.7 1M long-context mode, with full read-only tool access for high-scrutiny code review, adversarial review, deep multi-agent review, and security-focused review.",
   "license": "Apache-2.0",

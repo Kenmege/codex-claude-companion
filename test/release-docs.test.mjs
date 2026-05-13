@@ -111,6 +111,7 @@ test("public trust metadata is attribution-safe and precise", () => {
   const claudeMarketplace = JSON.parse(read(".claude-plugin/marketplace.json"));
   const readme = read("README.md");
   const security = read("SECURITY.md");
+  const bug = read(".github/ISSUE_TEMPLATE/bug_report.yml");
   const releaseNotes = [
     "README.md",
     "CHANGELOG.md",
@@ -126,7 +127,10 @@ test("public trust metadata is attribution-safe and precise", () => {
   assert.doesNotMatch(claudeMarketplace.owner.name, /OpenAI/);
   assert.match(readme, /Windows is not a supported v1 platform/);
   assert.doesNotMatch(readme, /macOS, Linux, and Windows are supported/);
+  assert.doesNotMatch(readme, /scorecard\.dev|api\.scorecard\.dev/);
   assert.match(security, /github\.com\/Kenmege\/codex-plugin-cc\/security\/advisories\/new/);
+  assert.match(bug, /npm ls -g codex-plugin-cc|codex-claude-review --version/);
+  assert.doesNotMatch(bug, /@kenmege\/codex-plugin-cc/);
   assert.doesNotMatch(releaseNotes, /GPT-5\.5|gpt-5\.5/);
 });
 
