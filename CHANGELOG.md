@@ -6,6 +6,8 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.0.5] — 2026-05-13
+
 ### Added
 
 - Added a frictionless public npmjs lane for the unscoped `codex-plugin-cc`
