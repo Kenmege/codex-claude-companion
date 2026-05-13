@@ -571,6 +571,14 @@ function mergeDiagnostics(base, patch) {
   };
 }
 
+function cleanupSnapshotRoot(snapshot) {
+  const snapshotRoot = snapshot?.directorySnapshot?.snapshotRoot;
+  if (!snapshotRoot) return;
+  try {
+    fs.rmSync(snapshotRoot, { recursive: true, force: true });
+  } catch {}
+}
+
 function persistJobDiagnostics(cwd, jobId, patch) {
   try {
     const current = listJobs(cwd).find((job) => job.id === jobId) ?? {};
@@ -1191,84 +1199,105 @@ async function handleReviewLike(kind, argv) {
 
   let directorySnapshot = null;
   let cwd = userCwd;
+  let restoreJobDirEnv = null;
   if (needsSnapshot) {
     directorySnapshot = createDirectorySnapshot(userCwd, {
       tempRoot: options["snapshot-temp-root"],
       excludes: coerceMultiValue(options.exclude)
     });
     cwd = directorySnapshot.snapshotRoot;
-    // After snapshotting, resolveReviewTarget should default to scanning the working
-    // tree of the fresh snapshot — there is no meaningful "branch diff" to compute.
-    if (!options.scope) options.scope = "working-tree";
-  }
-  const snapshot = prepareSnapshot(cwd, kind, options, focusText);
-  if (directorySnapshot) {
-    snapshot.directorySnapshot = {
-      sourceRoot: directorySnapshot.sourceRoot,
-      snapshotRoot: directorySnapshot.snapshotRoot,
-      copiedFiles: directorySnapshot.copiedFiles,
-      totalBytes: directorySnapshot.totalBytes,
-      skippedCount: directorySnapshot.skipped.length
-    };
-    snapshot.notes.push(
-      `Directory snapshot mode: copied ${directorySnapshot.copiedFiles} file(s) ` +
-      `(${directorySnapshot.totalBytes} bytes) from ${directorySnapshot.sourceRoot} ` +
-      `to temp git workspace ${directorySnapshot.snapshotRoot}. ` +
-      `Skipped ${directorySnapshot.skipped.length} path(s) by excludes/symlinks/caps. ` +
-      `Source directory is not mutated.`
-    );
-  }
-
-  if (options.background) {
-    const job = buildBackgroundJob(cwd, kind, snapshot);
-    process.stdout.write(
-      `# Claude Review Started\n\nJob: ${job.id}\nStatus: running\nMode: ${snapshot.unrestricted ? "UNRESTRICTED" : snapshot.agentic ? "agentic-safe" : "structured"}\nModel: ${snapshot.model}\nUse \`codex-claude-review status ${job.id}\` to check progress.\n`
-    );
-    return;
-  }
-
-  const jobId = generateJobId(reviewConfig.jobPrefix);
-  const job = buildJobRecord(cwd, jobId, {
-    kind,
-    title: reviewConfig.title,
-    summary: snapshot.summary,
-    model: snapshot.model,
-    effort: snapshot.effort,
-    profile: snapshot.profile,
-    agentic: snapshot.agentic,
-    unrestricted: snapshot.unrestricted,
-    status: "running"
-  });
-  createJob(cwd, jobId, job);
-  writeJobInput(cwd, jobId, snapshot);
-  try {
-    const result = await runSnapshot(cwd, jobId, snapshot);
-    updateJob(cwd, jobId, {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      result: result.parsed,
-      activity: result.activity,
-      invocationMeta: result.invocationMeta,
-      // Persist the M2 cross-check verification so background jobs and the
-      // `result` reconstruction in handleResult render the same warnings as
-      // foreground runs (Codex P2 finding on PR #11).
-      evidenceVerification: result.evidenceVerification ?? null
-    });
-    process.stdout.write(renderReviewResult(snapshot, result, { id: jobId }));
-    if (reviewHasShipBlockers(result.parsed)) {
-      process.exitCode = 3;
+    if (!options["job-dir"] && !process.env[JOB_DIR_ENV_VAR]) {
+      const sourceJobDir = path.join(directorySnapshot.sourceRoot, ".claude-review", "jobs");
+      process.env[JOB_DIR_ENV_VAR] = sourceJobDir;
+      restoreJobDirEnv = () => {
+        delete process.env[JOB_DIR_ENV_VAR];
+      };
     }
-  } catch (error) {
-    const current = listJobs(cwd).find((item) => item.id === jobId) ?? {};
-    const failureReason = reasonFromError(error);
-    updateJob(cwd, jobId, {
-      status: error.code === "EINTERRUPTED" ? "cancelled" : "failed",
-      completedAt: new Date().toISOString(),
-      failureReason,
-      error: error.message,
-      diagnostics: mergeDiagnostics(current.diagnostics, { ...(error.diagnostics ?? {}), reason: failureReason })
+    // After snapshotting, resolveReviewTarget must scan the copied snapshot
+    // contents directly — there is no meaningful branch diff to compute.
+    options.scope = "directory";
+  }
+  try {
+    const snapshot = prepareSnapshot(cwd, kind, options, focusText);
+    if (directorySnapshot) {
+      const skippedPreview = directorySnapshot.skipped
+        .slice(0, 12)
+        .map((item) => `${item.path} (${item.reason})`)
+        .join(", ");
+      snapshot.directorySnapshot = {
+        sourceRoot: directorySnapshot.sourceRoot,
+        snapshotRoot: directorySnapshot.snapshotRoot,
+        copiedFiles: directorySnapshot.copiedFiles,
+        totalBytes: directorySnapshot.totalBytes,
+        skippedCount: directorySnapshot.skipped.length
+      };
+      snapshot.notes.push(
+        `Directory snapshot mode: copied ${directorySnapshot.copiedFiles} file(s) ` +
+        `(${directorySnapshot.totalBytes} bytes) from ${directorySnapshot.sourceRoot} ` +
+        `to temp git workspace ${directorySnapshot.snapshotRoot}. ` +
+        `Skipped ${directorySnapshot.skipped.length} path(s) by excludes, .gitignore, ` +
+        `secret-pattern filters, symlinks, or caps` +
+        `${skippedPreview ? `: ${skippedPreview}${directorySnapshot.skipped.length > 12 ? ", ..." : ""}` : ""}. ` +
+        `Source files are not edited; review job artifacts are stored under ${resolveJobsDir(cwd)}.`
+      );
+    }
+
+    if (options.background) {
+      const job = buildBackgroundJob(cwd, kind, snapshot);
+      process.stdout.write(
+        `# Claude Review Started\n\nJob: ${job.id}\nStatus: running\nMode: ${snapshot.unrestricted ? "UNRESTRICTED" : snapshot.agentic ? "agentic-safe" : "structured"}\nModel: ${snapshot.model}\nUse \`codex-claude-review status ${job.id}\` to check progress.\n`
+      );
+      return;
+    }
+
+    const jobId = generateJobId(reviewConfig.jobPrefix);
+    const job = buildJobRecord(cwd, jobId, {
+      kind,
+      title: reviewConfig.title,
+      summary: snapshot.summary,
+      model: snapshot.model,
+      effort: snapshot.effort,
+      profile: snapshot.profile,
+      agentic: snapshot.agentic,
+      unrestricted: snapshot.unrestricted,
+      status: "running"
     });
-    throw error;
+    createJob(cwd, jobId, job);
+    writeJobInput(cwd, jobId, snapshot);
+    try {
+      const result = await runSnapshot(cwd, jobId, snapshot);
+      updateJob(cwd, jobId, {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+        result: result.parsed,
+        activity: result.activity,
+        invocationMeta: result.invocationMeta,
+        // Persist the M2 cross-check verification so background jobs and the
+        // `result` reconstruction in handleResult render the same warnings as
+        // foreground runs (Codex P2 finding on PR #11).
+        evidenceVerification: result.evidenceVerification ?? null
+      });
+      process.stdout.write(renderReviewResult(snapshot, result, { id: jobId }));
+      if (reviewHasShipBlockers(result.parsed)) {
+        process.exitCode = 3;
+      }
+    } catch (error) {
+      const current = listJobs(cwd).find((item) => item.id === jobId) ?? {};
+      const failureReason = reasonFromError(error);
+      updateJob(cwd, jobId, {
+        status: error.code === "EINTERRUPTED" ? "cancelled" : "failed",
+        completedAt: new Date().toISOString(),
+        failureReason,
+        error: error.message,
+        diagnostics: mergeDiagnostics(current.diagnostics, { ...(error.diagnostics ?? {}), reason: failureReason })
+      });
+      throw error;
+    }
+  } finally {
+    if (directorySnapshot && !options.background) {
+      directorySnapshot.cleanup();
+    }
+    restoreJobDirEnv?.();
   }
 }
 
@@ -1305,6 +1334,8 @@ async function handleRunJob(argv) {
       error: error.message,
       diagnostics: mergeDiagnostics(current.diagnostics, { ...(error.diagnostics ?? {}), reason: failureReason })
     });
+  } finally {
+    cleanupSnapshotRoot(snapshot);
   }
 }
 

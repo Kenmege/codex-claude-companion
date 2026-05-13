@@ -7,9 +7,10 @@ import assert from "node:assert/strict";
 import {
   createDirectorySnapshot,
   isGitRepository,
-  DEFAULT_SNAPSHOT_EXCLUDES
+  DEFAULT_SNAPSHOT_EXCLUDES,
+  reapStaleDirectorySnapshots
 } from "../scripts/lib/snapshot.mjs";
-import { runCommandCapture } from "../scripts/lib/process.mjs";
+import { runCommandCapture, runCommandChecked } from "../scripts/lib/process.mjs";
 
 function makeTempDir(prefix = "snapshot-source-") {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -83,6 +84,72 @@ test("createDirectorySnapshot excludes node_modules by default", () => {
     assert.equal(fs.existsSync(path.join(snap.snapshotRoot, "node_modules")), false);
     assert.equal(fs.existsSync(path.join(snap.snapshotRoot, "dist")), false);
     assert.equal(fs.existsSync(path.join(snap.snapshotRoot, "src/index.js")), true);
+  } finally {
+    snap.cleanup();
+  }
+});
+
+test("createDirectorySnapshot excludes secret-bearing files by default", () => {
+  const source = makeTempDir();
+  writeFile(source, "src/index.js", "ok\n");
+  writeFile(source, ".env", "TOKEN=should-not-leak\n");
+  writeFile(source, ".npmrc", "//registry.npmjs.org/:_authToken=secret\n");
+  writeFile(source, "certs/private.pem", "-----BEGIN PRIVATE KEY-----\nsecret\n");
+  writeFile(source, "terraform/prod.tfvars", "password = \"secret\"\n");
+  writeFile(source, "firebase-service-account.json", "{\"private_key\":\"secret\"}\n");
+  writeFile(source, ".kube/config", "token: secret\n");
+
+  const snap = createDirectorySnapshot(source);
+  try {
+    assert.equal(fs.existsSync(path.join(snap.snapshotRoot, "src/index.js")), true);
+    assert.equal(fs.existsSync(path.join(snap.snapshotRoot, ".env")), false);
+    assert.equal(fs.existsSync(path.join(snap.snapshotRoot, ".npmrc")), false);
+    assert.equal(fs.existsSync(path.join(snap.snapshotRoot, "certs", "private.pem")), false);
+    assert.equal(fs.existsSync(path.join(snap.snapshotRoot, "terraform", "prod.tfvars")), false);
+    assert.equal(fs.existsSync(path.join(snap.snapshotRoot, "firebase-service-account.json")), false);
+    assert.equal(fs.existsSync(path.join(snap.snapshotRoot, ".kube")), false);
+    assert.ok(snap.skipped.some((s) => s.path === ".env" && s.reason === "sensitive-pattern"));
+  } finally {
+    snap.cleanup();
+  }
+});
+
+test("reapStaleDirectorySnapshots removes old snapshot dirs only", () => {
+  const tempRoot = makeTempDir("snapshot-reaper-");
+  const oldSnap = fs.mkdtempSync(path.join(tempRoot, "snapshot-"));
+  const newSnap = fs.mkdtempSync(path.join(tempRoot, "snapshot-"));
+  fs.writeFileSync(
+    path.join(oldSnap, ".codex-snapshot.meta.json"),
+    JSON.stringify({ createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString() }),
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(newSnap, ".codex-snapshot.meta.json"),
+    JSON.stringify({ createdAt: new Date().toISOString() }),
+    "utf8"
+  );
+
+  const result = reapStaleDirectorySnapshots(tempRoot);
+
+  assert.equal(result.removed, 1);
+  assert.equal(fs.existsSync(oldSnap), false);
+  assert.equal(fs.existsSync(newSnap), true);
+});
+
+test("createDirectorySnapshot honours source gitignore", () => {
+  const source = makeTempDir();
+  writeFile(source, ".gitignore", "private.txt\n");
+  writeFile(source, "public.txt", "ok\n");
+  writeFile(source, "private.txt", "ignored\n");
+  runCommandChecked("git", ["init", "--quiet"], { cwd: source });
+  runCommandChecked("git", ["config", "user.email", "test@example.com"], { cwd: source });
+  runCommandChecked("git", ["config", "user.name", "Test User"], { cwd: source });
+
+  const snap = createDirectorySnapshot(source);
+  try {
+    assert.equal(fs.existsSync(path.join(snap.snapshotRoot, "public.txt")), true);
+    assert.equal(fs.existsSync(path.join(snap.snapshotRoot, "private.txt")), false);
+    assert.ok(snap.skipped.some((s) => s.path === "private.txt" && s.reason === "gitignore"));
   } finally {
     snap.cleanup();
   }

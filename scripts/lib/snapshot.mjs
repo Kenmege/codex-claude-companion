@@ -28,6 +28,33 @@ export const DEFAULT_SNAPSHOT_EXCLUDES = Object.freeze([
   ".vscode"
 ]);
 
+const DEFAULT_SECRET_BASENAMES = Object.freeze([
+  ".env",
+  ".envrc",
+  ".npmrc",
+  ".pypirc",
+  ".netrc",
+  ".htpasswd",
+  "credentials.json",
+  "kubeconfig",
+  "wp-config.php",
+  "azureProfile.json",
+  "serviceAccountKey.json",
+  "id_rsa",
+  "id_dsa",
+  "id_ecdsa",
+  "id_ed25519"
+]);
+
+const DEFAULT_SECRET_DIRS = Object.freeze([
+  ".aws",
+  ".ssh",
+  ".gnupg",
+  ".kube"
+]);
+
+const STALE_SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
 // Hard cap on snapshot size — defensive guard against runaway directories.
 export const DEFAULT_SNAPSHOT_MAX_BYTES = 256 * 1024 * 1024;
 export const DEFAULT_SNAPSHOT_MAX_FILES = 50_000;
@@ -59,6 +86,84 @@ function resolveExcludes(extraExcludes = []) {
   return out;
 }
 
+function isSensitiveSnapshotPath(relativePath) {
+  const normalised = String(relativePath ?? "").split(path.sep).join("/");
+  const base = path.basename(normalised);
+  const lowerBase = base.toLowerCase();
+  const parts = normalised.split("/");
+
+  if (DEFAULT_SECRET_BASENAMES.includes(base)) return true;
+  if (base.startsWith(".env.")) return true;
+  if (base.startsWith("id_rsa") || base.startsWith("id_ed25519")) return true;
+  if (DEFAULT_SECRET_DIRS.some((dir) => parts.includes(dir))) return true;
+  if (/\.(pem|key|pfx|p12|kdbx)$/i.test(lowerBase)) return true;
+  if (/\.(tfvars|tfvars\.json|tfstate|tfstate\.backup)$/i.test(lowerBase)) return true;
+  return /(service[-_]?account|firebase-adminsdk).*\.json$/i.test(lowerBase) || /\.key\.json$/i.test(lowerBase);
+}
+
+export function reapStaleDirectorySnapshots(tempRoot, options = {}) {
+  const maxAgeMs = options.maxAgeMs ?? STALE_SNAPSHOT_MAX_AGE_MS;
+  let entries;
+  try {
+    entries = fs.readdirSync(tempRoot, { withFileTypes: true });
+  } catch {
+    return { removed: 0, skipped: 0 };
+  }
+
+  let removed = 0;
+  let skipped = 0;
+  const now = Date.now();
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith("snapshot-")) continue;
+    const snapshotDir = path.join(tempRoot, entry.name);
+    const metadataPath = path.join(snapshotDir, ".codex-snapshot.meta.json");
+    let createdAt = null;
+    try {
+      createdAt = JSON.parse(fs.readFileSync(metadataPath, "utf8")).createdAt;
+    } catch {
+      skipped += 1;
+      continue;
+    }
+    const createdMs = Date.parse(createdAt);
+    if (!Number.isFinite(createdMs) || now - createdMs < maxAgeMs) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      fs.rmSync(snapshotDir, { recursive: true, force: true });
+      removed += 1;
+    } catch {
+      skipped += 1;
+    }
+  }
+  return { removed, skipped };
+}
+
+function collectGitIgnoredPaths(sourceRoot) {
+  if (!isGitRepository(sourceRoot)) return new Set();
+  const result = runCommand("git", ["ls-files", "--ignored", "--others", "--exclude-standard", "-z"], {
+    cwd: sourceRoot,
+    maxBuffer: 64 * 1024 * 1024
+  });
+  if (result.status !== 0) return new Set();
+  return new Set(
+    String(result.stdout ?? "")
+      .split("\0")
+      .filter(Boolean)
+  );
+}
+
+function isIgnoredPath(relativePath, ignoredPaths) {
+  if (!ignoredPaths?.size) return false;
+  const normalised = String(relativePath ?? "").split(path.sep).join("/");
+  if (ignoredPaths.has(normalised)) return true;
+  const parts = normalised.split("/");
+  for (let index = 1; index <= parts.length; index += 1) {
+    if (ignoredPaths.has(parts.slice(0, index).join("/"))) return true;
+  }
+  return false;
+}
+
 /**
  * Walk `sourceRoot` and copy reviewable files into `snapshotRoot`, honouring excludes
  * and size/file-count caps. Returns { copiedFiles, totalBytes, skipped }.
@@ -66,7 +171,7 @@ function resolveExcludes(extraExcludes = []) {
  * Cross-platform: uses Node fs APIs only, no shell. Path separators normalised through
  * path.join so it works on macOS, Linux, and Windows identically.
  */
-function copyTree(sourceRoot, snapshotRoot, excludes, limits) {
+function copyTree(sourceRoot, snapshotRoot, excludes, limits, ignoredPaths) {
   const stack = [{ src: sourceRoot, rel: "" }];
   let copiedFiles = 0;
   let totalBytes = 0;
@@ -90,6 +195,15 @@ function copyTree(sourceRoot, snapshotRoot, excludes, limits) {
       const srcPath = path.join(src, entry.name);
       const relPath = path.join(rel, entry.name);
       const dstPath = path.join(snapshotRoot, relPath);
+
+      if (isSensitiveSnapshotPath(relPath)) {
+        skipped.push({ path: relPath, reason: "sensitive-pattern" });
+        continue;
+      }
+      if (isIgnoredPath(relPath, ignoredPaths)) {
+        skipped.push({ path: relPath, reason: "gitignore" });
+        continue;
+      }
 
       if (entry.isSymbolicLink()) {
         // Don't follow symlinks — too easy to escape the source dir or loop forever.
@@ -169,6 +283,7 @@ export function createDirectorySnapshot(sourceRoot, options = {}) {
 
   const tempRoot = options.tempRoot ? path.resolve(options.tempRoot) : path.join(os.tmpdir(), "codex-claude-review");
   fs.mkdirSync(tempRoot, { recursive: true });
+  reapStaleDirectorySnapshots(tempRoot);
 
   const snapshotRoot = fs.mkdtempSync(path.join(tempRoot, "snapshot-"));
   const excludes = resolveExcludes(options.excludes);
@@ -176,8 +291,9 @@ export function createDirectorySnapshot(sourceRoot, options = {}) {
     maxFiles: options.maxFiles ?? DEFAULT_SNAPSHOT_MAX_FILES,
     maxBytes: options.maxBytes ?? DEFAULT_SNAPSHOT_MAX_BYTES
   };
+  const ignoredPaths = collectGitIgnoredPaths(absSourceRoot);
 
-  const { copiedFiles, totalBytes, skipped } = copyTree(absSourceRoot, snapshotRoot, excludes, limits);
+  const { copiedFiles, totalBytes, skipped } = copyTree(absSourceRoot, snapshotRoot, excludes, limits, ignoredPaths);
 
   // Write a defensive .gitignore so review job artifacts never get committed.
   // Use a single readFileSync with try/catch instead of existsSync-then-read to

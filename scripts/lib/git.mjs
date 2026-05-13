@@ -7,6 +7,7 @@ const DEFAULT_OPUS_INLINE_BYTES = 250_000;
 const DEFAULT_LONG_CONTEXT_BYTES = 800_000;
 const DEFAULT_GIT_MAX_BUFFER = 128 * 1024 * 1024;
 const MAX_UNTRACKED_BYTES = 24 * 1024;
+const MAX_DIRECTORY_REVIEW_FILE_BYTES = 1024 * 1024;
 const REVIEW_PATHSPEC = ["--", ".", ":(exclude).claude-review/**"];
 
 function git(cwd, args, options = {}) {
@@ -47,6 +48,28 @@ function readUntrackedFile(cwd, relativePath) {
     return `### ${relativePath}\n(skipped: binary file)`;
   }
   return `### ${relativePath}\n\`\`\`\n${buffer.toString("utf8").trimEnd()}\n\`\`\``;
+}
+
+function readReviewFile(cwd, relativePath) {
+  const fullPath = path.join(cwd, relativePath);
+  const stat = fs.statSync(fullPath);
+  if (stat.size > MAX_DIRECTORY_REVIEW_FILE_BYTES) {
+    return {
+      text: `### ${relativePath}\n(skipped: ${stat.size} bytes exceeds ${MAX_DIRECTORY_REVIEW_FILE_BYTES} byte directory-review limit)`,
+      skipped: { path: relativePath, bytes: stat.size, reason: "size" }
+    };
+  }
+  const buffer = fs.readFileSync(fullPath);
+  if (!isProbablyText(buffer)) {
+    return {
+      text: `### ${relativePath}\n(skipped: binary file)`,
+      skipped: { path: relativePath, bytes: stat.size, reason: "binary" }
+    };
+  }
+  return {
+    text: `### ${relativePath}\n\`\`\`\n${buffer.toString("utf8").trimEnd()}\n\`\`\``,
+    skipped: null
+  };
 }
 
 export function ensureGitRepository(cwd) {
@@ -101,6 +124,10 @@ export function resolveReviewTarget(cwd, options = {}) {
   }
 
   const scope = options.scope ?? "auto";
+  if (scope === "directory") {
+    return { mode: "directory", label: "directory snapshot" };
+  }
+
   if (scope === "branch") {
     const base = detectDefaultBranch(cwd);
     return { mode: "branch", baseRef: base, label: `branch diff against ${base}` };
@@ -184,12 +211,50 @@ function collectBranchContext(cwd, baseRef) {
   };
 }
 
+function collectDirectoryContext(cwd) {
+  const files = unique(
+    String(gitChecked(cwd, ["ls-files", ...REVIEW_PATHSPEC]).stdout)
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .filter((file) => !isInternalReviewArtifact(file))
+  );
+  if (files.length === 0) {
+    throw new Error("Nothing to review in the directory snapshot.");
+  }
+  const renderedFiles = files.map((file) => readReviewFile(cwd, file));
+  const skipped = renderedFiles.map((file) => file.skipped).filter(Boolean);
+  const skippedSummary = skipped.length
+    ? skipped.map((file) => `${file.path} (${file.reason}, ${file.bytes} bytes)`).join("\n")
+    : "";
+  const skippedNotice = skipped.length
+    ? ` ${skipped.length} file(s) were skipped; see Directory Snapshot Skipped Files.`
+    : "";
+
+  return {
+    summary: `Reviewing ${files.length} file(s) from a directory snapshot.${skippedNotice}`,
+    changedFiles: files,
+    fullContent: [
+      formatSection("Directory Snapshot Files", files.join("\n")),
+      formatSection("Directory Snapshot Content", renderedFiles.map((file) => file.text).join("\n\n")),
+      skipped.length ? formatSection("Directory Snapshot Skipped Files", skippedSummary) : ""
+    ].join("\n"),
+    summaryContent: [
+      formatSection("Directory Snapshot Files", files.join("\n")),
+      skipped.length ? formatSection("Directory Snapshot Skipped Files", skippedSummary) : ""
+    ].join("\n")
+  };
+}
+
 export function collectReviewContext(cwd, target) {
   if (target.mode === "working-tree") {
     return collectWorkingTreeContext(cwd);
   }
   if (target.mode === "branch") {
     return collectBranchContext(cwd, target.baseRef);
+  }
+  if (target.mode === "directory") {
+    return collectDirectoryContext(cwd);
   }
   throw new Error(`Unsupported target mode ${target.mode}`);
 }

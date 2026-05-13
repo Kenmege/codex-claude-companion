@@ -16,10 +16,11 @@ export const DEFAULT_CLAUDE_SETUP_PROBE_TIMEOUT_MS = 60 * 1000;
 export const CLAUDE_SETUP_PROBE_TIMEOUT_ENV = "CODEX_CLAUDE_SETUP_PROBE_TIMEOUT_MS";
 export const DEFAULT_AGENTIC_BUDGET_USD = 8;
 export const DEFAULT_DEEP_REVIEW_BUDGET_USD = 25;
-export const DEFAULT_AGENTIC_NO_OUTPUT_TIMEOUT_MS = 60 * 1000;
+export const DEFAULT_AGENTIC_NO_OUTPUT_TIMEOUT_MS = 120 * 1000;
 export const CLAUDE_AGENTIC_NO_OUTPUT_TIMEOUT_ENV = "CODEX_CLAUDE_AGENTIC_NO_OUTPUT_TIMEOUT_MS";
-export const DEFAULT_AGENTIC_STRUCTURED_PROBE_TIMEOUT_MS = 45 * 1000;
+export const DEFAULT_AGENTIC_STRUCTURED_PROBE_TIMEOUT_MS = 5 * 60 * 1000;
 export const CLAUDE_AGENTIC_STRUCTURED_PROBE_TIMEOUT_ENV = "CODEX_CLAUDE_AGENTIC_STRUCTURED_PROBE_TIMEOUT_MS";
+export const DEFAULT_MARKDOWN_FALLBACK_NO_OUTPUT_TIMEOUT_MS = 60 * 1000;
 
 export const ALLOWED_PERMISSION_MODES = ["default", "plan"];
 
@@ -1344,7 +1345,14 @@ export async function runClaudeStructuredReview(cwd, snapshot, reviewKind, schem
       const fallbackCommandShape = redactClaudeCommandShape(fallbackArgs);
       const fallbackStartedAt = Date.now();
       const fallbackRemainingTimeoutMs = Math.max(1000, timeoutMs - Math.min(timeoutMs, structuredResult.timeoutMs ?? structuredProbeTimeoutMs));
-      const fallbackNoOutputTimeoutMs = Math.max(1000, Math.min(30_000, Math.floor(fallbackRemainingTimeoutMs / 3)));
+      const fallbackNoOutputTimeoutMs = Math.max(
+        1000,
+        Math.min(
+          DEFAULT_MARKDOWN_FALLBACK_NO_OUTPUT_TIMEOUT_MS,
+          resolveAgenticNoOutputTimeoutMs(snapshot),
+          Math.floor(fallbackRemainingTimeoutMs / 3)
+        )
+      );
       // The fallback prompt is fully ephemeral — pipe it directly via inputData.
       // No temp file, no CodeQL alert, no cleanup needed.
       const fallbackResult = await runCommandCapture("claude", fallbackArgs, {
