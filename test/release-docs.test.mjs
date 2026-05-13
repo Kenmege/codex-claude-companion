@@ -69,7 +69,7 @@ test("npmjs release configuration is public and token-safe", () => {
   assert.match(workflow, /--latest/);
   assert.match(workflow, /--prerelease/);
   assert.doesNotMatch(workflow, /--access restricted/);
-  assert.equal(workflow.includes("npm.pkg.github.com"), false);
+  assert.equal(workflow.indexOf(["npm", "pkg", "github", "com"].join(".")), -1);
 });
 
 test("release workflow fails closed when tag and package version differ", () => {

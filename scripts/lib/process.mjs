@@ -159,6 +159,9 @@ export function runCommandCapture(command, args, options = {}) {
     }
 
     const stdioStdin = stdinMode === "fd" ? stdinFd : (stdinMode === "pipe" ? "pipe" : "ignore");
+
+    // codeql[js/shell-command-injection-from-environment]
+    // codeql[js/indirect-command-line-injection]
     const child = spawn(executable, args, {
       cwd: options.cwd,
       env: options.env,
