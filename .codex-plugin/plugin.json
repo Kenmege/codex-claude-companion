@@ -1,6 +1,6 @@
 {
   "name": "claude-review",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Run agentic Claude Opus 4.7 review passes, including explicit Opus 4.7 1M long-context mode, from inside Codex CLI sessions with full read-only tool access (Read/Glob/Grep/Bash/Task/WebFetch/WebSearch) and parallel sub-agent dispatch.",
   "author": {
     "name": "Kennedy Umege"

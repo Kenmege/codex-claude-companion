@@ -6,6 +6,15 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.0.7] — 2026-05-13
+
+### Changed
+
+- Removed the remaining pre-publish wording from the deeper README install
+  section now that npmjs is live.
+- Added an explicit upgrade path for early users with the historical scoped
+  package or source install who hit an `EEXIST` global binary collision.
+
 ## [1.0.6] — 2026-05-13
 
 ### Changed

@@ -240,7 +240,7 @@ you know up-front whether the budget cap will apply.
 
 ### npmjs public install
 
-After the npmjs package is published and verified:
+Install from npmjs:
 
 ```bash
 npm install -g codex-plugin-cc
@@ -248,10 +248,16 @@ codex-claude-review enable
 codex-claude-review doctor --probe-runtime
 ```
 
-If `npm install -g codex-plugin-cc` returns `404`, npmjs publish has not
-completed yet. Use the source install below or follow
-[`docs/NPM_PUBLISH_CHECKLIST.md`](https://github.com/Kenmege/codex-plugin-cc/blob/main/docs/NPM_PUBLISH_CHECKLIST.md)
-as the maintainer.
+If you previously installed the historical scoped package or a source checkout
+and npm reports `EEXIST` for `codex-claude-review`, remove the old global
+package first:
+
+```bash
+npm uninstall -g @kenmege/codex-plugin-cc codex-plugin-cc
+npm install -g codex-plugin-cc
+codex-claude-review enable
+codex-claude-review doctor
+```
 
 ### Source install
 
@@ -472,9 +478,9 @@ The npm package intentionally omits `package.json.private` so npmjs publishing
 can run when explicitly enabled. The release workflow validates tags and only
 publishes when repository variable `NPMJS_PUBLISH_ENABLED=true` and secret
 `NPM_TOKEN` are configured. Release tags must match the package version exactly:
-`package.json` version `1.0.6` is published only from tag `v1.0.6`; a
-prerelease smoke must first commit matching `1.0.6-rc.1` metadata before
-pushing `v1.0.6-rc.1`.
+`package.json` version `1.0.7` is published only from tag `v1.0.7`; a
+prerelease smoke must first commit matching `1.0.7-rc.1` metadata before
+pushing `v1.0.7-rc.1`.
 
 ## Repository Layout
 
