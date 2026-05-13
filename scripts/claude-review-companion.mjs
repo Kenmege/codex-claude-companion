@@ -865,6 +865,48 @@ function findNextSectionStart(content, fromOffset) {
   return -1;
 }
 
+function safeTimestampForPath(date = new Date()) {
+  return date.toISOString().replace(/[:.]/g, "-");
+}
+
+function writeTextFileAtomically(filePath, content, { backupExisting = false } = {}) {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+
+  let backupPath = null;
+  if (backupExisting && fs.existsSync(filePath)) {
+    backupPath = `${filePath}.bak.${safeTimestampForPath()}`;
+    fs.copyFileSync(filePath, backupPath, fs.constants.COPYFILE_EXCL);
+  }
+
+  const tmpPath = path.join(dir, `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`);
+  let fd = null;
+  try {
+    fd = fs.openSync(tmpPath, "wx", 0o600);
+    fs.writeFileSync(fd, content, "utf8");
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Preserve the original error; close failure is cleanup-only.
+      }
+    }
+    try {
+      fs.rmSync(tmpPath, { force: true });
+    } catch {
+      // Preserve the original error; temp cleanup is best-effort.
+    }
+    throw err;
+  }
+
+  return { backupPath };
+}
+
 function handleEnable(argv) {
   // Pre-scan: detect `--config` passed with no value (parseArgs leaves it as undefined,
   // which is indistinguishable from `--config` not passed at all).
@@ -1000,15 +1042,15 @@ function handleEnable(argv) {
 
   const alreadyEnabled = toAdd.length === 0 && toUpdate.length === 0;
   const dryRun = options["dry-run"] ?? false;
+  let backupPath = null;
 
   if (!dryRun && !alreadyEnabled) {
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, updated, "utf8");
+    ({ backupPath } = writeTextFileAtomically(configPath, updated, { backupExisting: existing !== "" }));
   }
 
   if (options.json) {
     process.stdout.write(
-      JSON.stringify({ configPath, pluginRoot, alreadyEnabled, dryRun, added: toAdd, updated: toUpdate }, null, 2) + "\n"
+      JSON.stringify({ configPath, pluginRoot, alreadyEnabled, dryRun, added: toAdd, updated: toUpdate, backupPath }, null, 2) + "\n"
     );
     return;
   }
@@ -1024,6 +1066,7 @@ function handleEnable(argv) {
     const changed = [...toAdd, ...toUpdate];
     process.stdout.write(
       `Plugin registered in ${configPath}\n` +
+        (backupPath ? `Backup written to ${backupPath}\n` : "") +
         `Changed: ${changed.join(", ")}\n` +
         `Restart Codex CLI to activate the plugin.\n`
     );

@@ -27,7 +27,10 @@ The default review lanes are read-only:
 
 ## Reporting
 
-Report vulnerabilities privately to Kennedy Umege through the private repository owner channel. Do not open a public issue containing exploit details, tokens, patient data, or workspace paths.
+Report vulnerabilities through GitHub Security Advisories:
+https://github.com/Kenmege/codex-plugin-cc/security/advisories/new
+
+Do not open a public issue containing exploit details, tokens, patient data, or workspace paths.
 
 Please include:
 

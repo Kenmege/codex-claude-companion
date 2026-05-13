@@ -72,7 +72,7 @@ The v0.2.x to v1.0.2 hardening pass focused on control-plane correctness:
 
 ## Acknowledgments
 
-The release was hardened through adversarial review by Codex GPT-5.5 and
+The release was hardened through adversarial review by OpenAI Codex and
 Claude Opus. Their independent NO_SHIP findings converged on the same control
 plane risks: unsafe shell surface, prompt-injection boundaries, schema/runtime
 drift, background-result exit codes, and release workflow safety.

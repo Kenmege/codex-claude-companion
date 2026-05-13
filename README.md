@@ -113,17 +113,21 @@ review by four agents with distinct strengths.
 
 | Reviewer | Trigger | Strength |
 |---|---|---|
-| **GitHub Copilot** | automatic on every PR | breadth, fast, high-recall on style and obvious bugs |
-| **Codex (OpenAI GPT-5.5)** | `@codex` PR comment | senior-engineer reasoning, forensic depth on architecture and release safety |
-| **Devin (Cognition)** | `@devin` PR comment | autonomous engineering; can implement fixes, not just review |
+| **GitHub Copilot** | GitHub App / repository setting | breadth, fast, high-recall on style and obvious bugs |
+| **Codex (OpenAI)** | installed GitHub App or `@codex` PR comment where configured | senior-engineer reasoning, forensic depth on architecture and release safety |
+| **Devin (Cognition)** | installed GitHub App or `@devin` PR comment where configured | autonomous engineering; can implement fixes, not just review |
 | **Claude (Anthropic Opus 4.7)** | `@claude` PR comment, plus automatic on PR open | adversarial code review, evidence-cited findings, schema-enforced output through this plugin |
 
-Contributors should expect overlapping but complementary feedback.
+This repository ships Claude automation in `.github/workflows/claude.yml`.
+Copilot, Codex, and Devin reviewer behavior depends on the GitHub Apps and
+repository settings installed on the target repository; forks must configure
+those separately. Contributors should expect overlapping but complementary
+feedback on the maintained repository.
 Claude auto-review is skipped on untrusted fork PRs when GitHub withholds
 repository Actions secrets; maintainers can still trigger a safe follow-up once
 the PR is ready for deeper review.
 Disagreements between reviewers are productive. The v0.2.x to v0.2.1
-hardening of this plugin came from a Claude Opus plus Codex GPT-5.5
+hardening of this plugin came from a Claude Opus plus OpenAI Codex
 adversarial review pair where both returned independent NO_SHIP verdicts on
 convergent control-plane issues.
 
@@ -481,9 +485,9 @@ The npm package intentionally omits `package.json.private` so npmjs publishing
 can run when explicitly enabled. The release workflow validates tags and only
 publishes when repository variable `NPMJS_PUBLISH_ENABLED=true` and secret
 `NPM_TOKEN` are configured. Release tags must match the package version exactly:
-`package.json` version `1.0.8` is published only from tag `v1.0.8`; a
-prerelease smoke must first commit matching `1.0.8-rc.1` metadata before
-pushing `v1.0.8-rc.1`.
+`package.json` version `1.0.9` is published only from tag `v1.0.9`; a
+prerelease smoke must first commit matching `1.0.9-rc.1` metadata before
+pushing `v1.0.9-rc.1`.
 
 ## Repository Layout
 

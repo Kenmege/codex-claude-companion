@@ -1,10 +1,10 @@
 {
-  "name": "openai-codex",
+  "name": "kenmege-codex-reference",
   "owner": {
-    "name": "OpenAI"
+    "name": "Kennedy Umege"
   },
   "metadata": {
-    "description": "Codex plugins to use in Claude Code for delegation and code review.",
+    "description": "Upstream-derived Codex reference plugin kept for Claude Code compatibility while codex-plugin-cc is maintained by Kenmege.",
     "version": "1.0.3"
   },
   "plugins": [
@@ -13,7 +13,7 @@
       "description": "Use Codex from Claude Code to review code or delegate tasks.",
       "version": "1.0.3",
       "author": {
-        "name": "OpenAI"
+        "name": "OpenAI upstream; maintained in this fork by Kennedy Umege"
       },
       "source": "./plugins/codex"
     }

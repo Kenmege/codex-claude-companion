@@ -105,6 +105,31 @@ test("public-facing docs do not contain private local machine paths", () => {
   }
 });
 
+test("public trust metadata is attribution-safe and precise", () => {
+  const notice = read("NOTICE");
+  const plugin = JSON.parse(read(".codex-plugin/plugin.json"));
+  const claudeMarketplace = JSON.parse(read(".claude-plugin/marketplace.json"));
+  const readme = read("README.md");
+  const security = read("SECURITY.md");
+  const releaseNotes = [
+    "README.md",
+    "CHANGELOG.md",
+    "RELEASE_NOTES_v1.0.2.md",
+    "RELEASE_NOTES_v1.0.3.md",
+    "RELEASE_NOTES_v1.0.9.md"
+  ].map(read).join("\n");
+
+  assert.match(notice, /Copyright 2026 Kennedy Umege/);
+  assert.match(notice, /Copyright 2026 OpenAI/);
+  assert.deepEqual(plugin.interface.capabilities, ["Interactive", "Read"]);
+  assert.equal(claudeMarketplace.owner.name, "Kennedy Umege");
+  assert.doesNotMatch(claudeMarketplace.owner.name, /OpenAI/);
+  assert.match(readme, /Windows is not a supported v1 platform/);
+  assert.doesNotMatch(readme, /macOS, Linux, and Windows are supported/);
+  assert.match(security, /github\.com\/Kenmege\/codex-plugin-cc\/security\/advisories\/new/);
+  assert.doesNotMatch(releaseNotes, /GPT-5\.5|gpt-5\.5/);
+});
+
 test("internal prompt artifacts are not tracked for public release", () => {
   const trackedPromptFiles = execFileSync("git", ["ls-files", "docs/*_PROMPT.md"], {
     cwd: root,

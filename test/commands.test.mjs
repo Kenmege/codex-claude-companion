@@ -538,6 +538,7 @@ test("enable --json emits machine-parseable registration result", () => {
   assert.equal(typeof payload.pluginRoot, "string");
   assert.equal(payload.alreadyEnabled, false);
   assert.equal(payload.dryRun, false);
+  assert.equal(payload.backupPath, null);
   assert.ok(Array.isArray(payload.added) && payload.added.length > 0);
 });
 
@@ -554,6 +555,26 @@ test("enable preserves existing config content when appending stanzas", () => {
   const written = fs.readFileSync(configPath, "utf8");
   assert.ok(written.startsWith(existing), "existing config content must be preserved verbatim");
   assert.match(written, /\[marketplaces\.claude-review-private\]/);
+  assert.match(result.stdout, /Backup written to /);
+  const backups = fs.readdirSync(tmpDir).filter((name) => name.startsWith("config.toml.bak."));
+  assert.equal(backups.length, 1, "existing config must be backed up before mutation");
+  assert.equal(fs.readFileSync(path.join(tmpDir, backups[0]), "utf8"), existing);
+  assert.equal(fs.readdirSync(tmpDir).filter((name) => name.includes(".tmp")).length, 0, "atomic temp file must be cleaned up");
+});
+
+test("enable --json reports backup path when mutating an existing config", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-enable-json-backup-"));
+  const configPath = path.join(tmpDir, "config.toml");
+  const existing = `model = "codex"\n`;
+  fs.writeFileSync(configPath, existing, "utf8");
+  const result = spawnSync(process.execPath, [helper, "enable", "--json", "--config", configPath], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.match(payload.backupPath, /config\.toml\.bak\./);
+  assert.equal(fs.readFileSync(payload.backupPath, "utf8"), existing);
 });
 
 test("enable source path uses forward slashes on all platforms", () => {

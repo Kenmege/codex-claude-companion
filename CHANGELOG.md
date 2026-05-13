@@ -6,6 +6,27 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.0.9] — 2026-05-13
+
+### Changed
+
+- Updated top-level NOTICE attribution to identify Kennedy Umege as the current
+  package publisher while retaining OpenAI attribution for upstream-derived
+  portions.
+- Reframed the upstream Claude Code marketplace manifest so it no longer
+  presents the Kenmege repository as OpenAI-owned.
+- Replaced public unreleased-model-name claims with OpenAI Codex wording.
+- Clarified that only Claude automation ships in this repository; Copilot,
+  Codex, and Devin reviewer behavior depends on repository-installed GitHub
+  Apps/settings.
+- Added the GitHub Security Advisories URL to SECURITY.md.
+
+### Fixed
+
+- `codex-claude-review enable` now writes Codex config through a same-directory
+  temp file plus atomic rename and creates a one-shot timestamped backup before
+  modifying an existing config.
+
 ## [1.0.8] — 2026-05-13
 
 ### Changed

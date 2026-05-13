@@ -1,3 +1,9 @@
+Copyright 2026 Kennedy Umege
+
+Portions of this repository are derived from OpenAI's Apache-2.0 licensed
+Claude Code / Codex plugin reference. Those upstream portions retain their
+original attribution, including:
+
 Copyright 2026 OpenAI
 
 Licensed under the Apache License, Version 2.0 (the "License");
