@@ -68,8 +68,8 @@ Expected before first npmjs publish:
 2. Push a semver tag matching the package version exactly:
 
    ```bash
-   git tag v1.0.5
-   git push origin v1.0.5
+   git tag v1.0.6
+   git push origin v1.0.6
    ```
 
 3. Watch the release workflow:

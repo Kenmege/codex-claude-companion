@@ -20,8 +20,7 @@ Malformed structured output fails closed.
 
 ## 60-Second Quickstart
 
-Public npm is the intended frictionless install lane. After the npmjs publish
-gate is verified with `npm view codex-plugin-cc version`, install with:
+Public npm is the frictionless install lane:
 
 ```bash
 npm install -g codex-plugin-cc
@@ -29,7 +28,7 @@ codex-claude-review enable
 codex-claude-review doctor
 ```
 
-Until the npmjs package is live, install from source:
+For local development on the plugin itself, install from source:
 
 ```bash
 git clone https://github.com/Kenmege/codex-plugin-cc.git
@@ -473,9 +472,9 @@ The npm package intentionally omits `package.json.private` so npmjs publishing
 can run when explicitly enabled. The release workflow validates tags and only
 publishes when repository variable `NPMJS_PUBLISH_ENABLED=true` and secret
 `NPM_TOKEN` are configured. Release tags must match the package version exactly:
-`package.json` version `1.0.5` is published only from tag `v1.0.5`; a
-prerelease smoke must first commit matching `1.0.5-rc.1` metadata before
-pushing `v1.0.5-rc.1`.
+`package.json` version `1.0.6` is published only from tag `v1.0.6`; a
+prerelease smoke must first commit matching `1.0.6-rc.1` metadata before
+pushing `v1.0.6-rc.1`.
 
 ## Repository Layout
 

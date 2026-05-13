@@ -6,6 +6,14 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.0.6] — 2026-05-13
+
+### Changed
+
+- Removed stale pre-publish wording from the npm README after the public
+  npmjs package went live, so first-time users see the global npm install as
+  the canonical path and source install as a development fallback.
+
 ## [1.0.5] — 2026-05-13
 
 ### Added
