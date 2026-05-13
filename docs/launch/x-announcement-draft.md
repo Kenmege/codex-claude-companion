@@ -44,8 +44,8 @@ codex-claude-review doctor
    codex-claude-review review --preset deep --background
    ```
 
-5. First public repo, built with the same review pressure I want the tool to
-   provide: CI, CodeQL, OpenSSF Scorecard, dependency review, CODEOWNERS, and
-   required review gates.
+5. First public repo, built under adversarial review pressure and a deliberately
+   conservative read-only boundary. The launch posture is simple: useful tool
+   first, claims backed by what the package actually does today.
 
    https://github.com/Kenmege/codex-plugin-cc
