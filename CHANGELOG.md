@@ -6,6 +6,15 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.0.8] — 2026-05-13
+
+### Changed
+
+- Removed the plugin manifest `Write` capability so public metadata matches
+  the default read-only reviewer trust boundary.
+- Aligned README platform support with the architecture document: macOS and
+  Linux are supported/tested for v1; Windows is not claimed until verified.
+
 ## [1.0.7] — 2026-05-13
 
 ### Changed

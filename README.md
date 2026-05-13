@@ -38,7 +38,8 @@ codex-claude-review enable
 codex-claude-review doctor
 ```
 
-`enable` writes the marketplace and plugin stanzas to `~/.codex/config.toml` (cross-platform). Run it once after install; it is idempotent. Restart Codex CLI after running it.
+`enable` writes the marketplace and plugin stanzas to `~/.codex/config.toml`.
+Run it once after install; it is idempotent. Restart Codex CLI after running it.
 `doctor` checks Node, Git, Claude Code CLI, Claude auth, Codex registration,
 job storage, non-Git folder support, and optional live Claude runtime access
 with `--probe-runtime`.
@@ -460,7 +461,9 @@ exits `3` when the completed job contains ship-blocking findings.
 
 ## Supported Platforms
 
-macOS, Linux, and Windows are supported by the helper path. Run
+Supported and tested development platforms are macOS and Linux with Node.js
+18.18 or newer. Windows is not a supported v1 platform because process-tree
+termination and shell/tool semantics have not been verified there. Run
 `codex-claude-review doctor --probe-runtime` on a new machine before trusting a
 release gate there, because Claude Code runtime behavior and local auth state
 still depend on the host environment.
@@ -478,9 +481,9 @@ The npm package intentionally omits `package.json.private` so npmjs publishing
 can run when explicitly enabled. The release workflow validates tags and only
 publishes when repository variable `NPMJS_PUBLISH_ENABLED=true` and secret
 `NPM_TOKEN` are configured. Release tags must match the package version exactly:
-`package.json` version `1.0.7` is published only from tag `v1.0.7`; a
-prerelease smoke must first commit matching `1.0.7-rc.1` metadata before
-pushing `v1.0.7-rc.1`.
+`package.json` version `1.0.8` is published only from tag `v1.0.8`; a
+prerelease smoke must first commit matching `1.0.8-rc.1` metadata before
+pushing `v1.0.8-rc.1`.
 
 ## Repository Layout
 
