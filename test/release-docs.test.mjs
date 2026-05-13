@@ -31,7 +31,7 @@ test("package.json shape supports public npm publish", () => {
 
   assert.notEqual(packageJson.private, true);
   assert.notEqual(packageJson.private, "true");
-  assert.match(packageJson.name, /^@[\w-]+\/[\w-]+$/);
+  assert.equal(packageJson.name, "codex-plugin-cc");
   assert.match(packageJson.version, /^\d+\.\d+\.\d+/);
   assert.ok(Array.isArray(packageJson.files));
   assert.ok(packageJson.files.length > 0);
@@ -39,42 +39,37 @@ test("package.json shape supports public npm publish", () => {
   assert.match(packageJson.repository.url, /Kenmege\/codex-plugin-cc/);
 });
 
-test("GitHub Packages release configuration is scoped and token-safe", () => {
+test("npmjs release configuration is public and token-safe", () => {
   const packageJson = JSON.parse(read("package.json"));
-  const npmrc = read(".npmrc");
   const workflow = read(".github/workflows/release.yml");
 
-  assert.equal(packageJson.name, "@kenmege/codex-plugin-cc");
+  assert.equal(packageJson.name, "codex-plugin-cc");
   assert.match(
     packageJson.repository.url,
     /^(git\+)?https:\/\/github\.com\/Kenmege\/codex-plugin-cc\.git$/
   );
   assert.deepEqual(packageJson.publishConfig, {
-    registry: "https://npm.pkg.github.com",
+    registry: "https://registry.npmjs.org",
     access: "public"
   });
-  assert.match(npmrc, /^@kenmege:registry=https:\/\/npm\.pkg\.github\.com$/m);
-  assert.doesNotMatch(npmrc, new RegExp("_auth" + "Token|" + "YOUR_CLASSIC_PAT"));
   assert.match(workflow, /contents: write/);
   assert.match(workflow, /id-token: write/);
-  assert.match(workflow, /packages: write/);
-  assert.match(workflow, /registry-url: https:\/\/npm\.pkg\.github\.com/);
-  assert.match(workflow, /scope: "@kenmege"/);
-  assert.match(workflow, /NODE_AUTH_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/);
-  assert.match(workflow, /GH_PACKAGES_PUBLISH_ENABLED/);
+  assert.doesNotMatch(workflow, /packages: write/);
+  assert.match(workflow, /registry-url: https:\/\/registry\.npmjs\.org/);
+  assert.match(workflow, /NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/);
+  assert.match(workflow, /NPMJS_PUBLISH_ENABLED/);
   assert.doesNotMatch(workflow, /npm pkg set private=false/);
   assert.match(workflow, /id: publish-package/);
-  assert.match(workflow, /gh api --paginate "\/users\/\$\{\{ github\.repository_owner \}\}\/packages\/npm\/codex-plugin-cc\/versions"/);
-  assert.match(workflow, /Package @kenmege\/codex-plugin-cc v\$\{VERSION\} already exists; skipping npm publish/);
+  assert.match(workflow, /npm view "codex-plugin-cc@\$\{VERSION\}" version/);
+  assert.match(workflow, /Package codex-plugin-cc@\$\{VERSION\} already exists; skipping npm publish/);
   assert.match(workflow, /npm publish --access public --provenance/);
-  assert.match(workflow, /GH_TOKEN: \$\{\{ secrets\.GITHUB_TOKEN \}\}/);
   assert.match(workflow, /gh release view "v\$\{VERSION\}"/);
   assert.match(workflow, /gh release edit "v\$\{VERSION\}"/);
   assert.match(workflow, /gh release create "v\$\{VERSION\}"/);
   assert.match(workflow, /--latest/);
   assert.match(workflow, /--prerelease/);
   assert.doesNotMatch(workflow, /--access restricted/);
-  assert.doesNotMatch(workflow, new RegExp("NPM" + "_TOKEN|registry\\.npmjs\\.org"));
+  assert.doesNotMatch(workflow, /npm\.pkg\.github\.com/);
 });
 
 test("release workflow fails closed when tag and package version differ", () => {
@@ -100,6 +95,7 @@ test("public-facing docs do not contain private local machine paths", () => {
     "commands/elite-review.md",
     "commands/deep-review.md",
     "commands/security-review.md",
+    "commands/doctor.md",
     "commands/setup.md",
     "commands/status.md",
     "commands/result.md",
@@ -208,11 +204,11 @@ test("public docs document the add-dir boundary override", () => {
   }
 });
 
-test("release checklist documents GitHub Packages publish switch and v-tag trigger", () => {
+test("release checklist documents npmjs publish switch and v-tag trigger", () => {
   const source = read("CONTRIBUTING.md");
-  assert.match(source, /GH_PACKAGES_PUBLISH_ENABLED=true/);
-  assert.match(source, /GITHUB_TOKEN/);
-  assert.doesNotMatch(source, new RegExp("NPM" + "_TOKEN"));
+  assert.match(source, /NPMJS_PUBLISH_ENABLED=true/);
+  assert.match(source, new RegExp("NPM" + "_TOKEN"));
+  assert.match(source, /NODE_AUTH_TOKEN/);
   assert.match(source, /v1\.0\.3/);
   assert.match(source, /matching the package version exactly/);
   assert.match(source, /RELEASE_NOTES_v\$\{VERSION\}\.md/);

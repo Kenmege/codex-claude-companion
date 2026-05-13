@@ -15,6 +15,7 @@ const required = [
   "commands/deep-review.md",
   "commands/security-review.md",
   "commands/enable.md",
+  "commands/doctor.md",
   "commands/setup.md",
   "commands/status.md",
   "commands/result.md",
@@ -24,7 +25,6 @@ const required = [
   "CONTRIBUTING.md",
   "CODE_OF_CONDUCT.md",
   "RELEASE_NOTES_v1.0.3.md",
-  ".npmrc",
   ".github/CODEOWNERS",
   ".github/PULL_REQUEST_TEMPLATE.md",
   ".github/ISSUE_TEMPLATE/bug_report.yml",
@@ -52,7 +52,6 @@ const pluginManifest = JSON.parse(fs.readFileSync(path.join(root, ".codex-plugin
 const marketplaceManifest = JSON.parse(fs.readFileSync(path.join(root, ".agents/plugins/marketplace.json"), "utf8"));
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const packageLock = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
-const npmrc = fs.readFileSync(path.join(root, ".npmrc"), "utf8");
 const claudeWorkflow = fs.readFileSync(path.join(root, ".github/workflows/claude.yml"), "utf8");
 JSON.parse(fs.readFileSync(path.join(root, "schemas/review-output.schema.json"), "utf8"));
 JSON.parse(fs.readFileSync(path.join(root, "schemas/elite-review-output.schema.json"), "utf8"));
@@ -70,8 +69,8 @@ if (packageJson.version !== pluginManifest.version) {
   throw new Error("package.json and .codex-plugin/plugin.json versions must match.");
 }
 
-if (packageJson.name !== "@kenmege/codex-plugin-cc") {
-  throw new Error("package.json name must be scoped for GitHub Packages: @kenmege/codex-plugin-cc.");
+if (packageJson.name !== "codex-plugin-cc") {
+  throw new Error("package.json name must be the public npm package name: codex-plugin-cc.");
 }
 
 const repositoryUrl = packageJson.repository?.url?.replace(/^git\+/, "");
@@ -82,15 +81,11 @@ if (repositoryUrl !== "https://github.com/Kenmege/codex-plugin-cc.git") {
 }
 
 if (
-  packageJson.publishConfig?.registry !== "https://npm.pkg.github.com" ||
+  packageJson.publishConfig?.registry !== "https://registry.npmjs.org" ||
   packageJson.publishConfig?.access !== "public" ||
   Object.hasOwn(packageJson.publishConfig, "provenance")
 ) {
-  throw new Error("package.json publishConfig must target public GitHub Packages publishing without package-level npm provenance.");
-}
-
-if (!npmrc.includes("@kenmege:registry=https://npm.pkg.github.com")) {
-  throw new Error(".npmrc must route @kenmege packages to https://npm.pkg.github.com.");
+  throw new Error("package.json publishConfig must target public npmjs publishing without package-level npm provenance.");
 }
 
 if (!/anthropics\/claude-code-action@[a-f0-9]{40}/.test(claudeWorkflow)) {

@@ -6,6 +6,29 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Added a frictionless public npmjs lane for the unscoped `codex-plugin-cc`
+  package name, plus an approval-gated npm publish checklist. The previous
+  GitHub Packages install path remains documented as historical/advanced
+  because it requires developer-machine npm auth.
+- Added `--preset quick|ship|security|research|deep` to route common user
+  workflows to the right review lane without requiring users to memorize every
+  command.
+- Expanded `codex-claude-review doctor` with Node, Git, Claude CLI, Claude auth,
+  Codex registration, writable job storage, non-Git folder readiness, and
+  optional `--probe-runtime` model-access validation.
+- Added launch assets: a two-minute terminal demo script and an X.com
+  announcement draft that stays behind human approval.
+
+### Changed
+
+- Updated README installation guidance to lead with the future public npmjs
+  path while clearly stating that npmjs publish must be verified before the
+  command is advertised as live.
+- Updated release workflow configuration from GitHub Packages publishing to
+  npmjs publishing gated by `NPMJS_PUBLISH_ENABLED=true` and `NPM_TOKEN`.
+
 ## [1.0.4] — 2026-05-13
 
 ### Changed

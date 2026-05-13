@@ -78,16 +78,16 @@ Schemas are hand-maintained JSON Schema documents. When changing a schema:
 2. Update `CHANGELOG.md`.
 3. Run `npm run check`.
 4. Run `npm run pack:check` and verify `.claude-review/`, `test/`, `tests/`, and prompt/planning docs are not shipped.
-5. Configure GitHub Packages publishing before tagging: set repository variable `GH_PACKAGES_PUBLISH_ENABLED=true`. No npm token secret is required; the release workflow uses the automatic `GITHUB_TOKEN` with `packages: write`.
+5. Configure npmjs publishing before tagging: set repository variable `NPMJS_PUBLISH_ENABLED=true` and repository secret `NPM_TOKEN`. The release workflow uses `NODE_AUTH_TOKEN` only for the publish step.
 6. Push a semver release tag matching the package version exactly, e.g. `package.json` version `1.0.3` must be tagged as `v1.0.3`. The workflow fails closed if the tag and package version differ, so a prerelease smoke requires committing matching `1.0.3-rc.1` version metadata before pushing `v1.0.3-rc.1`.
-7. Verify the package landed at https://github.com/Kenmege/codex-plugin-cc/packages.
+7. Verify the package landed at https://www.npmjs.com/package/codex-plugin-cc and that `npm view codex-plugin-cc version` returns the tagged version.
 
-This package intentionally omits `package.json.private`. The release workflow validates tags and only publishes to GitHub Packages when publishing is explicitly enabled.
+This package intentionally omits `package.json.private`. The release workflow validates tags and only publishes to npmjs when publishing is explicitly enabled.
 GitHub Releases normally use `RELEASE_NOTES_v${VERSION}.md`; if that file is missing, the workflow intentionally uses a short generated stub so a tag workflow can still complete and be repaired by a follow-up release edit.
 
-When running release hygiene greps for npmjs.org or token placeholders, scope
-the scan to release surfaces such as `.github/workflows/`, `.npmrc`,
-`package.json`, `package-lock.json`, `README.md`, `SECURITY.md`, and
-`CHANGELOG.md`. Do not include `scripts/lib/claude.mjs` in that grep; it is the
-reviewer's WebFetch allowlist configuration and intentionally permits package
-registry domains for dependency and CVE investigation.
+When running release hygiene greps for package registries or token placeholders,
+scope the scan to release surfaces such as `.github/workflows/`, `package.json`,
+`package-lock.json`, `README.md`, `SECURITY.md`, and `CHANGELOG.md`. Do not
+include `scripts/lib/claude.mjs` in that grep; it is the reviewer's WebFetch allowlist
+configuration and intentionally permits package registry domains for
+dependency and CVE investigation.

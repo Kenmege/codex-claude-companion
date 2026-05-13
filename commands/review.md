@@ -7,8 +7,9 @@ description: Run an agentic Claude review (Opus 4.7 by default) against the curr
 ## Preflight
 
 1. Prefer the helper binary `codex-claude-review` if it is available on PATH.
-2. If it is not available, tell the user to install the helper from the plugin
-   repository root with `npm install -g .`.
+2. If it is not available, tell the user to install the helper with
+   `npm install -g codex-plugin-cc` after npmjs publish, or from a cloned
+   checkout with `npm install -g .`.
 
 ## Plan
 
@@ -30,6 +31,7 @@ Use the exact argument tail the user supplied after `/claude-review:review`.
 
 Useful flags:
 
+- `--preset quick|ship|security|research|deep` — choose a role workflow.
 - `--legacy` — disable agentic mode (structured output only, no tool access).
 - `--model <name>` / `--effort <level>` — override profile.
 - `--mcp-config <file-or-json>` — attach MCP servers (repeatable).

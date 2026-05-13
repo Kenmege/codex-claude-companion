@@ -122,6 +122,34 @@ const REVIEW_KIND_CONFIG = {
   }
 };
 
+const PRESET_CONFIG = {
+  quick: {
+    reviewKind: "review",
+    description: "fast everyday diff review",
+    systemPromptExtra: "Preset quick: prioritize likely regressions, missing tests, and obvious safety issues. Keep findings high-signal."
+  },
+  ship: {
+    reviewKind: "elite-review",
+    description: "pre-merge ship/no-ship gate",
+    systemPromptExtra: "Preset ship: act as a release gate. Lead with ship-blocking defects, rollback risk, migration risk, and missing verification. Treat vague confidence as a reason to list a blind spot."
+  },
+  security: {
+    reviewKind: "security-review",
+    description: "security-focused OWASP/CWE review",
+    systemPromptExtra: "Preset security: focus on exploitable behavior, authz/authn boundaries, injection, SSRF, path traversal, secret handling, supply-chain risk, and dependency claims verified from lockfiles."
+  },
+  research: {
+    reviewKind: "deep-review",
+    description: "research or evidence-heavy review",
+    systemPromptExtra: "Preset research: evaluate source quality, methodology, reproducibility, unsupported claims, stale citations, and uncertainty. Separate verified claims from assumptions and name the artifact needed to close each blind spot."
+  },
+  deep: {
+    reviewKind: "deep-review",
+    description: "deep multi-agent investigation",
+    systemPromptExtra: "Preset deep: use Task sub-agents to split independent investigation paths when useful. Cover architecture, correctness, tests, release safety, and blind spots."
+  }
+};
+
 const REVIEW_LIKE_BOOLEAN_OPTIONS = [
   "background",
   "long-context",
@@ -150,7 +178,8 @@ const REVIEW_LIKE_VALUE_OPTIONS = [
   "web-domain",
   "snapshot-temp-root",
   "exclude",
-  "job-dir"
+  "job-dir",
+  "preset"
 ];
 
 function parseCommandInput(argv, config = {}) {
@@ -182,6 +211,7 @@ function printUsage() {
       "  --background                run as a detached job",
       "  --base <ref>                base ref for branch diff",
       "  --scope auto|working-tree|branch|directory",
+      "  --preset quick|ship|security|research|deep",
       "  --exclude <basename>        repeatable; extra dirs to exclude from non-Git snapshot",
       "  --snapshot-temp-root <dir>  override temp root for the snapshot (default: os.tmpdir())",
       "  --job-dir <path>            override job artifact directory (env: CODEX_CLAUDE_REVIEW_JOB_DIR)",
@@ -209,7 +239,11 @@ function printUsage() {
       "  --config <path>             override Codex config path (default: ~/.codex/config.toml)",
       "",
       "Flags (setup):",
-      "  --json                      emit machine-parseable setup status with auth identity redacted"
+      "  --json                      emit machine-parseable setup status with auth identity redacted",
+      "",
+      "Flags (doctor):",
+      "  --json                      emit machine-parseable diagnostic status",
+      "  --probe-runtime             run a live Claude non-interactive model probe"
     ].join("\n")
   );
 }
@@ -412,6 +446,43 @@ function resolveStrictMcp(options) {
   return true;
 }
 
+function parseNodeVersion(value) {
+  const [major, minor, patch] = String(value ?? "").split(".").map((part) => Number.parseInt(part, 10));
+  return {
+    major: Number.isFinite(major) ? major : 0,
+    minor: Number.isFinite(minor) ? minor : 0,
+    patch: Number.isFinite(patch) ? patch : 0
+  };
+}
+
+function nodeVersionAtLeast(current, minimum) {
+  const left = parseNodeVersion(current);
+  const right = parseNodeVersion(minimum);
+  for (const key of ["major", "minor", "patch"]) {
+    if (left[key] > right[key]) return true;
+    if (left[key] < right[key]) return false;
+  }
+  return true;
+}
+
+function resolvePreset(kind, options) {
+  const rawPreset = options.preset == null ? null : String(options.preset).trim();
+  if (!rawPreset) {
+    return { kind, preset: null, options };
+  }
+  const preset = PRESET_CONFIG[rawPreset];
+  if (!preset) {
+    throw new Error(`Invalid --preset "${rawPreset}". Allowed values: ${Object.keys(PRESET_CONFIG).join(", ")}.`);
+  }
+  const nextOptions = { ...options };
+  const promptParts = [preset.systemPromptExtra];
+  if (nextOptions["system-prompt-extra"]) {
+    promptParts.push(String(nextOptions["system-prompt-extra"]));
+  }
+  nextOptions["system-prompt-extra"] = promptParts.join("\n\n");
+  return { kind: preset.reviewKind ?? kind, preset: rawPreset, options: nextOptions };
+}
+
 function reviewHasShipBlockers(parsed) {
   const verdict = String(parsed?.verdict ?? "").toLowerCase();
   const shipRecommendation = String(parsed?.ship_recommendation ?? "").toLowerCase();
@@ -460,6 +531,9 @@ function prepareSnapshot(cwd, kind, options, focusText) {
   const subscriptionAuth = isSubscriptionAuth(authStatus);
 
   const notes = [...selectedProfile.notes];
+  if (options.preset && PRESET_CONFIG[options.preset]) {
+    notes.push(`Preset: ${options.preset} (${PRESET_CONFIG[options.preset].description}).`);
+  }
   if (contextSelection.mode === "summarized" && selectedProfile.profile === "quality") {
     if (agentic) {
       notes.push("The diff snapshot was summarized to fit the inline envelope; the agentic loop will fetch full file content via Read/Grep tools.");
@@ -496,6 +570,7 @@ function prepareSnapshot(cwd, kind, options, focusText) {
 
   return {
     reviewKind: kind,
+    preset: options.preset ?? null,
     reviewLabel: reviewConfig.reviewLabel,
     target,
     targetLabel: target.label,
@@ -974,8 +1049,11 @@ function handleSetup(argv) {
  * so the user (or Codex) can fix the first failure deterministically.
  */
 function handleDoctor(argv) {
-  const { options } = parseCommandInput(argv, { booleanOptions: ["json"], valueOptions: ["cwd", "config", "job-dir"] });
+  const { options } = parseCommandInput(argv, { booleanOptions: ["json", "probe-runtime"], valueOptions: ["cwd", "config", "job-dir"] });
   const cwd = path.resolve(options.cwd ?? process.cwd());
+  const minimumNodeVersion = String(JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf8")).engines?.node ?? ">=18.18.0").replace(/^>=/, "");
+  const nodeVersion = process.versions.node;
+  const nodeSupported = nodeVersionAtLeast(nodeVersion, minimumNodeVersion);
 
   // Plugin configuration in ~/.codex/config.toml (or --config override).
   const codexConfigPath = options.config
@@ -1017,6 +1095,15 @@ function handleDoctor(argv) {
   const auth = claude.available ? getClaudeAuthStatus(cwd) : { loggedIn: false, detail: "claude unavailable" };
   const claudeCliAvailable = Boolean(claude.available);
   const claudeAuthenticated = Boolean(claude.available && auth.loggedIn);
+  const runtimeProbePerformed = Boolean(options["probe-runtime"] && claudeCliAvailable && claudeAuthenticated);
+  const runtimeProbe = runtimeProbePerformed
+    ? probeClaudeStructuredOutput(cwd)
+    : {
+        ready: null,
+        detail: options["probe-runtime"]
+          ? "runtime probe skipped because Claude CLI is unavailable or unauthenticated"
+          : "runtime probe skipped; pass --probe-runtime to validate live model access"
+      };
 
   // Job-dir writability — probe the fallback chain.
   let jobDir = null;
@@ -1032,12 +1119,20 @@ function handleDoctor(argv) {
   // Snapshot capability — gated only on git binary being available.
   const gitProbe = runCommand("git", ["--version"], { cwd });
   const supportsNonGitDirectory = !gitProbe.error && gitProbe.status === 0;
+  const gitVersion = supportsNonGitDirectory ? String(gitProbe.stdout ?? "").trim() : null;
 
   // Prompt transport — Wave 1 sets this to "stdin" unconditionally.
   const promptTransport = "stdin";
 
   // Problems + recommended action.
   const problems = [];
+  if (!nodeSupported) {
+    problems.push({
+      code: "NODE_VERSION_UNSUPPORTED",
+      message: `Node ${nodeVersion} is below the required ${minimumNodeVersion}.`,
+      recovery: "Install Node.js 18.18 or newer, then re-run `codex-claude-review doctor`."
+    });
+  }
   if (!pluginConfigured) {
     problems.push({
       code: "PLUGIN_NOT_CONFIGURED",
@@ -1074,6 +1169,13 @@ function handleDoctor(argv) {
       recovery: "Install git and ensure it is on PATH."
     });
   }
+  if (runtimeProbePerformed && !runtimeProbe.ready) {
+    problems.push({
+      code: "CLAUDE_RUNTIME_UNHEALTHY",
+      message: runtimeProbe.detail || "Claude CLI non-interactive model probe failed.",
+      recovery: "Run `codex-claude-review setup` for the full auth/runtime report, then retry `codex-claude-review doctor --probe-runtime`."
+    });
+  }
   if (pluginLoadedInCurrentSession === false && pluginConfigured) {
     problems.push({
       code: "PLUGIN_NOT_LOADED_IN_SESSION",
@@ -1088,6 +1190,9 @@ function handleDoctor(argv) {
 
   const payload = {
     ok: problems.length === 0,
+    node_version: nodeVersion,
+    node_required: `>=${minimumNodeVersion}`,
+    node_supported: nodeSupported,
     plugin_configured: pluginConfigured,
     plugin_loaded_in_current_session: pluginLoadedInCurrentSession,
     requires_codex_reload: pluginConfigured && pluginLoadedInCurrentSession !== true,
@@ -1095,6 +1200,11 @@ function handleDoctor(argv) {
     helper_version: helperVersion,
     claude_cli_available: claudeCliAvailable,
     claude_authenticated: claudeAuthenticated,
+    claude_runtime_probe_performed: runtimeProbePerformed,
+    claude_runtime_ready: runtimeProbe.ready,
+    claude_runtime_detail: runtimeProbe.detail,
+    git_available: supportsNonGitDirectory,
+    git_version: gitVersion,
     job_dir: jobDir,
     job_dir_writable: jobDirWritable,
     supports_non_git_directory: supportsNonGitDirectory,
@@ -1115,11 +1225,14 @@ function handleDoctor(argv) {
     "codex-claude-review doctor",
     "==========================",
     "",
+    `Node:                         ${payload.node_supported ? "YES" : "NO"} (${payload.node_version}; required ${payload.node_required})`,
     `Helper version:                 ${payload.helper_version}`,
     `Plugin configured in Codex:     ${payload.plugin_configured ? "YES" : "NO"} (${codexConfigPath})`,
     `Plugin loaded in current session: ${payload.plugin_loaded_in_current_session === null ? "UNKNOWN" : payload.plugin_loaded_in_current_session ? "YES" : "NO"}`,
     `Claude CLI available:           ${payload.claude_cli_available ? "YES" : "NO"}`,
     `Claude authenticated:           ${payload.claude_authenticated ? "YES" : "NO"}`,
+    `Claude runtime probe:           ${payload.claude_runtime_probe_performed ? (payload.claude_runtime_ready ? "READY" : "FAILED") : "SKIPPED"} (${payload.claude_runtime_detail})`,
+    `Git available:                  ${payload.git_available ? "YES" : "NO"}${payload.git_version ? ` (${payload.git_version})` : ""}`,
     `Job dir writable:               ${payload.job_dir_writable ? "YES" : "NO"} (${payload.job_dir ?? "—"})`,
     `Supports non-Git directory:     ${payload.supports_non_git_directory ? "YES" : "NO"}`,
     `Prompt transport:               ${payload.prompt_transport}`,
@@ -1167,20 +1280,23 @@ async function handleFolder(argv) {
 }
 
 async function handleReviewLike(kind, argv) {
-  const reviewConfig = REVIEW_KIND_CONFIG[kind];
   const { options, positionals } = parseCommandInput(argv, {
     booleanOptions: REVIEW_LIKE_BOOLEAN_OPTIONS,
     valueOptions: REVIEW_LIKE_VALUE_OPTIONS
   });
+  const presetResolution = resolvePreset(kind, options);
+  kind = presetResolution.kind;
+  const effectiveOptions = presetResolution.options;
+  const reviewConfig = REVIEW_KIND_CONFIG[kind];
   // `--path` is the new directory-targeting flag; `--cwd` is retained for back-compat.
-  const userCwd = path.resolve(options.path ?? options.cwd ?? process.cwd());
+  const userCwd = path.resolve(effectiveOptions.path ?? effectiveOptions.cwd ?? process.cwd());
   const focusText = positionals.join(" ").trim();
 
   // `--job-dir <path>` is the highest-priority job-storage override. We surface it as
   // an env var so every state.mjs helper picks it up without threading the option
   // through every call site.
-  if (options["job-dir"]) {
-    process.env.CODEX_CLAUDE_REVIEW_JOB_DIR = path.resolve(options["job-dir"]);
+  if (effectiveOptions["job-dir"]) {
+    process.env.CODEX_CLAUDE_REVIEW_JOB_DIR = path.resolve(effectiveOptions["job-dir"]);
   }
 
   // Decide whether we need a directory snapshot:
@@ -1189,7 +1305,7 @@ async function handleReviewLike(kind, argv) {
   // Either way, the snapshot creates an isolated, git-initialised temp workspace and
   // becomes the effective cwd for the rest of the review flow. Source-relative paths
   // stay intact for the user; absolute snapshot paths in results are rewritten back.
-  const scope = options.scope ?? "auto";
+  const scope = effectiveOptions.scope ?? "auto";
   const wantsDirectoryScope = scope === "directory";
   const targetIsGit = isGitRepository(userCwd);
   const needsSnapshot = wantsDirectoryScope || !targetIsGit;
@@ -1199,11 +1315,11 @@ async function handleReviewLike(kind, argv) {
   let restoreJobDirEnv = null;
   if (needsSnapshot) {
     directorySnapshot = createDirectorySnapshot(userCwd, {
-      tempRoot: options["snapshot-temp-root"],
-      excludes: coerceMultiValue(options.exclude)
+      tempRoot: effectiveOptions["snapshot-temp-root"],
+      excludes: coerceMultiValue(effectiveOptions.exclude)
     });
     cwd = directorySnapshot.snapshotRoot;
-    if (!options["job-dir"] && !process.env[JOB_DIR_ENV_VAR]) {
+    if (!effectiveOptions["job-dir"] && !process.env[JOB_DIR_ENV_VAR]) {
       const sourceJobDir = path.join(directorySnapshot.sourceRoot, ".claude-review", "jobs");
       process.env[JOB_DIR_ENV_VAR] = sourceJobDir;
       restoreJobDirEnv = () => {
@@ -1212,10 +1328,10 @@ async function handleReviewLike(kind, argv) {
     }
     // After snapshotting, resolveReviewTarget must scan the copied snapshot
     // contents directly — there is no meaningful branch diff to compute.
-    options.scope = "directory";
+    effectiveOptions.scope = "directory";
   }
   try {
-    const snapshot = prepareSnapshot(cwd, kind, options, focusText);
+    const snapshot = prepareSnapshot(cwd, kind, effectiveOptions, focusText);
     if (directorySnapshot) {
       const skippedPreview = directorySnapshot.skipped
         .slice(0, 12)
@@ -1239,7 +1355,7 @@ async function handleReviewLike(kind, argv) {
       );
     }
 
-    if (options.background) {
+    if (effectiveOptions.background) {
       const job = buildBackgroundJob(cwd, kind, snapshot);
       process.stdout.write(
         `# Claude Review Started\n\nJob: ${job.id}\nStatus: running\nMode: ${snapshot.unrestricted ? "UNRESTRICTED" : snapshot.agentic ? "agentic-safe" : "structured"}\nModel: ${snapshot.model}\nUse \`codex-claude-review status ${job.id}\` to check progress.\n`
@@ -1291,7 +1407,7 @@ async function handleReviewLike(kind, argv) {
       throw error;
     }
   } finally {
-    if (directorySnapshot && !options.background) {
+    if (directorySnapshot && !effectiveOptions.background) {
       directorySnapshot.cleanup();
     }
     restoreJobDirEnv?.();

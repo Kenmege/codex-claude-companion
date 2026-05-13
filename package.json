@@ -1,5 +1,5 @@
 {
-  "name": "@kenmege/codex-plugin-cc",
+  "name": "codex-plugin-cc",
   "version": "1.0.4",
   "type": "module",
   "description": "Codex-native Claude review plugin: agentic Opus 4.7 reviewers, including explicit Opus 4.7 1M long-context mode, with full read-only tool access for high-scrutiny code review, adversarial review, deep multi-agent review, and security-focused review.",
@@ -9,7 +9,7 @@
     "url": "git+https://github.com/Kenmege/codex-plugin-cc.git"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com",
+    "registry": "https://registry.npmjs.org",
     "access": "public"
   },
   "bin": {

@@ -10,7 +10,7 @@ Writes the `[marketplaces.claude-review-private]` source entry and `[plugins."cl
 
 ## Preflight
 
-- Plugin installed via `npm install -g .` from the cloned repo (or `npm install -g @kenmege/codex-plugin-cc`).
+- Plugin installed via `npm install -g codex-plugin-cc` after npmjs publish, or `npm install -g .` from a cloned checkout.
 - Codex CLI installed and `~/.codex/` directory exists (created automatically if absent).
 
 ## Commands

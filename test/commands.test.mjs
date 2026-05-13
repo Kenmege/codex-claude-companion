@@ -127,6 +127,7 @@ test("helper usage advertises folder subcommand and --path flag", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /codex-claude-review folder <path>/);
   assert.match(result.stdout, /--path <dir>\s+target directory/);
+  assert.match(result.stdout, /--preset quick\|ship\|security\|research\|deep/);
   assert.match(result.stdout, /--exclude <basename>/);
   assert.match(result.stdout, /--scope auto\|working-tree\|branch\|directory/);
 });
@@ -138,6 +139,26 @@ test("folder subcommand requires a positional path argument", () => {
   });
   assert.notEqual(result.status, 0, "folder must fail without a path");
   assert.match(result.stderr, /Expected a directory path/);
+});
+
+test("preset support routes public role workflows to rich lanes", () => {
+  const source = read("scripts/claude-review-companion.mjs");
+  assert.match(source, /const PRESET_CONFIG =/);
+  assert.match(source, /ship:[\s\S]*reviewKind: "elite-review"/);
+  assert.match(source, /security:[\s\S]*reviewKind: "security-review"/);
+  assert.match(source, /research:[\s\S]*reviewKind: "deep-review"/);
+  assert.match(source, /deep:[\s\S]*reviewKind: "deep-review"/);
+  assert.match(source, /Preset research:[\s\S]*source quality/);
+});
+
+test("invalid preset fails as a usage error", () => {
+  const result = spawnSync(process.execPath, [helper, "review", "--preset", "chaos"], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Invalid --preset "chaos"/);
+  assert.match(result.stderr, /quick, ship, security, research, deep/);
 });
 
 test("doctor --json emits the full diagnostic payload with all expected keys", () => {
@@ -157,8 +178,16 @@ test("doctor --json emits the full diagnostic payload with all expected keys", (
     "requires_codex_reload",
     "helper_available",
     "helper_version",
+    "node_version",
+    "node_required",
+    "node_supported",
     "claude_cli_available",
     "claude_authenticated",
+    "claude_runtime_probe_performed",
+    "claude_runtime_ready",
+    "claude_runtime_detail",
+    "git_available",
+    "git_version",
     "job_dir",
     "job_dir_writable",
     "supports_non_git_directory",
@@ -198,10 +227,37 @@ test("doctor JSON output is parseable on the human-readable path too", () => {
   });
   // Human-readable path: assert key labels are present.
   assert.match(result.stdout, /Helper version:/);
+  assert.match(result.stdout, /Node:/);
   assert.match(result.stdout, /Plugin configured in Codex:/);
   assert.match(result.stdout, /Claude CLI available:/);
+  assert.match(result.stdout, /Claude runtime probe:\s+SKIPPED/);
+  assert.match(result.stdout, /Git available:/);
   assert.match(result.stdout, /Prompt transport:\s+stdin/);
   assert.match(result.stdout, /Recommended action:/);
+});
+
+test("doctor --probe-runtime reports the live runtime probe fields", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-doctor-probe-"));
+  const fakeConfig = path.join(tmpDir, "config.toml");
+  fs.writeFileSync(fakeConfig, "", "utf8");
+  const fake = withFakeClaudeForReview(
+    JSON.stringify({
+      type: "result",
+      structured_output: {
+        answer: "ok"
+      }
+    })
+  );
+  const result = spawnSync(process.execPath, [helper, "doctor", "--json", "--probe-runtime", "--config", fakeConfig], {
+    cwd: root,
+    encoding: "utf8",
+    env: fake.env
+  });
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.claude_cli_available, true);
+  assert.equal(payload.claude_authenticated, true);
+  assert.equal(payload.claude_runtime_probe_performed, true);
+  assert.equal(payload.claude_runtime_ready, true);
 });
 
 test("CODEX_CLAUDE_REVIEW_JOB_DIR env var redirects job dir via fallback chain", () => {
@@ -281,6 +337,13 @@ test("security-review command advertises security-focused agentic mode", () => {
   assert.match(source, /codex-claude-review security-review/);
   assert.match(source, /OWASP|CWE/);
   assert.match(source, /read-only/i);
+});
+
+test("doctor command exposes first-run diagnostics", () => {
+  const source = read("commands/doctor.md");
+  assert.match(source, /codex-claude-review doctor/);
+  assert.match(source, /--probe-runtime/);
+  assert.match(source, /Node, Git, Claude Code CLI/);
 });
 
 test("review command advertises agentic mode and read-only tools", () => {

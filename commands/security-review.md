@@ -7,8 +7,9 @@ description: Run a security-focused agentic Claude review against the current gi
 ## Preflight
 
 1. Prefer the helper binary `codex-claude-review` if it is available on PATH.
-2. If it is not available, tell the user to install the helper from the plugin
-   repository root with `npm install -g .`.
+2. If it is not available, tell the user to install the helper with
+   `npm install -g codex-plugin-cc` after npmjs publish, or from a cloned
+   checkout with `npm install -g .`.
 
 ## Plan
 

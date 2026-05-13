@@ -8,7 +8,6 @@ on:
 permissions:
   contents: write
   id-token: write
-  packages: write
 
 jobs:
   release:
@@ -16,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      GH_PACKAGES_PUBLISH_ENABLED: ${{ vars.GH_PACKAGES_PUBLISH_ENABLED }}
+      NPMJS_PUBLISH_ENABLED: ${{ vars.NPMJS_PUBLISH_ENABLED }}
 
     steps:
       - name: Check out repository
@@ -27,8 +26,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          registry-url: https://npm.pkg.github.com
-          scope: "@kenmege"
+          registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
         run: npm ci
@@ -52,33 +50,32 @@ jobs:
           fi
           printf 'version=%s\n' "$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to GitHub Packages
+      - name: Publish to npmjs
         id: publish-package
-        if: ${{ env.GH_PACKAGES_PUBLISH_ENABLED == 'true' }}
+        if: ${{ env.NPMJS_PUBLISH_ENABLED == 'true' }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           VERSION="${{ steps.tag-version-gate.outputs.version }}"
           PACKAGE_EXISTS="false"
-          if gh api --paginate "/users/${{ github.repository_owner }}/packages/npm/codex-plugin-cc/versions" --jq ".[] | select(.name == \"${VERSION}\") | .name" > .published-version 2>/dev/null; then
+          if npm view "codex-plugin-cc@${VERSION}" version > .published-version 2>/dev/null; then
             if [ -s .published-version ]; then
               PACKAGE_EXISTS="true"
             fi
           fi
           if [ "$PACKAGE_EXISTS" = "true" ]; then
-            echo "Package @kenmege/codex-plugin-cc v${VERSION} already exists; skipping npm publish."
+            echo "Package codex-plugin-cc@${VERSION} already exists; skipping npm publish."
           else
             npm publish --access public --provenance
           fi
           printf 'package_exists=%s\n' "$PACKAGE_EXISTS" >> "$GITHUB_OUTPUT"
 
-      - name: Skip GitHub Packages publish
-        if: ${{ env.GH_PACKAGES_PUBLISH_ENABLED != 'true' }}
-        run: echo "GH_PACKAGES_PUBLISH_ENABLED is not 'true'. To publish to @kenmege/codex-plugin-cc, set the GitHub repository variable GH_PACKAGES_PUBLISH_ENABLED=true."
+      - name: Skip npmjs publish
+        if: ${{ env.NPMJS_PUBLISH_ENABLED != 'true' }}
+        run: echo "NPMJS_PUBLISH_ENABLED is not 'true'. To publish to codex-plugin-cc on npmjs, set the GitHub repository variable NPMJS_PUBLISH_ENABLED=true and configure NPM_TOKEN."
 
       - name: Create GitHub Release
-        if: ${{ success() && env.GH_PACKAGES_PUBLISH_ENABLED == 'true' }}
+        if: ${{ success() && env.NPMJS_PUBLISH_ENABLED == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -91,7 +88,7 @@ jobs:
             RELEASE_FLAGS=(--latest)
           fi
           if [ ! -f "$NOTES_FILE" ]; then
-            echo "First public release of @kenmege/codex-plugin-cc v${VERSION}." > "$NOTES_FILE.gen"
+            echo "First public npm release of codex-plugin-cc v${VERSION}." > "$NOTES_FILE.gen"
             NOTES_FILE="$NOTES_FILE.gen"
           fi
           if gh release view "v${VERSION}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
