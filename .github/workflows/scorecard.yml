@@ -57,10 +57,14 @@ jobs:
         with:
           results_file: results.sarif
           results_format: sarif
-          # Public results are core to the value proposition: scorecard.dev
-          # publishes the score so external consumers (and the README badge)
-          # can verify it without trusting this repo to self-report.
-          publish_results: true
+          # Publish disabled 2026-05-16 — the Scorecard badge was removed from
+          # README in v1.0.10 ("until the public score catches up with the
+          # repository's intended trust posture"). Until the badge is restored,
+          # the scorecard.dev publish step adds no user-visible value but was
+          # generating a weekly failure email (id-token / Sigstore handshake
+          # against scorecard.dev). SARIF still uploads to GitHub code scanning
+          # below, so internal findings remain visible under the Security tab.
+          publish_results: false
 
       # Persist the raw SARIF for 30 days. Useful for diffing checks across
       # weekly runs without round-tripping through code scanning.
