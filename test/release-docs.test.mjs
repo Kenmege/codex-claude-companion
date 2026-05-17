@@ -21,9 +21,40 @@ test("pull request workflow cancels superseded matrix runs", () => {
 test("package files list excludes bump-version from the shipped tarball surface", () => {
   const packageJson = JSON.parse(read("package.json"));
   assert.ok(packageJson.files.includes("scripts/claude-review-companion.mjs"));
+  assert.ok(packageJson.files.includes("scripts/validate-repo.mjs"));
   assert.ok(packageJson.files.includes("scripts/bin/"));
   assert.ok(packageJson.files.includes("scripts/lib/"));
   assert.ok(!packageJson.files.includes("scripts/"));
+});
+
+test("bump-version checks the current release manifests", () => {
+  assert.doesNotThrow(() => {
+    execFileSync(process.execPath, ["scripts/bump-version.mjs", "--check"], {
+      cwd: root,
+      encoding: "utf8"
+    });
+  });
+});
+
+test("bump-version updates the package and Codex plugin manifests", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bump-version-targets-"));
+  fs.mkdirSync(path.join(tempRoot, ".codex-plugin"), { recursive: true });
+  for (const relative of ["package.json", "package-lock.json", ".codex-plugin/plugin.json"]) {
+    fs.copyFileSync(path.join(root, relative), path.join(tempRoot, relative));
+  }
+
+  execFileSync(process.execPath, [path.join(root, "scripts", "bump-version.mjs"), "9.9.9", "--root", tempRoot], {
+    cwd: tempRoot,
+    encoding: "utf8"
+  });
+
+  const packageJson = JSON.parse(fs.readFileSync(path.join(tempRoot, "package.json"), "utf8"));
+  const packageLock = JSON.parse(fs.readFileSync(path.join(tempRoot, "package-lock.json"), "utf8"));
+  const pluginJson = JSON.parse(fs.readFileSync(path.join(tempRoot, ".codex-plugin", "plugin.json"), "utf8"));
+  assert.equal(packageJson.version, "9.9.9");
+  assert.equal(packageLock.version, "9.9.9");
+  assert.equal(packageLock.packages[""].version, "9.9.9");
+  assert.equal(pluginJson.version, "9.9.9");
 });
 
 test("package.json shape supports public npm publish", () => {
@@ -85,6 +116,14 @@ test("release workflow fails closed when tag and package version differ", () => 
   assert.match(workflow, /printf 'version=%s\\n' "\$PACKAGE_VERSION" >> "\$GITHUB_OUTPUT"/);
   assert.match(contributing, /tag and package version differ/);
   assert.match(contributing, /1\.0\.3-rc\.1/);
+});
+
+test("README release docs do not pin stale package versions", () => {
+  const readme = read("README.md");
+  assert.doesNotMatch(readme, /package\.json` version `\d+\.\d+\.\d+`/);
+  assert.doesNotMatch(readme, /v1\.0\.10/);
+  assert.match(readme, /package\.json` version `X\.Y\.Z`/);
+  assert.match(readme, /tag `vX\.Y\.Z`/);
 });
 
 test("public-facing docs do not contain private local machine paths", () => {

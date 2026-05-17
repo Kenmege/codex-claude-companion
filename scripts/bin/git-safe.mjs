@@ -59,6 +59,20 @@ const FORBIDDEN_FLAG_PREFIXES = [
   "--receive-pack="
 ];
 
+const WRITE_CAPABLE_FLAGS = new Set([
+  "--output",
+  "--output-indicator-new",
+  "--output-indicator-old",
+  "--output-indicator-context"
+]);
+
+const WRITE_CAPABLE_FLAG_PREFIXES = [
+  "--output=",
+  "--output-indicator-new=",
+  "--output-indicator-old=",
+  "--output-indicator-context="
+];
+
 const SHELL_METACHAR_RE = /[;&|`$<>(){}\\\n\r\t]|\$\(/;
 
 function fail(message, code = 2) {
@@ -97,6 +111,9 @@ function validateArg(arg, cwd) {
       fail(`forbidden flag prefix: ${prefix}`);
     }
   }
+  if (WRITE_CAPABLE_FLAGS.has(arg) || WRITE_CAPABLE_FLAG_PREFIXES.some((prefix) => arg.startsWith(prefix))) {
+    fail(`forbidden write-capable flag: ${arg}`);
+  }
   if (looksLikePathToken(arg)) {
     if (arg.includes("..")) {
       fail(`parent-traversal path rejected: ${arg}`);
@@ -108,6 +125,7 @@ function validateArg(arg, cwd) {
 }
 
 function validateSubcommandSpecific(subcommand, args) {
+  const nonFlagArgs = args.filter((arg) => !arg.startsWith("-"));
   if (subcommand === "config") {
     const hasReadOnlyFlag = args.includes("--get") || args.includes("--list") || args.includes("-l");
     const hasMutator =
@@ -121,15 +139,73 @@ function validateSubcommandSpecific(subcommand, args) {
       fail("git config restricted to --get / --list");
     }
   }
+  if (subcommand === "branch") {
+    const allowedFlags = new Set([
+      "-a",
+      "-r",
+      "-v",
+      "-vv",
+      "--all",
+      "--remotes",
+      "--verbose",
+      "--show-current",
+      "--list",
+      "--contains",
+      "--merged",
+      "--no-merged",
+      "--points-at",
+      "--format",
+      "--sort",
+      "--color",
+      "--no-color",
+      "--column",
+      "--no-column"
+    ]);
+    const mutatingFlags = new Set([
+      "-d",
+      "-D",
+      "-m",
+      "-M",
+      "-c",
+      "-C",
+      "--delete",
+      "--move",
+      "--copy",
+      "--set-upstream-to",
+      "--unset-upstream",
+      "--edit-description",
+      "--track",
+      "--no-track",
+      "--create-reflog",
+      "--force"
+    ]);
+    if (args.some((arg) => mutatingFlags.has(arg) || arg.startsWith("--set-upstream-to="))) {
+      fail("git branch restricted to read-only forms");
+    }
+    if (args.some((arg) => arg.startsWith("-") && !allowedFlags.has(arg) && !arg.startsWith("--format=") && !arg.startsWith("--sort=") && !arg.startsWith("--color=") && !arg.startsWith("--column="))) {
+      fail("git branch restricted to read-only forms");
+    }
+    if (nonFlagArgs.length > 0) {
+      fail("git branch restricted to read-only forms");
+    }
+  }
   if (subcommand === "remote") {
-    const hasMutator = args.some((a) => ["add", "remove", "rm", "set-url", "rename", "prune"].includes(a));
+    const allowedFirstArgs = new Set(["show", "get-url"]);
+    const hasMutator = args.some((a) => ["add", "remove", "rm", "set-url", "rename", "prune", "update", "set-branches"].includes(a));
     if (hasMutator) {
+      fail("git remote restricted to read-only forms");
+    }
+    if (nonFlagArgs.length > 0 && !allowedFirstArgs.has(nonFlagArgs[0])) {
       fail("git remote restricted to read-only forms");
     }
   }
   if (subcommand === "tag") {
-    const hasMutator = args.some((a) => ["-d", "--delete", "-a", "--annotate", "-s", "--sign"].includes(a));
+    const hasListFlag = args.some((a) => ["-l", "--list"].includes(a) || a.startsWith("--list="));
+    const hasMutator = args.some((a) => ["-d", "--delete", "-a", "--annotate", "-s", "--sign", "-f", "--force", "-m", "-F"].includes(a));
     if (hasMutator) {
+      fail("git tag restricted to listing");
+    }
+    if (nonFlagArgs.length > 0 && !hasListFlag) {
       fail("git tag restricted to listing");
     }
   }

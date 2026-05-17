@@ -485,9 +485,9 @@ The npm package intentionally omits `package.json.private` so npmjs publishing
 can run when explicitly enabled. The release workflow validates tags and only
 publishes when repository variable `NPMJS_PUBLISH_ENABLED=true` and secret
 `NPM_TOKEN` are configured. Release tags must match the package version exactly:
-`package.json` version `1.0.10` is published only from tag `v1.0.10`; a
-prerelease smoke must first commit matching `1.0.10-rc.1` metadata before
-pushing `v1.0.10-rc.1`.
+`package.json` version `X.Y.Z` is published only from tag `vX.Y.Z`; a
+prerelease smoke must first commit matching `X.Y.Z-rc.1` metadata before
+pushing tag `vX.Y.Z-rc.1`.
 
 ## Repository Layout
 

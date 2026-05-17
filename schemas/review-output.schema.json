@@ -9,7 +9,11 @@
   ],
   "properties": {
     "verdict": {
-      "type": "string"
+      "type": "string",
+      "enum": [
+        "OK",
+        "REQUEST_CHANGES"
+      ]
     },
     "summary": {
       "type": "string"

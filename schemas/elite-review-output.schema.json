@@ -12,10 +12,18 @@
   ],
   "properties": {
     "verdict": {
-      "type": "string"
+      "type": "string",
+      "enum": [
+        "OK",
+        "REQUEST_CHANGES"
+      ]
     },
     "ship_recommendation": {
-      "type": "string"
+      "type": "string",
+      "enum": [
+        "SHIP",
+        "NO_SHIP"
+      ]
     },
     "executive_summary": {
       "type": "string"

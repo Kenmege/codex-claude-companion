@@ -1,4 +1,6 @@
 import path from "node:path";
+import fs from "node:fs";
+import os from "node:os";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -12,6 +14,23 @@ function runWrapper(args, options = {}) {
     encoding: "utf8",
     env: { ...process.env, ...(options.env ?? {}) }
   });
+}
+
+function makeRepo() {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "git-safe-repo-"));
+  fs.writeFileSync(path.join(cwd, "file.txt"), "one\n", "utf8");
+  for (const args of [
+    ["init", "--quiet"],
+    ["config", "user.email", "test@example.com"],
+    ["config", "user.name", "Test User"],
+    ["add", "file.txt"],
+    ["commit", "--quiet", "-m", "initial"]
+  ]) {
+    const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  }
+  fs.writeFileSync(path.join(cwd, "file.txt"), "two\n", "utf8");
+  return cwd;
 }
 
 test("git-safe rejects unknown subcommand", () => {
@@ -85,6 +104,37 @@ test("git-safe rejects mutating git tag forms", () => {
   const result = runWrapper(["tag", "-d", "v1"]);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /git tag restricted to listing/);
+});
+
+test("git-safe rejects branch ref mutations", () => {
+  const cwd = makeRepo();
+  const result = runWrapper(["branch", "review-mutates-ref"], { cwd });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /git branch restricted to read-only forms/);
+  const refs = spawnSync("git", ["branch", "--list", "review-mutates-ref"], { cwd, encoding: "utf8" });
+  assert.equal(refs.stdout.trim(), "");
+});
+
+test("git-safe rejects tag creation and remote ref updates", () => {
+  const cwd = makeRepo();
+  const tag = runWrapper(["tag", "v-review-mutates"], { cwd });
+  assert.notEqual(tag.status, 0);
+  assert.match(tag.stderr, /git tag restricted to listing/);
+  const tags = spawnSync("git", ["tag", "--list", "v-review-mutates"], { cwd, encoding: "utf8" });
+  assert.equal(tags.stdout.trim(), "");
+
+  const remote = runWrapper(["remote", "update"], { cwd });
+  assert.notEqual(remote.status, 0);
+  assert.match(remote.stderr, /git remote restricted to read-only forms/);
+});
+
+test("git-safe rejects diff output writes", () => {
+  const cwd = makeRepo();
+  const outputPath = path.join(cwd, "git-safe-wrote.patch");
+  const result = runWrapper(["diff", `--output=${outputPath}`], { cwd });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /forbidden write-capable flag/);
+  assert.equal(fs.existsSync(outputPath), false);
 });
 
 test("git-safe accepts a benign git status", () => {

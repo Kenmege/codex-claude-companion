@@ -15,11 +15,17 @@
   "properties": {
     "verdict": {
       "type": "string",
-      "minLength": 1
+      "enum": [
+        "OK",
+        "REQUEST_CHANGES"
+      ]
     },
     "ship_recommendation": {
       "type": "string",
-      "minLength": 1
+      "enum": [
+        "SHIP",
+        "NO_SHIP"
+      ]
     },
     "executive_summary": {
       "type": "string",

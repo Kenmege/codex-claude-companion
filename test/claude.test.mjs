@@ -28,6 +28,8 @@ import {
   getClaudeSetupProbeTimeoutMs,
   isSubscriptionAuth,
   extractClaudeAssistantText,
+  normalizeReviewVerdict,
+  normalizeShipRecommendation,
   parseClaudeStructuredOutput,
   probeClaudeStructuredOutput,
   runClaudeStructuredReview,
@@ -333,6 +335,40 @@ test("validateStructuredReviewOutput rejects non-integer line numbers", () => {
   );
 });
 
+test("validateStructuredReviewOutput canonicalizes gate statuses and rejects unknown verdicts", () => {
+  const basic = validBasicReviewOutput();
+  basic.verdict = "no changes requested";
+  validateStructuredReviewOutput(basic, "review");
+  assert.equal(basic.verdict, "OK");
+
+  const rich = validRichReviewOutput();
+  rich.verdict = "request changes";
+  rich.ship_recommendation = "do not ship";
+  validateStructuredReviewOutput(rich, "elite-review");
+  assert.equal(rich.verdict, "REQUEST_CHANGES");
+  assert.equal(rich.ship_recommendation, "NO_SHIP");
+
+  const unknown = validBasicReviewOutput();
+  unknown.verdict = "looks plausible";
+  assert.throws(
+    () => validateStructuredReviewOutput(unknown, "review"),
+    /root\.verdict must be one of "OK" or "REQUEST_CHANGES"/
+  );
+});
+
+test("gate normalizers avoid negated ship-blocker false positives", () => {
+  assert.equal(normalizeReviewVerdict("not blocked"), "OK");
+  assert.equal(normalizeReviewVerdict("not a ship blocker"), "OK");
+  assert.equal(normalizeReviewVerdict("no ship blockers"), "OK");
+  assert.equal(normalizeReviewVerdict("no ship blockers found"), "OK");
+  assert.equal(normalizeReviewVerdict("ship"), null);
+  assert.equal(normalizeShipRecommendation("not blocked"), "SHIP");
+  assert.equal(normalizeShipRecommendation("not a ship blocker"), "SHIP");
+  assert.equal(normalizeShipRecommendation("no ship blockers"), "SHIP");
+  assert.equal(normalizeShipRecommendation("no ship blocker identified"), "SHIP");
+  assert.equal(normalizeShipRecommendation("do not ship"), "NO_SHIP");
+});
+
 test("validateStructuredReviewOutput requires exploitability on rich findings", () => {
   const payload = validRichReviewOutput();
   delete payload.findings[0].exploitability;
@@ -534,7 +570,7 @@ test("runClaudeStructuredReview parses stream-json structured output", async () 
     );
     const args = readArgs(fake.argsFile);
 
-    assert.equal(result.parsed.verdict, "request changes");
+    assert.equal(result.parsed.verdict, "REQUEST_CHANGES");
     assert.equal(result.parsed.findings[0].title, "Missing empty-state guard");
     assert.ok(args.includes("--json-schema"));
     assert.ok(args.includes("--disable-slash-commands"));
@@ -992,6 +1028,8 @@ test("buildClaudeCommandArgs throws when permission-mode is bypassPermissions", 
 test("agentic schema rejects an empty evidence array", () => {
   const schema = JSON.parse(fs.readFileSync(AGENTIC_SCHEMA_PATH, "utf8"));
   const findingProps = schema.properties.findings.items.properties;
+  assert.deepEqual(schema.properties.verdict.enum, ["OK", "REQUEST_CHANGES"]);
+  assert.deepEqual(schema.properties.ship_recommendation.enum, ["SHIP", "NO_SHIP"]);
   assert.equal(findingProps.evidence.minItems, 1);
   assert.equal(findingProps.evidence.items.properties.tool.minLength, 1);
   assert.equal(findingProps.evidence.items.properties.query.minLength, 1);

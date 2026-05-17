@@ -21,6 +21,7 @@
     "commands/",
     "schemas/",
     "scripts/claude-review-companion.mjs",
+    "scripts/validate-repo.mjs",
     "scripts/bin/",
     "scripts/lib/",
     "README.md",

@@ -1,8 +1,21 @@
 export function parseArgs(argv, options = {}) {
   const booleanOptions = new Set(options.booleanOptions ?? []);
   const valueOptions = new Set(options.valueOptions ?? []);
+  const repeatableValueOptions = new Set(options.repeatableValueOptions ?? []);
   const aliasMap = options.aliasMap ?? {};
   const parsed = { options: {}, positionals: [] };
+
+  function setValueOption(name, value) {
+    if (Object.hasOwn(parsed.options, name)) {
+      if (!repeatableValueOptions.has(name)) {
+        throw new Error(`Duplicate --${name}: this option can only be provided once`);
+      }
+      const current = parsed.options[name];
+      parsed.options[name] = Array.isArray(current) ? [...current, value] : [current, value];
+    } else {
+      parsed.options[name] = value;
+    }
+  }
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -25,11 +38,11 @@ export function parseArgs(argv, options = {}) {
       }
       if (valueOptions.has(name)) {
         if (inlineValue != null) {
-          parsed.options[name] = inlineValue;
+          setValueOption(name, inlineValue);
           continue;
         }
         index += 1;
-        parsed.options[name] = argv[index];
+        setValueOption(name, argv[index]);
         continue;
       }
       parsed.positionals.push(token);
@@ -44,7 +57,7 @@ export function parseArgs(argv, options = {}) {
     }
     if (valueOptions.has(name)) {
       index += 1;
-      parsed.options[name] = argv[index];
+      setValueOption(name, argv[index]);
       continue;
     }
     parsed.positionals.push(token);

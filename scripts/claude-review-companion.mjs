@@ -19,6 +19,8 @@ import {
   getClaudeAuthStatus,
   getClaudeAvailability,
   isSubscriptionAuth,
+  normalizeReviewVerdict,
+  normalizeShipRecommendation,
   probeClaudeStructuredOutput,
   runClaudeStructuredReview,
   selectClaudeProfile,
@@ -181,6 +183,7 @@ const REVIEW_LIKE_VALUE_OPTIONS = [
   "job-dir",
   "preset"
 ];
+const REVIEW_LIKE_REPEATABLE_VALUE_OPTIONS = ["add-dir", "exclude", "mcp-config", "web-domain"];
 
 function parseCommandInput(argv, config = {}) {
   if (argv.length === 1 && argv[0]?.includes(" ")) {
@@ -424,8 +427,18 @@ function resolveSchemaPath(reviewConfig, agentic) {
 
 function resolveBudget(reviewConfig, options, agentic) {
   if (options["max-budget-usd"] != null) {
-    const parsed = Number.parseFloat(options["max-budget-usd"]);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    const raw = String(options["max-budget-usd"]).trim();
+    if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(raw)) {
+      throw new Error(`Invalid --max-budget-usd: expected a positive decimal number, got ${JSON.stringify(raw)}`);
+    }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new Error(`Invalid --max-budget-usd: expected a positive decimal number, got ${JSON.stringify(raw)}`);
+    }
+    if (!agentic) {
+      throw new Error("--max-budget-usd requires agentic mode; legacy structured reviews do not enforce Claude budget caps.");
+    }
+    return parsed;
   }
   if (!agentic) return null;
   if (reviewConfig.defaultBudgetUsd) return reviewConfig.defaultBudgetUsd;
@@ -434,8 +447,15 @@ function resolveBudget(reviewConfig, options, agentic) {
 
 function resolveTimeout(options, reviewConfig) {
   if (options["timeout-ms"] != null) {
-    const parsed = Number.parseInt(options["timeout-ms"], 10);
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    const raw = String(options["timeout-ms"]).trim();
+    if (!/^[1-9]\d*$/.test(raw)) {
+      throw new Error(`Invalid --timeout-ms: expected a positive integer millisecond value, got ${JSON.stringify(raw)}`);
+    }
+    const parsed = Number(raw);
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+      throw new Error(`Invalid --timeout-ms: expected a positive integer millisecond value, got ${JSON.stringify(raw)}`);
+    }
+    return parsed;
   }
   return reviewConfig.defaultTimeoutMs ?? null;
 }
@@ -491,14 +511,12 @@ function resolvePreset(kind, options) {
 }
 
 function reviewHasShipBlockers(parsed) {
-  const verdict = String(parsed?.verdict ?? "").toLowerCase();
-  const shipRecommendation = String(parsed?.ship_recommendation ?? "").toLowerCase();
+  const verdict = normalizeReviewVerdict(parsed?.verdict);
+  const shipRecommendation = normalizeShipRecommendation(parsed?.ship_recommendation);
   const findings = Array.isArray(parsed?.findings) ? parsed.findings : [];
   return (
-    verdict.includes("request") ||
-    verdict.includes("changes") ||
-    shipRecommendation.includes("no_ship") ||
-    shipRecommendation.includes("no ship") ||
+    verdict === "REQUEST_CHANGES" ||
+    shipRecommendation === "NO_SHIP" ||
     findings.some((finding) => ["critical", "high"].includes(String(finding.severity ?? "").toLowerCase()))
   );
 }
@@ -779,10 +797,25 @@ async function runSnapshot(cwd, jobId, snapshot) {
 // Normalize a TOML line for header comparison: strip leading whitespace, drop
 // inline comments, strip trailing whitespace (handles CRLF \r). Returns null for
 // comment-only lines so they cannot mask a real registration.
+function stripTomlInlineComment(line) {
+  let inDouble = false;
+  let inSingle = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === "\\" && inDouble) { i += 1; continue; }
+    if (ch === '"' && !inSingle) { inDouble = !inDouble; continue; }
+    if (ch === "'" && !inDouble) { inSingle = !inSingle; continue; }
+    if (ch === "#" && !inDouble && !inSingle) {
+      return line.slice(0, i);
+    }
+  }
+  return line;
+}
+
 function normalizeTomlLine(line) {
   const left = line.trimStart();
   if (left.startsWith("#")) return null;
-  return left.replace(/\s*#.*$/, "").trimEnd();
+  return stripTomlInlineComment(left).trimEnd();
 }
 
 // Count unescaped `[` and `]` that appear outside double/single quoted strings on a line.
@@ -870,6 +903,67 @@ function findNextSectionStart(content, fromOffset) {
     pos = nlIdx + 1;
   }
   return -1;
+}
+
+function getTomlSection(content, bareHeader, quotedHeader = null) {
+  const start = findTomlSectionStart(content, bareHeader, quotedHeader);
+  if (start === -1) return null;
+  const afterHeaderLine = content.indexOf("\n", start);
+  const scanFrom = afterHeaderLine === -1 ? content.length : afterHeaderLine + 1;
+  const nextSection = findNextSectionStart(content, scanFrom);
+  const end = nextSection === -1 ? content.length : nextSection;
+  return content.slice(start, end);
+}
+
+function readTomlScalar(stanza, key) {
+  if (!stanza) return undefined;
+  const keyPattern = new RegExp(`^${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*=\\s*(.+)$`);
+  let bracketDepth = 0;
+  for (const line of stanza.split("\n")) {
+    const normalized = normalizeTomlLine(line);
+    if (normalized === null) continue;
+    if (bracketDepth === 0) {
+      const match = normalized.match(keyPattern);
+      if (match) {
+        const rawValue = match[1].trim();
+        if (rawValue.startsWith("[") || rawValue.startsWith("{")) return undefined;
+        if (rawValue === "true") return true;
+        if (rawValue === "false") return false;
+        if ((rawValue.startsWith('"') && rawValue.endsWith('"')) || (rawValue.startsWith("'") && rawValue.endsWith("'"))) {
+          const body = rawValue.slice(1, -1);
+          if (rawValue.startsWith('"')) {
+            try {
+              return JSON.parse(rawValue);
+            } catch {
+              return body;
+            }
+          }
+          return body;
+        }
+        return rawValue;
+      }
+    }
+    const { open, close } = countBracketsOutsideStrings(normalized);
+    bracketDepth = Math.max(0, bracketDepth + open - close);
+  }
+  return undefined;
+}
+
+function codexPluginConfigured(raw, pluginRoot) {
+  const marketplaceHeader = `[marketplaces.${CODEX_MARKETPLACE_KEY}]`;
+  const marketplaceHeaderQuoted = `[marketplaces."${CODEX_MARKETPLACE_KEY}"]`;
+  const pluginHeader = `[plugins."${CODEX_PLUGIN_KEY}"]`;
+  const pluginHeaderDotted = `[plugins.claude-review.${CODEX_MARKETPLACE_KEY}]`;
+  const marketplaceStanza = getTomlSection(raw, marketplaceHeader, marketplaceHeaderQuoted);
+  const pluginStanza = getTomlSection(raw, pluginHeader) ?? getTomlSection(raw, pluginHeaderDotted);
+  if (!marketplaceStanza || !pluginStanza) return false;
+
+  const expectedSource = pluginRoot.split(path.sep).join("/");
+  return (
+    readTomlScalar(marketplaceStanza, "source_type") === "local" &&
+    readTomlScalar(marketplaceStanza, "source") === expectedSource &&
+    readTomlScalar(pluginStanza, "enabled") === true
+  );
 }
 
 function safeTimestampForPath(date = new Date()) {
@@ -960,6 +1054,7 @@ function handleEnable(argv) {
   const marketplaceHeader = `[marketplaces.${CODEX_MARKETPLACE_KEY}]`;
   const marketplaceHeaderQuoted = `[marketplaces."${CODEX_MARKETPLACE_KEY}"]`;
   const pluginHeader = `[plugins."${CODEX_PLUGIN_KEY}"]`;
+  const pluginHeaderDotted = `[plugins.claude-review.${CODEX_MARKETPLACE_KEY}]`;
 
   // JSON.stringify produces a valid TOML basic string — quotes and backslashes are properly escaped.
   const safeSource = JSON.stringify(pluginRoot.split(path.sep).join("/"));
@@ -1016,7 +1111,7 @@ function handleEnable(argv) {
     }
   }
 
-  const pIdx = findTomlSectionStart(updated, pluginHeader, null);
+  const pIdx = findTomlSectionStart(updated, pluginHeader, pluginHeaderDotted);
   if (pIdx === -1) {
     updated += `\n${pluginHeader}\nenabled = true\n`;
     toAdd.push(pluginHeader);
@@ -1115,9 +1210,7 @@ function handleDoctor(argv) {
   try {
     const raw = fs.readFileSync(codexConfigPath, "utf8");
     configPathExists = true;
-    pluginConfigured =
-      raw.includes(`[marketplaces.${CODEX_MARKETPLACE_KEY}]`) &&
-      raw.includes(`[plugins."${CODEX_PLUGIN_KEY}"]`);
+    pluginConfigured = codexPluginConfigured(raw, ROOT_DIR);
   } catch (err) {
     if (err.code !== "ENOENT") {
       configReadError = err.message;
@@ -1332,7 +1425,8 @@ async function handleFolder(argv) {
 async function handleReviewLike(kind, argv) {
   const { options, positionals } = parseCommandInput(argv, {
     booleanOptions: REVIEW_LIKE_BOOLEAN_OPTIONS,
-    valueOptions: REVIEW_LIKE_VALUE_OPTIONS
+    valueOptions: REVIEW_LIKE_VALUE_OPTIONS,
+    repeatableValueOptions: REVIEW_LIKE_REPEATABLE_VALUE_OPTIONS
   });
   const presetResolution = resolvePreset(kind, options);
   kind = presetResolution.kind;
@@ -1363,6 +1457,7 @@ async function handleReviewLike(kind, argv) {
   let directorySnapshot = null;
   let cwd = userCwd;
   let restoreJobDirEnv = null;
+  let backgroundJobStarted = false;
   if (needsSnapshot) {
     directorySnapshot = createDirectorySnapshot(userCwd, {
       tempRoot: effectiveOptions["snapshot-temp-root"],
@@ -1407,6 +1502,7 @@ async function handleReviewLike(kind, argv) {
 
     if (effectiveOptions.background) {
       const job = buildBackgroundJob(cwd, kind, snapshot);
+      backgroundJobStarted = true;
       process.stdout.write(
         `# Claude Review Started\n\nJob: ${job.id}\nStatus: running\nMode: ${snapshot.unrestricted ? "UNRESTRICTED" : snapshot.agentic ? "agentic-safe" : "structured"}\nModel: ${snapshot.model}\nUse \`codex-claude-review status ${job.id}\` to check progress.\n`
       );
@@ -1431,6 +1527,7 @@ async function handleReviewLike(kind, argv) {
       const result = await runSnapshot(cwd, jobId, snapshot);
       updateJob(cwd, jobId, {
         status: "completed",
+        pid: null,
         completedAt: new Date().toISOString(),
         result: result.parsed,
         activity: result.activity,
@@ -1449,6 +1546,7 @@ async function handleReviewLike(kind, argv) {
       const failureReason = reasonFromError(error);
       updateJob(cwd, jobId, {
         status: error.code === "EINTERRUPTED" ? "cancelled" : "failed",
+        pid: null,
         completedAt: new Date().toISOString(),
         failureReason,
         error: error.message,
@@ -1457,7 +1555,7 @@ async function handleReviewLike(kind, argv) {
       throw error;
     }
   } finally {
-    if (directorySnapshot && !effectiveOptions.background) {
+    if (directorySnapshot && (!effectiveOptions.background || !backgroundJobStarted)) {
       directorySnapshot.cleanup();
     }
     restoreJobDirEnv?.();
@@ -1477,6 +1575,7 @@ async function handleRunJob(argv) {
     const result = await runSnapshot(cwd, jobId, snapshot);
     updateJob(cwd, jobId, {
       status: "completed",
+      pid: null,
       completedAt: new Date().toISOString(),
       result: result.parsed,
       activity: result.activity,
@@ -1492,6 +1591,7 @@ async function handleRunJob(argv) {
     const failureReason = reasonFromError(error);
     updateJob(cwd, jobId, {
       status: error.code === "EINTERRUPTED" ? "cancelled" : "failed",
+      pid: null,
       completedAt: new Date().toISOString(),
       failureReason,
       error: error.message,
@@ -1527,6 +1627,7 @@ function markStaleJob(cwd, job) {
     appendLogLine(cwd, job.id, "Legacy stalled job finalized as failed", "error");
     return updateJob(cwd, job.id, {
       status: "failed",
+      pid: null,
       failureReason: job.failureReason ?? "stale_timeout",
       completedAt: job.completedAt ?? new Date().toISOString(),
       error: job.error ?? "job was previously marked stalled",
@@ -1550,6 +1651,7 @@ function markStaleJob(cwd, job) {
   appendLogLine(cwd, job.id, `Stale job finalized: exceeded timeout window of ${timeoutMs}ms`, "error");
   return updateJob(cwd, job.id, {
     status: "failed",
+    pid: null,
     failureReason: "stale_timeout",
     completedAt: new Date().toISOString(),
     error: `running job exceeded timeout window of ${timeoutMs}ms`,
@@ -1617,9 +1719,14 @@ function handleCancel(argv) {
   if (!job) {
     throw new Error(`Unknown job ${jobId}`);
   }
+  if (job.status !== "running") {
+    process.stdout.write(renderCancelReport(job, false));
+    return;
+  }
   if (!isProcessAlive(job.pid)) {
     const stalledJob = updateJob(cwd, job.id, {
       status: "stalled",
+      pid: null,
       error: "process is not running"
     });
     process.stdout.write(renderCancelReport(stalledJob, false));
@@ -1628,6 +1735,7 @@ function handleCancel(argv) {
   const cancelled = terminateProcessTree(job.pid);
   const updatedJob = updateJob(cwd, job.id, {
     status: cancelled ? "cancelled" : job.status,
+    pid: cancelled ? null : job.pid,
     completedAt: cancelled ? new Date().toISOString() : job.completedAt
   });
   process.stdout.write(renderCancelReport(updatedJob, cancelled));

@@ -39,33 +39,13 @@ const TARGETS = [
     ]
   },
   {
-    file: "plugins/codex/.claude-plugin/plugin.json",
+    file: ".codex-plugin/plugin.json",
     values: [
       {
         label: "version",
         get: (json) => json.version,
         set: (json, version) => {
           json.version = version;
-        }
-      }
-    ]
-  },
-  {
-    file: ".claude-plugin/marketplace.json",
-    values: [
-      {
-        label: "metadata.version",
-        get: (json) => json.metadata?.version,
-        set: (json, version) => {
-          requireObject(json.metadata, ".claude-plugin/marketplace.json metadata");
-          json.metadata.version = version;
-        }
-      },
-      {
-        label: "plugins[codex].version",
-        get: (json) => findMarketplacePlugin(json).version,
-        set: (json, version) => {
-          findMarketplacePlugin(json).version = version;
         }
       }
     ]
@@ -129,12 +109,6 @@ function requireObject(value, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`Expected ${label} to be an object.`);
   }
-}
-
-function findMarketplacePlugin(json) {
-  const plugin = json.plugins?.find((entry) => entry?.name === "codex");
-  requireObject(plugin, ".claude-plugin/marketplace.json plugins[codex]");
-  return plugin;
 }
 
 function readJson(root, file) {

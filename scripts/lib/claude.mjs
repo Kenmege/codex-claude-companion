@@ -49,6 +49,81 @@ export const AGENTIC_ALLOWED_TOOLS = [
 
 export const AGENTIC_DISALLOWED_TOOLS = ["Edit", "Write", "NotebookEdit"];
 
+const VERDICT_ALIASES = new Map([
+  ["ok", "OK"],
+  ["approved", "OK"],
+  ["approve", "OK"],
+  ["clean", "OK"],
+  ["no changes requested", "OK"],
+  ["not blocked", "OK"],
+  ["not a ship blocker", "OK"],
+  ["no ship blockers", "OK"],
+  ["no ship blocker", "OK"],
+  ["review markdown", "OK"],
+  ["fallback markdown review", "OK"],
+  ["request changes", "REQUEST_CHANGES"],
+  ["changes requested", "REQUEST_CHANGES"],
+  ["no ship", "REQUEST_CHANGES"],
+  ["do not ship", "REQUEST_CHANGES"],
+  ["dont ship", "REQUEST_CHANGES"],
+  ["don't ship", "REQUEST_CHANGES"],
+  ["blocked", "REQUEST_CHANGES"],
+  ["ship blocker", "REQUEST_CHANGES"],
+  ["no ship review markdown", "REQUEST_CHANGES"]
+]);
+
+const SHIP_RECOMMENDATION_ALIASES = new Map([
+  ["ship", "SHIP"],
+  ["ok", "SHIP"],
+  ["approved", "SHIP"],
+  ["approve", "SHIP"],
+  ["clean", "SHIP"],
+  ["not blocked", "SHIP"],
+  ["not a ship blocker", "SHIP"],
+  ["no ship blockers", "SHIP"],
+  ["no ship blocker", "SHIP"],
+  ["review markdown", "SHIP"],
+  ["no ship", "NO_SHIP"],
+  ["do not ship", "NO_SHIP"],
+  ["dont ship", "NO_SHIP"],
+  ["don't ship", "NO_SHIP"],
+  ["blocked", "NO_SHIP"],
+  ["ship blocker", "NO_SHIP"],
+  ["no ship review markdown", "NO_SHIP"]
+]);
+
+function normalizeGateText(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/[.:;]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isCleanBlockerNegation(value) {
+  const normalized = normalizeGateText(value);
+  return (
+    /^(not blocked|not a ship blocker|no changes requested)$/.test(normalized) ||
+    /^no\s+(?:ship\s+|release\s+)?blockers?(?:\s+(?:found|identified|observed|detected))?$/.test(normalized) ||
+    /^no\s+blocking\s+issues?(?:\s+(?:found|identified|observed|detected))?$/.test(normalized)
+  );
+}
+
+export function normalizeReviewVerdict(value) {
+  const raw = String(value ?? "").trim();
+  if (raw === "OK" || raw === "REQUEST_CHANGES") return raw;
+  if (isCleanBlockerNegation(raw)) return "OK";
+  return VERDICT_ALIASES.get(normalizeGateText(raw)) ?? null;
+}
+
+export function normalizeShipRecommendation(value) {
+  const raw = String(value ?? "").trim();
+  if (raw === "SHIP" || raw === "NO_SHIP") return raw;
+  if (isCleanBlockerNegation(raw)) return "SHIP";
+  return SHIP_RECOMMENDATION_ALIASES.get(normalizeGateText(raw)) ?? null;
+}
+
 export const DEFAULT_WEB_FETCH_DOMAINS = [
   "https://docs.anthropic.com/*",
   "https://nvd.nist.gov/*",
@@ -670,9 +745,19 @@ export function validateStructuredReviewOutput(parsed, reviewKind) {
     : ["verdict", "summary"]) {
     assertRequiredNonEmptyString(parsed, field, "root");
   }
+  const normalizedVerdict = normalizeReviewVerdict(parsed.verdict);
+  if (!normalizedVerdict) {
+    throw new Error('Claude structured output invalid: root.verdict must be one of "OK" or "REQUEST_CHANGES".');
+  }
+  parsed.verdict = normalizedVerdict;
   assertRequiredArray(parsed, "findings", "root");
   parsed.findings.forEach((finding, index) => validateFinding(finding, index, rich));
   if (rich) {
+    const normalizedShipRecommendation = normalizeShipRecommendation(parsed.ship_recommendation);
+    if (!normalizedShipRecommendation) {
+      throw new Error('Claude structured output invalid: root.ship_recommendation must be one of "SHIP" or "NO_SHIP".');
+    }
+    parsed.ship_recommendation = normalizedShipRecommendation;
     assertStringArray(parsed.systemic_risks, "systemic_risks", { nonEmptyItems: true });
     assertStringArray(parsed.blind_spots, "blind_spots", { nonEmptyItems: true });
     assertStringArray(parsed.next_steps, "next_steps", { nonEmptyItems: true });
@@ -779,6 +864,7 @@ Trust boundary:
 
 Operating rules:
 - Ground every finding in evidence you obtained from a tool call (Read/Glob/Grep/Bash/Task) over the actual workspace, not the diff alone.
+- Use canonical gate fields only: verdict MUST be exactly OK or REQUEST_CHANGES. For elite/deep/security output, ship_recommendation MUST be exactly SHIP or NO_SHIP.
 - Use Grep, Glob, and Read to verify call sites, downstream consumers, test coverage, and config impact for every non-trivial diff hunk.
 - Use Bash for read-only verification only. The Bash allowlist is restricted to: a single git wrapper at scripts/bin/git-safe.mjs (subcommand allowlist for diff/log/show/blame/status/branch/rev-parse/diff-tree/ls-files/ls-tree/shortlog/describe/config[--get|--list]/remote[ro]/tag[ro]); node --check / node --test; npm test / npm run lint / npm run check / npm run typecheck. No raw cat/head/tail/find/ls/grep/rg/wc — use Read/Glob/Grep instead, they are strictly more capable and workspace-fenced.
 - Use Task to dispatch parallel sub-investigations when a finding requires hunting across many files at once. Sub-agents inherit the same read-only constraint.
@@ -794,7 +880,7 @@ Operating rules:
 const ELITE_REVIEW_SYSTEM_PROMPT = `${REVIEWER_SYSTEM_PROMPT}
 
 Elite-tier protocol:
-- Treat ship_recommendation as a binary judgment that you must defend with two independent lines of evidence per critical/high finding.
+- Treat ship_recommendation as a binary judgment: SHIP or NO_SHIP only. Defend NO_SHIP with two independent lines of evidence per critical/high finding.
 - systemic_risks must describe cross-cutting weaknesses that span multiple code paths or services, not single-file issues.
 - blind_spots must be concrete: list the precise question you could not answer and the artifact you would need to answer it.
 - exploration_log must summarize the order and rationale of your tool calls so a reviewer can audit your reasoning trail.`;
@@ -861,7 +947,7 @@ export function buildReviewPrompt(snapshot, reviewKind) {
       "Prefer a few highly defensible findings over many shallow ones.",
       "Every finding must be tied to a real file and line range that you have verified via Read/Grep/Glob.",
       "For every finding, explain the failure scenario, why the code is vulnerable, the likely impact, the confidence level, and the test gap.",
-      "Use ship_recommendation to state whether this should ship now at all.",
+      "Use ship_recommendation exactly as SHIP or NO_SHIP to state whether this should ship now at all.",
       "Use systemic_risks for cross-cutting design weaknesses that span multiple code paths.",
       "Use blind_spots for material things you could not verify even after using your tools.",
       agenticGuidance,
@@ -1122,11 +1208,91 @@ function buildMarkdownFallbackPrompt(snapshot, reviewKind, structuredError) {
   ].join("\n");
 }
 
+const FALLBACK_REVIEW_HEADINGS = new Set([
+  "VERDICT",
+  "SHIP RECOMMENDATION",
+  "BLOCKERS",
+  "MISSING PIECES",
+  "EXACT CHANGES NEEDED",
+  "DIAGNOSTICS QUALITY"
+]);
+
+function parseFallbackMarkdownSections(text) {
+  const sections = new Map();
+  let currentHeading = null;
+
+  for (const rawLine of String(text ?? "").split(/\r?\n/)) {
+    const stripped = rawLine
+      .trim()
+      .replace(/^#{1,6}\s+/, "")
+      .replace(/^\*\*(.*?)\*\*$/, "$1")
+      .trim();
+    const headingMatch = stripped.match(/^([A-Za-z][A-Za-z _-]+)\s*:?\s*(.*)$/);
+    const normalizedHeading = headingMatch?.[1]?.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim().toUpperCase();
+    if (normalizedHeading && FALLBACK_REVIEW_HEADINGS.has(normalizedHeading)) {
+      currentHeading = normalizedHeading;
+      const inlineValue = headingMatch[2]?.trim();
+      sections.set(currentHeading, inlineValue ? [inlineValue] : []);
+      continue;
+    }
+    if (currentHeading) {
+      sections.get(currentHeading).push(rawLine);
+    }
+  }
+
+  return sections;
+}
+
+function fallbackGateTextRequestsNoShip(value) {
+  const normalized = normalizeGateText(value);
+  if (isCleanBlockerNegation(normalized)) return false;
+  return /^(request changes|changes requested|no ship|do not ship|dont ship|don't ship|blocked|ship blockers?)\b/.test(normalized);
+}
+
+function fallbackGateTextApprovesShip(value) {
+  const normalized = normalizeGateText(value);
+  if (/^ship\s+blockers?\b/.test(normalized)) return false;
+  return /^(ship(?:\b(?!\s+blockers?)| after\b| now\b)|ok|approved|approve|clean|no changes requested|not blocked|not a ship blocker|no ship blockers?)\b/.test(normalized);
+}
+
+function fallbackBlockersAreClean(value) {
+  const lines = String(value ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^[-*+]\s+/, "").replace(/^`+|`+$/g, "").trim())
+    .filter(Boolean);
+  if (lines.length === 0) return true;
+  return lines.every((line) => {
+    const normalized = normalizeGateText(line);
+    return /^(none|n\/a|not applicable)$/.test(normalized) ||
+      /^none\b(?:\s+(?:found|identified|observed|detected))?$/.test(normalized) ||
+      isCleanBlockerNegation(normalized);
+  });
+}
+
+function markdownFallbackShipRecommendation(text) {
+  const sections = parseFallbackMarkdownSections(text);
+  for (const heading of ["SHIP RECOMMENDATION", "VERDICT"]) {
+    const value = sections.get(heading)?.join("\n").trim();
+    if (!value) continue;
+    const normalizedShipRecommendation = normalizeShipRecommendation(value);
+    if (normalizedShipRecommendation) return normalizedShipRecommendation;
+    const normalizedVerdict = normalizeReviewVerdict(value);
+    if (normalizedVerdict) return normalizedVerdict === "REQUEST_CHANGES" ? "NO_SHIP" : "SHIP";
+    if (fallbackGateTextRequestsNoShip(value)) return "NO_SHIP";
+    if (fallbackGateTextApprovesShip(value)) return "SHIP";
+  }
+
+  const blockers = sections.get("BLOCKERS")?.join("\n").trim();
+  if (blockers && !fallbackBlockersAreClean(blockers)) {
+    return "NO_SHIP";
+  }
+  return "SHIP";
+}
+
 function markdownToReviewResult(markdown, reviewKind, activity = {}) {
   const text = String(markdown ?? "").trim() || "Fallback produced no markdown content.";
-  const shipRecommendation = /\b(no[_ -]?ship|request changes|blocker|blocked|do not ship)\b/i.test(text)
-    ? "NO_SHIP_REVIEW_MARKDOWN"
-    : "REVIEW_MARKDOWN";
+  const shipRecommendation = markdownFallbackShipRecommendation(text);
+  const verdict = shipRecommendation === "NO_SHIP" ? "REQUEST_CHANGES" : "OK";
   const commonActivity = {
     toolUseCount: 0,
     taskDispatchCount: 0,
@@ -1140,7 +1306,7 @@ function markdownToReviewResult(markdown, reviewKind, activity = {}) {
   if (reviewKind === "elite-review" || reviewKind === "deep-review" || reviewKind === "security-review") {
     return {
       parsed: {
-        verdict: "FALLBACK_MARKDOWN_REVIEW",
+        verdict,
         ship_recommendation: shipRecommendation,
         executive_summary: `Fallback Markdown Review:\n${text}`,
         systemic_risks: [],
@@ -1170,7 +1336,7 @@ function markdownToReviewResult(markdown, reviewKind, activity = {}) {
   }
   return {
     parsed: {
-      verdict: "FALLBACK_MARKDOWN_REVIEW",
+      verdict,
       summary: `Fallback Markdown Review:\n${text}`,
       findings: [],
       next_steps: ["Inspect fallback markdown and rerun structured mode if schema-grade evidence is required."]
