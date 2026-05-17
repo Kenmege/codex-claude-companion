@@ -228,6 +228,11 @@ test("Claude Code workflow is pinned, current, and auth-gated", () => {
   assert.match(workflow, /IS_UNTRUSTED_FORK_PR/);
   assert.match(workflow, /does not pass repository Actions secrets to forked pull_request workflows/);
   assert.match(workflow, /--append-system-prompt/);
+  assert.match(workflow, /HEAD_SHA=\$\(gh api "repos\/\$\{\{ github\.repository \}\}\/pulls\/\$\{PR_NUM\}" --jq '\.head\.sha'\)/);
+  assert.match(workflow, /echo "head_sha=\$\{HEAD_SHA\}" >> "\$GITHUB_OUTPUT"/);
+  assert.match(workflow, /ref: \$\{\{ steps\.resolve_pr_head\.outputs\.head_sha \|\| github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/);
+  assert.doesNotMatch(workflow, /Run Claude interactive response with OAuth[\s\S]*?--max-turns 10/);
+  assert.doesNotMatch(workflow, /Run Claude interactive response with API key[\s\S]*?--max-turns 10/);
   assert.match(prompt, /Trust boundary:/);
   assert.match(prompt, /Review priorities, in order:/);
   assert.match(readme, /Reviewer Composition/);

@@ -243,6 +243,8 @@ jobs:
         run: |
           PR_NUM="${{ github.event.issue.number }}"
           HEAD_REPO=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUM}" --jq '.head.repo.full_name')
+          HEAD_SHA=$(gh api "repos/${{ github.repository }}/pulls/${PR_NUM}" --jq '.head.sha')
+          echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
           if [ "${HEAD_REPO}" = "${{ github.repository }}" ]; then
             echo "is_fork=false" >> "$GITHUB_OUTPUT"
           else
@@ -279,6 +281,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
+          ref: ${{ steps.resolve_pr_head.outputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Run Claude interactive response with OAuth
@@ -301,7 +304,7 @@ jobs:
           # `issue_comment` events.
           claude_args: >-
             --model claude-opus-4-7
-            --max-turns 10
+            --max-turns 80
             --disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell
             --append-system-prompt "${{ env.CLAUDE_INTERACTIVE_PROMPT }}"
 
@@ -312,6 +315,6 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: >-
             --model claude-opus-4-7
-            --max-turns 10
+            --max-turns 80
             --disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell
             --append-system-prompt "${{ env.CLAUDE_INTERACTIVE_PROMPT }}"
