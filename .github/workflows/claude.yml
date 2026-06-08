@@ -139,7 +139,7 @@ jobs:
           # ability to ask @claude to run shell during interactive
           # sessions, which is mostly covered by Pull Request CI anyway.
           claude_args: |
-            --model claude-opus-4-7
+            --model opus
             --max-turns 80
             --disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell
 
@@ -151,7 +151,7 @@ jobs:
           use_sticky_comment: true
           prompt: ${{ env.CLAUDE_AUTO_REVIEW_PROMPT }}
           claude_args: |
-            --model claude-opus-4-7
+            --model opus
             --max-turns 80
             --disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell
 
@@ -303,7 +303,7 @@ jobs:
           # case the env-level IS_UNTRUSTED_FORK_PR cannot detect on
           # `issue_comment` events.
           claude_args: >-
-            --model claude-opus-4-7
+            --model opus
             --max-turns 80
             --disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell
             --append-system-prompt "${{ env.CLAUDE_INTERACTIVE_PROMPT }}"
@@ -314,7 +314,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: >-
-            --model claude-opus-4-7
+            --model opus
             --max-turns 80
             --disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell
             --append-system-prompt "${{ env.CLAUDE_INTERACTIVE_PROMPT }}"

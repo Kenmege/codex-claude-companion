@@ -1,5 +1,5 @@
 ---
-description: Run an agentic Claude review (Opus 4.7 by default) against the current git workspace.
+description: Run an agentic Claude review (Opus alias by default) against the current git workspace.
 ---
 
 # /claude-review:review
@@ -18,8 +18,8 @@ to Read, Glob, Grep, Task (sub-agents), WebFetch, WebSearch, and Bash limited
 to the git-safe wrapper plus node/npm verification commands. Edits, writes,
 and shell mutations are blocked.
 
-Default model is `claude-opus-4-7` at `high` effort. The helper auto-switches
-to the explicit Opus 4.7 1M profile (`claude-opus-4-7[1m]`) when the diff
+Default model is Claude Code's `opus` alias at `xhigh` effort. The helper auto-switches
+to the Opus 1M alias (`opus[1m]`) when the diff
 exceeds the inline envelope.
 
 ## Commands

@@ -1,5 +1,5 @@
 ---
-description: Run a deep, multi-agent Claude review (Opus 4.7 max effort) against the current workspace.
+description: Run a deep, multi-agent Claude review (Opus alias max effort) against the current workspace.
 ---
 
 # /claude-review:deep-review
@@ -13,7 +13,7 @@ description: Run a deep, multi-agent Claude review (Opus 4.7 max effort) against
 
 ## Plan
 
-Runs the deepest review lane: agentic by default, Opus 4.7 at `max` effort,
+Runs the deepest review lane: agentic by default, Opus alias at `max` effort,
 with the parent reviewer authorized to dispatch up to four parallel `Task`
 sub-agents for fanned-out exploration. Sub-agents inherit the same read-only
 tool allowlist and contribute back into the structured report under

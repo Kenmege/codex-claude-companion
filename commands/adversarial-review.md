@@ -13,7 +13,7 @@ description: Run a harder Claude challenge review against the current git worksp
 
 ## Plan
 
-Runs an agentic adversarial review pass. Claude (Opus 4.7 default, high
+Runs an agentic adversarial review pass. Claude (Opus alias default, xhigh
 effort) gets read-only Read/Glob/Grep/Bash/Task/WebFetch/WebSearch tools so it
 can verify call sites, downstream consumers, and test gaps before challenging
 the design. Returns the helper output without paraphrasing it.

@@ -7,15 +7,15 @@
 
 > Claude reviews your Codex diffs. Read-only, evidence-cited, and agentic.
 
-Codex CLI sessions can ask Claude Opus 4.7, including the explicit Opus 4.7
-1M long-context profile, for a
-high-scrutiny adversarial review of any diff. The reviewer gets read-only
-workspace access through `Read`, `Glob`, `Grep`, Task sub-agents, a
-domain-fenced `WebFetch`, and a narrow git wrapper. It does not get `Edit`,
-`Write`, raw shell, or arbitrary git by default. Every elite-tier finding must
-cite tool-call evidence, and the cited tool is cross-checked against the live
-tool-use stream so a fabricated citation surfaces in the rendered output.
-Malformed structured output fails closed.
+The primary product surface is Codex -> Claude review: from inside a Codex CLI
+session, you can unleash Claude Code's current Opus alias, including the Opus
+1M long-context alias, for a high-scrutiny adversarial review of any diff. The
+reviewer gets read-only workspace access through `Read`, `Glob`, `Grep`, Task
+sub-agents, a domain-fenced `WebFetch`, and a narrow git wrapper. It does not
+get `Edit`, `Write`, raw shell, or arbitrary git by default. Every elite-tier
+finding must cite tool-call evidence, and the cited tool is cross-checked
+against the live tool-use stream so a fabricated citation surfaces in the
+rendered output. Malformed structured output fails closed.
 
 ## 60-Second Quickstart
 
@@ -70,7 +70,7 @@ Codex slash commands are available once the plugin marketplace is loaded:
 | `review` | Quick agentic Claude review for everyday diffs. |
 | `adversarial-review` | Skeptical challenge pass for risky changes. |
 | `elite-review` | Exhaustive ship/no-ship review with systemic risks and blind spots. |
-| `deep-review` | Opus 4.7 max effort with parallel Task sub-agent investigation. |
+| `deep-review` | Opus max effort with parallel Task sub-agent investigation. |
 | `security-review` | OWASP/CWE-focused review with exploitability classification. |
 
 ## Presets
@@ -116,7 +116,7 @@ review by four agents with distinct strengths.
 | **GitHub Copilot** | GitHub App / repository setting | breadth, fast, high-recall on style and obvious bugs |
 | **Codex (OpenAI)** | installed GitHub App or `@codex` PR comment where configured | senior-engineer reasoning, forensic depth on architecture and release safety |
 | **Devin (Cognition)** | installed GitHub App or `@devin` PR comment where configured | autonomous engineering; can implement fixes, not just review |
-| **Claude (Anthropic Opus 4.7)** | `@claude` PR comment, plus automatic on PR open | adversarial code review, evidence-cited findings, schema-enforced output through this plugin |
+| **Claude (Anthropic Opus alias)** | `@claude` PR comment, plus automatic on PR open | adversarial code review, evidence-cited findings, schema-enforced output through this plugin |
 
 This repository ships Claude automation in `.github/workflows/claude.yml`.
 Copilot, Codex, and Devin reviewer behavior depends on the GitHub Apps and
@@ -135,12 +135,12 @@ convergent control-plane issues.
 
 Five review lanes, all agentic by default:
 
-- `/claude-review:review` — quick agentic Claude review (Opus 4.7 high effort).
+- `/claude-review:review` — quick agentic Claude review (Opus alias, xhigh effort).
 - `/claude-review:adversarial-review` — agentic skeptical challenge pass.
 - `/claude-review:elite-review` — exhaustive single-agent ship/no-ship review
   with evidence-cited findings, systemic risks, blind spots, and exploration
   log.
-- `/claude-review:deep-review` — Opus 4.7 at `max` effort with parallel
+- `/claude-review:deep-review` — Opus alias at `max` effort with parallel
   sub-agent dispatch (up to four `Task` sub-investigations per turn).
 - `/claude-review:security-review` — security-focused agentic pass with
   OWASP/CWE mapping and exploitability classification.
@@ -216,23 +216,21 @@ boundary disabled.` note in the rendered output and run log. **Never use
 
 Quality-first reviews default to:
 
-- model: `claude-opus-4-7`
-- effort: `high`
+- model: `opus`
+- effort: `xhigh`
 - mode: agentic-safe (read-only fenced tools enabled)
 
 Large review snapshots automatically switch to a long-context profile:
 
-- model: `claude-opus-4-7[1m]`
-- effort: `high`
-- 1M context is selected with Claude Code's documented `[1m]` suffix.
-  Current Claude Code docs state that Opus 4.7 / Opus 4.6 / Sonnet 4.6
-  support 1M context, with availability varying by model and plan.
-  On Max, Team, and Enterprise, Opus 1M is included automatically; Sonnet
-  1M requires extra usage on subscription plans.
+- model: `opus[1m]`
+- effort: `xhigh`
+- Claude Code accepts model aliases such as `opus` and `sonnet`, and the
+  `[1m]` suffix selects the long-context variant where the user's Claude plan
+  and model access support it.
 
 Deep-review lane defaults:
 
-- model: `claude-opus-4-7`
+- model: `opus`
 - effort: `max`
 - budget cap: `--max-budget-usd 25` *(only honored on api-key auth; on
   subscription auth the helper suppresses `--max-budget-usd` and surfaces a
@@ -353,6 +351,63 @@ Once loaded as a Codex plugin, the slash command surface is:
 The command docs are thin wrappers that tell Codex to invoke the local helper
 and return its stdout directly.
 
+## Codex Companion Commands
+
+The core `codex-plugin-cc` experience is still `/claude-review:*`: Codex
+delegates review work to an elite Claude reviewer and gets evidence-cited
+ship/no-ship feedback. The bundled `/codex:*` companion commands below are
+secondary plumbing for setup, status, and Codex task delegation. They keep
+rescue flows available without making rescue the center of the plugin.
+
+### `/codex:setup`
+
+Checks whether Codex is installed and authenticated. If Codex is missing, setup
+can offer to install Codex for you; if Codex is installed but unauthenticated,
+it still points users to run `!codex login`.
+
+```text
+/codex:setup --enable-review-gate
+/codex:setup --disable-review-gate
+```
+
+### `/codex:review`
+
+Starts a Codex-backed review using the current repository state.
+
+### `/codex:adversarial-review`
+
+Uses the same review target selection as `/codex:review`, then asks Codex to
+challenge the implementation. Example:
+
+```text
+/codex:adversarial-review --base main challenge whether this was the right caching and retry design
+```
+
+### `/codex:rescue`
+
+Routes follow-up implementation or investigation work through the
+`codex:codex-rescue` subagent. Use `--resume` to continue a previous Codex task
+or `--fresh` to force a new thread. If you do not pass `--model` or `--effort`, Codex chooses its own defaults.
+
+```text
+/codex:rescue --model gpt-5.5 --effort medium fix the failing parser test
+```
+
+If you pass `spark`, the plugin maps that to `gpt-5.3-codex-spark` before
+calling Codex.
+
+### `/codex:status`
+
+Shows tracked Codex jobs for the current repository.
+
+### `/codex:result`
+
+Shows the stored final output for a finished Codex job.
+
+### `/codex:cancel`
+
+Cancels or marks a tracked Codex job as stopped.
+
 ## Flags
 
 All review-like commands accept:
@@ -363,10 +418,10 @@ All review-like commands accept:
 | `--base <ref>`                | Base ref for branch diff (default: auto-detect origin/main)      |
 | `--scope auto\|working-tree\|branch\|directory` | Override scope detection                       |
 | `--preset quick\|ship\|security\|research\|deep` | Choose a role workflow                          |
-| `--model <name>`              | Override the model (e.g., `claude-opus-4-7[1m]`)                 |
+| `--model <name>`              | Override the model (e.g., `opus[1m]` or a full Claude model name) |
 | `--effort low\|medium\|high\|xhigh\|max` | Override effort                                       |
 | `--profile quality\|long-context` | Force a profile                                              |
-| `--long-context`              | Opt into the Opus 4.7 1M long-context profile                    |
+| `--long-context`              | Opt into Claude Code's Opus 1M long-context alias                |
 | `--legacy`                    | Disable agentic mode (structured output only, no tool access)    |
 | `--agentic`                   | Force agentic mode on (default for all lanes)                    |
 | `--unrestricted`              | Disable the safe-mode tool fence (raw shell, loud banner).       |
@@ -525,4 +580,7 @@ test/
 
 The original Claude Code plugin subtree remains under `plugins/codex/` as an
 upstream reference while this Codex-native runtime is developed at the repo
-root.
+root. Its Codex prompt guidance tracks the current OpenAI model family:
+`gpt-5.5` for complex coding/research work, `gpt-5.4-mini` for lighter
+subtasks, and the `spark` shortcut for `gpt-5.3-codex-spark` preview runs when
+that model is available to the user.

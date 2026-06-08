@@ -23,7 +23,7 @@ Findings are mapped to OWASP/CWE in `risk_category` and classified by
 Dependency CVE claims are verified against the workspace lockfiles before
 being reported.
 
-Default model is `claude-opus-4-7` at `high` effort.
+Default model is Claude Code's `opus` alias at `xhigh` effort.
 
 ## Commands
 

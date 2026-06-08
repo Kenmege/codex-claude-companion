@@ -61,7 +61,7 @@ test("renderReviewResult includes agentic evidence, verified claims, and explora
       reviewKind: "deep-review",
       reviewLabel: "Deep Review",
       targetLabel: "branch diff against origin/main",
-      model: "claude-opus-4-7",
+      model: "opus",
       effort: "max",
       profile: "quality",
       contextMode: "summarized",
@@ -163,7 +163,7 @@ test("renderReviewResult surfaces M2 evidence cross-check warnings and aggregate
       reviewKind: "elite-review",
       reviewLabel: "Elite Review",
       targetLabel: "working tree diff",
-      model: "claude-opus-4-7",
+      model: "opus",
       effort: "max",
       profile: "quality",
       contextMode: "full"
@@ -246,7 +246,7 @@ test("renderReviewResult attaches evidence cross-check to the right finding afte
       reviewKind: "elite-review",
       reviewLabel: "Elite Review",
       targetLabel: "working tree diff",
-      model: "claude-opus-4-7",
+      model: "opus",
       effort: "max",
       profile: "quality",
       contextMode: "full"
@@ -328,11 +328,11 @@ test("renderReviewResult attaches evidence cross-check to the right finding afte
 test("renderSetupReport surfaces subscription-auth detection and safe-mode banner", () => {
   const subscriptionOutput = renderSetupReport({
     ready: true,
-    claude: { detail: "claude 4.7 available" },
+    claude: { detail: "claude opus alias available" },
     auth: { detail: "user@example.com via claude-max" },
     runtime: { detail: "non-interactive print verified using project,local" },
     subscription: true,
-    defaults: { model: "claude-opus-4-7", effort: "high", autoLongContextBytes: 250000 },
+    defaults: { model: "opus", effort: "xhigh", autoLongContextBytes: 250000 },
     nextSteps: []
   });
   assert.match(subscriptionOutput, /subscription auth detected: yes/);
@@ -340,11 +340,11 @@ test("renderSetupReport surfaces subscription-auth detection and safe-mode banne
 
   const apiKeyOutput = renderSetupReport({
     ready: true,
-    claude: { detail: "claude 4.7 available" },
+    claude: { detail: "claude opus alias available" },
     auth: { detail: "user via api-key" },
     runtime: { detail: "ok" },
     subscription: false,
-    defaults: { model: "claude-opus-4-7", effort: "high", autoLongContextBytes: 250000 },
+    defaults: { model: "opus", effort: "xhigh", autoLongContextBytes: 250000 },
     nextSteps: []
   });
   assert.match(apiKeyOutput, /subscription auth detected: no/);

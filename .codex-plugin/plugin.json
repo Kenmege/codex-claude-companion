@@ -1,7 +1,7 @@
 {
   "name": "claude-review",
-  "version": "1.0.13",
-  "description": "Run agentic Claude Opus 4.7 review passes, including explicit Opus 4.7 1M long-context mode, from inside Codex CLI sessions with full read-only tool access (Read/Glob/Grep/Bash/Task/WebFetch/WebSearch) and parallel sub-agent dispatch.",
+  "version": "1.0.14",
+  "description": "Run agentic Claude Opus-alias review passes, including Opus 1M long-context mode, from inside Codex CLI sessions with full read-only tool access (Read/Glob/Grep/Bash/Task/WebFetch/WebSearch) and parallel sub-agent dispatch.",
   "author": {
     "name": "Kennedy Umege"
   },
@@ -22,7 +22,7 @@
   ],
   "interface": {
     "displayName": "Claude Review",
-    "shortDescription": "Agentic Claude Opus 4.7 review of Codex changes, with explicit 1M long-context mode, read-only tool access, and sub-agent dispatch",
+    "shortDescription": "Agentic Claude Opus-alias review of Codex changes, with 1M long-context mode, read-only tool access, and sub-agent dispatch",
     "longDescription": "Use Claude Review to run agentic high-scrutiny code review, adversarial design review, exhaustive deep multi-agent review, security-focused review, setup checks, and background review jobs from inside Codex CLI sessions using the local Claude CLI runtime. Reviewers operate in read-only mode with Read, Glob, Grep, Task (sub-agents), WebFetch, WebSearch, and Bash limited to a git-safe wrapper plus node/npm verification commands. Edits, writes, and shell mutations are blocked unless the user explicitly opts into --unrestricted.",
     "developerName": "Kennedy Umege",
     "category": "Coding",

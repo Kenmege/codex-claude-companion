@@ -15,6 +15,7 @@ import {
   DEFAULT_AGENTIC_NO_OUTPUT_TIMEOUT_MS,
   DEFAULT_AGENTIC_STRUCTURED_PROBE_TIMEOUT_MS,
   DEFAULT_CLAUDE_SETUP_PROBE_TIMEOUT_MS,
+  DEFAULT_EFFORT,
   DEFAULT_MARKDOWN_FALLBACK_NO_OUTPUT_TIMEOUT_MS,
   DEFAULT_MODEL,
   DEFAULT_WEB_FETCH_DOMAINS,
@@ -598,8 +599,8 @@ test("runClaudeStructuredReview stops early after complete streamed StructuredOu
         targetLabel: "working tree diff",
         focusText: "",
         contextText: "diff --git a/app.js b/app.js",
-        model: "claude-opus-4-7",
-        effort: "high",
+        model: "opus",
+        effort: "xhigh",
         betas: [],
         agentic: true,
         permissionMode: "default",
@@ -631,8 +632,8 @@ test("runClaudeStructuredReview normalizes plan permission mode to default for s
         targetLabel: "working tree diff",
         focusText: "",
         contextText: "diff --git a/app.js b/app.js",
-        model: "claude-opus-4-7",
-        effort: "high",
+        model: "opus",
+        effort: "xhigh",
         betas: [],
         agentic: true,
         permissionMode: "plan",
@@ -654,8 +655,9 @@ test("runClaudeStructuredReview normalizes plan permission mode to default for s
   }
 });
 
-test("DEFAULT_MODEL is the latest Opus 4.7 build", () => {
-  assert.equal(DEFAULT_MODEL, "claude-opus-4-7");
+test("DEFAULT_MODEL uses Claude Code's current Opus alias", () => {
+  assert.equal(DEFAULT_MODEL, "opus");
+  assert.equal(DEFAULT_EFFORT, "xhigh");
 });
 
 test("default agentic review timeouts do not impose short review ceilings", () => {
@@ -668,7 +670,7 @@ test("long-context profile uses the current explicit Opus 1M selector", () => {
   const profile = selectClaudeProfile({ longContext: true });
 
   assert.equal(profile.profile, "long-context");
-  assert.equal(profile.model, "claude-opus-4-7[1m]");
+  assert.equal(profile.model, "opus[1m]");
   assert.deepEqual(profile.betas, []);
   assert.equal(profile.betas.length, 0);
   assert.ok(!JSON.stringify(profile).includes("context-" + "1m"));
@@ -892,7 +894,7 @@ test("runClaudeStructuredReview wires agentic flags, system prompt, mcp config, 
     assert.ok(args.includes("--add-dir"));
     assert.ok(args.includes("/tmp/extra-dir"));
     assert.deepEqual(profile.betas, []);
-    assert.ok(args.includes("claude-opus-4-7[1m]"));
+    assert.ok(args.includes("opus[1m]"));
     assert.ok(!args.includes("--betas"));
     // api-key auth honors budget
     assert.ok(args.includes("--max-budget-usd"));
@@ -928,8 +930,8 @@ test("runClaudeStructuredReview suppresses --max-budget-usd under subscription a
         targetLabel: "working tree diff",
         focusText: "",
         contextText: "diff --git a/app.js b/app.js",
-        model: "claude-opus-4-7[1m]",
-        effort: "high",
+        model: "opus[1m]",
+        effort: "xhigh",
         betas: [],
         agentic: true,
         permissionMode: "default",
@@ -973,8 +975,8 @@ test("runClaudeStructuredReview --unrestricted skips the safe-mode fence and use
         targetLabel: "working tree",
         focusText: "",
         contextText: "diff",
-        model: "claude-opus-4-7",
-        effort: "high",
+        model: "opus",
+        effort: "xhigh",
         betas: [],
         agentic: true,
         unrestricted: true,
@@ -1007,8 +1009,8 @@ test("buildClaudeCommandArgs throws when permission-mode is bypassPermissions", 
             targetLabel: "working tree",
             focusText: "",
             contextText: "diff",
-            model: "claude-opus-4-7",
-            effort: "high",
+            model: "opus",
+            effort: "xhigh",
             betas: [],
             agentic: true,
             permissionMode: "bypassPermissions",
@@ -1265,8 +1267,8 @@ test("agentic mode strict-mcp default ON unless explicitly disabled", async () =
         targetLabel: "working tree",
         focusText: "",
         contextText: "diff",
-        model: "claude-opus-4-7",
-        effort: "high",
+        model: "opus",
+        effort: "xhigh",
         betas: [],
         agentic: true,
         permissionMode: "default",
@@ -1302,8 +1304,8 @@ test("agentic mode strict-mcp can be disabled by passing strictMcpConfig: false"
         targetLabel: "working tree",
         focusText: "",
         contextText: "diff",
-        model: "claude-opus-4-7",
-        effort: "high",
+        model: "opus",
+        effort: "xhigh",
         betas: [],
         agentic: true,
         permissionMode: "default",

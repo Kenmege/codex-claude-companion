@@ -167,13 +167,12 @@ test("public trust metadata is attribution-safe and precise", () => {
   const readme = read("README.md");
   const security = read("SECURITY.md");
   const bug = read(".github/ISSUE_TEMPLATE/bug_report.yml");
-  const releaseNotes = [
-    "README.md",
-    "CHANGELOG.md",
+  const historicalLaunchNotes = [
     "RELEASE_NOTES_v1.0.2.md",
     "RELEASE_NOTES_v1.0.3.md",
     "RELEASE_NOTES_v1.0.9.md"
   ].map(read).join("\n");
+  const currentReleaseNotes = read("RELEASE_NOTES_v1.0.14.md");
 
   assert.match(notice, /Copyright 2026 Kennedy Umege/);
   assert.match(notice, /Copyright 2026 OpenAI/);
@@ -195,7 +194,10 @@ test("public trust metadata is attribution-safe and precise", () => {
     true
   );
   assert.doesNotMatch(bug, /@kenmege\/codex-plugin-cc/);
-  assert.doesNotMatch(releaseNotes, /GPT-5\.5|gpt-5\.5/);
+  assert.doesNotMatch(historicalLaunchNotes, /GPT-5\.5|gpt-5\.5/);
+  assert.match(readme, /`gpt-5\.5` for complex coding\/research work/);
+  assert.match(currentReleaseNotes, /Codex -> Claude review as the primary/);
+  assert.match(currentReleaseNotes, /gpt-5\.5/);
 });
 
 test("internal prompt artifacts are not tracked for public release", () => {
@@ -253,10 +255,12 @@ test("Claude Code workflow is pinned, current, and auth-gated", () => {
   assert.match(interactiveApiKeyStep, /--max-turns 80/);
   assert.doesNotMatch(interactiveOauthStep, /--max-turns 10/);
   assert.doesNotMatch(interactiveApiKeyStep, /--max-turns 10/);
+  assert.match(workflow, /--model opus/);
+  assert.doesNotMatch(workflow, /claude-opus-4-7/);
   assert.match(prompt, /Trust boundary:/);
   assert.match(prompt, /Review priorities, in order:/);
   assert.match(readme, /Reviewer Composition/);
-  assert.match(readme, /Claude \(Anthropic Opus 4\.7\)/);
+  assert.match(readme, /Claude \(Anthropic Opus alias\)/);
   assert.match(contributing, /Working With Reviewers/);
   assert.match(contributing, /ANTHROPIC_API_KEY/);
 });

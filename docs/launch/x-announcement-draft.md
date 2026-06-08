@@ -8,7 +8,7 @@ I released Codex Plugin CC: a Codex plugin that lets Codex hand serious review
 work to Claude Code from the terminal.
 
 It supports read-only agentic review, ship/no-ship gates, security review,
-folder/non-git review, background jobs, and Opus 4.7 1M context mode.
+folder/non-git review, background jobs, and Claude Code's Opus 1M alias.
 
 Repo: https://github.com/Kenmege/codex-plugin-cc
 

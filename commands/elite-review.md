@@ -13,8 +13,8 @@ description: Run an elite, high-scrutiny Claude review against the current git w
 
 ## Plan
 
-Runs the elite adversarial review pass. Agentic by default: Claude (Opus 4.7,
-high effort) explores the workspace with Read/Glob/Grep/Task/WebFetch/
+Runs the elite adversarial review pass. Agentic by default: Claude (Opus alias,
+xhigh effort) explores the workspace with Read/Glob/Grep/Task/WebFetch/
 WebSearch and Bash limited to the git-safe wrapper plus node/npm verification
 commands. It emits an evidence-backed structured report (verdict, ship
 recommendation, systemic risks, evidence-cited findings, verified claims,

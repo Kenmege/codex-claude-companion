@@ -69,8 +69,8 @@ function basicSnapshot() {
     reviewKind: "review",
     reviewLabel: "Review",
     targetLabel: "working tree diff",
-    model: "claude-opus-4-7",
-    effort: "high",
+    model: "opus",
+    effort: "xhigh",
     profile: "quality",
     agentic: false,
     contextMode: "inline",
@@ -1367,8 +1367,8 @@ test("failed foreground reviews persist actionable timeout diagnostics visible i
   assert.equal(job.status, "failed");
   assert.equal(job.failureReason, "timeout");
   assert.equal(job.diagnostics.cwd, cwd);
-  assert.equal(job.diagnostics.model, "claude-opus-4-7");
-  assert.equal(job.diagnostics.effort, "high");
+  assert.equal(job.diagnostics.model, "opus");
+  assert.equal(job.diagnostics.effort, "xhigh");
   assert.equal(job.diagnostics.timeoutMs, 50);
   assert.equal(typeof job.diagnostics.childPid, "number");
   assert.match(job.diagnostics.promptPath, /\.prompt\.md$/);

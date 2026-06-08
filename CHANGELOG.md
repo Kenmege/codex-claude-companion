@@ -6,6 +6,64 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.0.14] — 2026-06-08
+
+### Changed
+
+- Recentered the README around the core product promise: Codex delegates review
+  work to an elite Claude reviewer for evidence-cited ship/no-ship feedback.
+- Updated Claude review defaults and documentation from fixed versioned model
+  IDs to Claude Code's `opus` and `opus[1m]` aliases, with `xhigh` effort for
+  quality-first reviews.
+- Clarified that bundled `/codex:*` commands are companion plumbing for setup,
+  status, and task delegation, while `/claude-review:*` remains the primary
+  review surface.
+- Updated the Codex rescue forwarding guidance to `gpt-5-5-prompting`,
+  preserving the thin-forwarder boundary.
+
+### Fixed
+
+- Kept the protected README command documentation aligned with the Codex
+  companion command tests, including explicit model/effort forwarding examples
+  and adversarial-review target-selection wording.
+
+## [1.0.13] — 2026-05-13
+
+### Changed
+
+- Corrected public upstream attribution to reference OpenAI's Apache-2.0 Codex
+  plugin reference preserved under `plugins/codex/`.
+- Replaced launch-adjacent fixed version placeholders with generic commands so
+  release docs do not carry stale example versions.
+
+### Fixed
+
+- Added a release-docs regression check preventing the incorrect upstream repo
+  reference from returning.
+
+## [1.0.12] — 2026-05-13
+
+### Changed
+
+- Documented the child-process helper's controlled command boundary for CodeQL.
+- Adjusted release-docs assertions so CodeQL no longer treats the registry-host
+  string check as URL substring sanitization.
+
+## [1.0.11] — 2026-05-13
+
+### Changed
+
+- Reduced release workflow default token permissions to read-only and grants
+  write/provenance permissions only to the release job.
+- Focused CodeQL on the shipped npm package and GitHub Actions trust boundary.
+- Hardened child-process execution helpers by resolving executable names before
+  spawning with caller-supplied environment variables.
+
+### Fixed
+
+- Removed CodeQL file-race findings in MCP config and review-file reads by
+  reading from the same opened file descriptor used for metadata checks.
+
 ## [1.0.10] — 2026-05-13
 
 ### Changed
