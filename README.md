@@ -41,9 +41,10 @@ codex-claude-review doctor
 uses `codex plugin marketplace add` + `codex plugin add` through a local wrapper
 marketplace; on older runtimes or custom `--config` paths it falls back to the
 legacy TOML stanza writer. Run it once after install; it is idempotent. Restart
-Codex CLI after running it. `doctor` checks Node, Git, Claude Code CLI/version,
-Claude auth, Codex registration, job storage, non-Git folder support, and
-optional live Claude runtime access with `--probe-runtime`.
+Codex CLI after running it. `doctor` checks Node, Git, Claude Code CLI/version
+(minimum `2.1.183` for the default `opus` / `xhigh` review profile), Claude
+auth, Codex registration, job storage, non-Git folder support, and optional live
+Claude runtime access with `--probe-runtime`.
 
 Then run a review from any git workspace:
 

@@ -37,7 +37,7 @@ function makeVersionFixture() {
     }
   });
   writeJson(path.join(root, ".codex-plugin", "plugin.json"), {
-    name: "codex-plugin-cc",
+    name: "claude-review",
     version: "1.0.2"
   });
 

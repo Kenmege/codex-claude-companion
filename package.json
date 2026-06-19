@@ -38,7 +38,7 @@
   },
   "scripts": {
     "lint": "node scripts/validate-repo.mjs",
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test test/*.test.mjs tests/*.test.mjs",
     "check": "npm run lint && npm test",
     "pack:check": "npm pack --dry-run"
   },

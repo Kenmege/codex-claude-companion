@@ -60,6 +60,7 @@ const CODEX_PLUGIN_NAME = "claude-review";
 const CODEX_PLUGIN_KEY = `${CODEX_PLUGIN_NAME}@${CODEX_MARKETPLACE_KEY}`;
 const CODEX_MARKETPLACE_WRAPPER_DIR = "marketplaces";
 const CODEX_MARKETPLACE_PLUGIN_SUBDIR = `plugins/${CODEX_PLUGIN_NAME}`;
+const MINIMUM_CLAUDE_VERSION = "2.1.183";
 const MAX_MCP_CONFIG_BYTES = 1024 * 1024;
 const PACKAGE_JSON_PATH = path.join(ROOT_DIR, "package.json");
 
@@ -1085,6 +1086,20 @@ function ensureMarketplaceWrapper(wrapperRoot, pluginRoot) {
   return { wrapperRoot, wrapperPluginDir, manifestPath };
 }
 
+function resolveCodexPluginSourcePath(entry) {
+  const rawSourcePath = entry?.source?.path;
+  if (!rawSourcePath) return null;
+  const sourcePathText = String(rawSourcePath);
+  if (path.isAbsolute(sourcePathText)) return sourcePathText;
+
+  const marketplaceRoot = entry.marketplaceSource?.source ? String(entry.marketplaceSource.source) : null;
+  if (marketplaceRoot && path.isAbsolute(marketplaceRoot)) {
+    return path.resolve(marketplaceRoot, sourcePathText);
+  }
+
+  return path.resolve(sourcePathText);
+}
+
 function getCodexPluginCliStatus(pluginRoot, cwd = process.cwd()) {
   const result = runCommand("codex", ["plugin", "list", "--json"], { cwd, timeout: 15_000 });
   if (result.error || result.status !== 0) {
@@ -1097,8 +1112,20 @@ function getCodexPluginCliStatus(pluginRoot, cwd = process.cwd()) {
     if (!entry) {
       return { available: true, configured: false, enabled: false, detail: "plugin not installed" };
     }
-    const sourcePath = entry.source?.path ? path.resolve(String(entry.source.path)) : null;
-    const sourceMatches = sourcePath ? fs.realpathSync(sourcePath) === fs.realpathSync(pluginRoot) : false;
+    const sourcePath = resolveCodexPluginSourcePath(entry);
+    let sourceMatches = false;
+    try {
+      sourceMatches = Boolean(sourcePath && fs.realpathSync(sourcePath) === fs.realpathSync(pluginRoot));
+    } catch (err) {
+      return {
+        available: true,
+        configured: false,
+        enabled: Boolean(entry.enabled),
+        detail: `plugin source path did not resolve: ${err.message}`,
+        sourcePath,
+        version: entry.version ?? null
+      };
+    }
     return {
       available: true,
       configured: Boolean(entry.enabled && sourceMatches),
@@ -1498,6 +1525,12 @@ function handleDoctor(argv) {
       message: auth.detail || "Claude CLI is not signed in.",
       recovery: "Run `claude auth login`."
     });
+  } else if (claudeVersion.version && !nodeVersionAtLeast(claudeVersion.version, MINIMUM_CLAUDE_VERSION)) {
+    problems.push({
+      code: "CLAUDE_VERSION_TOO_OLD",
+      message: `Claude Code CLI ${claudeVersion.version} is below the required ${MINIMUM_CLAUDE_VERSION} for this release's default ${DEFAULT_MODEL} / ${DEFAULT_EFFORT} review profile.`,
+      recovery: "Update Claude Code CLI, then re-run `codex-claude-review doctor --probe-runtime`."
+    });
   }
   if (!jobDirWritable) {
     problems.push({
@@ -1547,6 +1580,7 @@ function handleDoctor(argv) {
     helper_version: helperVersion,
     claude_cli_available: claudeCliAvailable,
     claude_cli_version: claudeVersion.version,
+    claude_cli_minimum_version: MINIMUM_CLAUDE_VERSION,
     claude_cli_version_detail: claudeVersion.detail,
     claude_authenticated: claudeAuthenticated,
     claude_runtime_probe_performed: runtimeProbePerformed,

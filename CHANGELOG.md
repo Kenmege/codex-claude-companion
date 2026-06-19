@@ -18,13 +18,16 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 - `codex-claude-review enable` now prefers the native Codex plugin CLI
   installation flow through a local wrapper marketplace, while preserving the
   legacy TOML writer for older Codex runtimes and explicit `--config` paths.
-- `codex-claude-review doctor` now reports the detected Claude Code CLI version
-  and recognizes native Codex plugin CLI installs.
+- `codex-claude-review doctor` now reports the detected Claude Code CLI version,
+  flags stale Claude Code CLI versions below 2.1.183, and recognizes native
+  Codex plugin CLI installs.
 - Documented the Claude Code 2.1.183 alignment decision to keep review lanes on
   explicit read-only `default`/`plan` permission modes rather than opting into
   auto mode.
 - Refreshed the pinned `anthropics/claude-code-action` workflow reference to
   v1.0.152.
+- Expanded `npm test` and CI coverage to include both legacy `test/` and bundled
+  Codex companion `tests/` suites.
 - Recentered the README around the core product promise: Codex delegates review
   work to an elite Claude reviewer for evidence-cited ship/no-ship feedback.
 - Updated Claude review defaults and documentation from fixed versioned model

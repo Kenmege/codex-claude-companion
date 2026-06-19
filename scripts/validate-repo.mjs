@@ -25,7 +25,6 @@ const required = [
   "SECURITY.md",
   "CONTRIBUTING.md",
   "CODE_OF_CONDUCT.md",
-  "RELEASE_NOTES_v1.0.3.md",
   ".github/CODEOWNERS",
   ".github/PULL_REQUEST_TEMPLATE.md",
   ".github/ISSUE_TEMPLATE/bug_report.yml",
@@ -53,6 +52,10 @@ const pluginManifest = JSON.parse(fs.readFileSync(path.join(root, ".codex-plugin
 const marketplaceManifest = JSON.parse(fs.readFileSync(path.join(root, ".agents/plugins/marketplace.json"), "utf8"));
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const packageLock = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
+const currentReleaseNotes = `RELEASE_NOTES_v${packageJson.version}.md`;
+if (!fs.existsSync(path.join(root, currentReleaseNotes))) {
+  throw new Error(`Missing current release notes file: ${currentReleaseNotes}`);
+}
 const claudeWorkflow = fs.readFileSync(path.join(root, ".github/workflows/claude.yml"), "utf8");
 JSON.parse(fs.readFileSync(path.join(root, "schemas/review-output.schema.json"), "utf8"));
 JSON.parse(fs.readFileSync(path.join(root, "schemas/elite-review-output.schema.json"), "utf8"));

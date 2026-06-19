@@ -32,7 +32,7 @@ function makeDirtyRepo() {
   return cwd;
 }
 
-function withFakeClaudeForReview(stdout) {
+function withFakeClaudeForReview(stdout, { version = "2.1.183" } = {}) {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-command-bin-"));
   const claudePath = path.join(binDir, "claude");
   fs.writeFileSync(
@@ -40,7 +40,7 @@ function withFakeClaudeForReview(stdout) {
     [
       "#!/bin/sh",
       "if [ \"$1\" = \"--help\" ]; then echo 'Usage: claude'; exit 0; fi",
-      "if [ \"$1\" = \"--version\" ]; then echo '2.1.183 (Claude Code)'; exit 0; fi",
+      `if [ "$1" = "--version" ]; then echo '${version} (Claude Code)'; exit 0; fi`,
       "if [ \"$1\" = \"auth\" ]; then echo '{\"loggedIn\":true,\"authMethod\":\"api-key\"}'; exit 0; fi",
       "cat <<'EOF'",
       stdout,
@@ -208,6 +208,7 @@ test("doctor --json emits the full diagnostic payload with all expected keys", (
     "node_supported",
     "claude_cli_available",
     "claude_cli_version",
+    "claude_cli_minimum_version",
     "claude_cli_version_detail",
     "claude_authenticated",
     "claude_runtime_probe_performed",
@@ -371,6 +372,32 @@ test("doctor --probe-runtime reports the live runtime probe fields", () => {
   assert.equal(payload.claude_authenticated, true);
   assert.equal(payload.claude_runtime_probe_performed, true);
   assert.equal(payload.claude_runtime_ready, true);
+});
+
+test("doctor reports stale Claude Code versions before defaulting to xhigh reviews", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-doctor-old-claude-"));
+  const fakeConfig = path.join(tmpDir, "config.toml");
+  fs.writeFileSync(fakeConfig, "", "utf8");
+  const fake = withFakeClaudeForReview(
+    JSON.stringify({
+      type: "result",
+      structured_output: {
+        answer: "ok"
+      }
+    }),
+    { version: "2.1.182" }
+  );
+
+  const result = spawnSync(process.execPath, [helper, "doctor", "--json", "--config", fakeConfig], {
+    cwd: root,
+    encoding: "utf8",
+    env: fake.env
+  });
+
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.claude_cli_version, "2.1.182");
+  assert.equal(payload.claude_cli_minimum_version, "2.1.183");
+  assert.ok(payload.problems.some((p) => p.code === "CLAUDE_VERSION_TOO_OLD"));
 });
 
 test("CODEX_CLAUDE_REVIEW_JOB_DIR env var redirects job dir via fallback chain", () => {
@@ -733,7 +760,7 @@ const args = process.argv.slice(2);
 const codexHome = process.env.CODEX_HOME;
 const statePath = path.join(codexHome, "installed.json");
 const wrapperRoot = path.join(codexHome, "marketplaces", "claude-review-private");
-const sourcePath = path.join(wrapperRoot, "plugins", "claude-review");
+const sourcePath = "./plugins/claude-review";
 fs.mkdirSync(codexHome, { recursive: true });
 if (args.join(" ") === "plugin marketplace add --help") {
   console.log("Add a local or Git marketplace");
@@ -741,7 +768,7 @@ if (args.join(" ") === "plugin marketplace add --help") {
 }
 if (args.join(" ") === "plugin list --json") {
   if (fs.existsSync(statePath)) {
-    console.log(JSON.stringify({ installed: [{ pluginId: "claude-review@claude-review-private", name: "claude-review", marketplaceName: "claude-review-private", version: "1.0.14", installed: true, enabled: true, source: { source: "local", path: sourcePath } }], available: [] }));
+    console.log(JSON.stringify({ installed: [{ pluginId: "claude-review@claude-review-private", name: "claude-review", marketplaceName: "claude-review-private", version: "1.0.14", installed: true, enabled: true, source: { source: "local", path: sourcePath }, marketplaceSource: { sourceType: "local", source: wrapperRoot } }], available: [] }));
   } else {
     console.log(JSON.stringify({ installed: [], available: [] }));
   }
