@@ -14,6 +14,11 @@
 //   - the `-c`, `-C`, and `--exec-path` switches (config / cwd override)
 //   - the `--upload-pack` / `--receive-pack` / `--git-dir` overrides
 //
+// It also scrubs GIT_* environment variables that let git execute an
+// arbitrary external program (GIT_EXTERNAL_DIFF, GIT_SSH_COMMAND,
+// GIT_PAGER, GIT_EDITOR, ...) or redirect config / object resolution
+// (GIT_CONFIG_GLOBAL, GIT_TEMPLATE_DIR, GIT_OBJECT_DIRECTORY, ...).
+//
 // The CLI form is:
 //   node scripts/bin/git-safe.mjs <subcommand> [args...]
 // stdout is the git output; stderr carries failures; exit code 0 on success.
@@ -71,6 +76,44 @@ const WRITE_CAPABLE_FLAG_PREFIXES = [
   "--output-indicator-new=",
   "--output-indicator-old=",
   "--output-indicator-context="
+];
+
+// Environment variables that let git (a) execute an arbitrary external
+// program, or (b) redirect config / object-store resolution outside the
+// workspace. These are stripped before invoking git so a poisoned parent
+// environment cannot turn a read-only review into arbitrary code execution.
+const SCRUBBED_ENV_VARS = [
+  // cwd / object-store / index redirection
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_NAMESPACE",
+  "GIT_CEILING_DIRECTORIES",
+  "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+  "GIT_REPLACE_REF_BASE",
+  // executable / binary path redirection
+  "GIT_EXEC_PATH",
+  // config injection
+  "GIT_CONFIG",
+  "GIT_CONFIG_GLOBAL",
+  "GIT_CONFIG_SYSTEM",
+  "GIT_CONFIG_NOSYSTEM",
+  "GIT_ATTR_SYSTEM",
+  // arbitrary-program execution hooks
+  "GIT_TEMPLATE_DIR",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_DIFF_OPTS",
+  "GIT_PAGER",
+  "GIT_EDITOR",
+  "GIT_SEQUENCE_EDITOR",
+  "GIT_SSH",
+  "GIT_SSH_COMMAND",
+  "GIT_ASKPASS",
+  "GIT_PROXY_COMMAND",
+  "GIT_MERGE_AUTOEDIT"
 ];
 
 const SHELL_METACHAR_RE = /[;&|`$<>(){}\\\n\r\t]|\$\(/;
@@ -230,10 +273,9 @@ function main() {
   validateSubcommandSpecific(subcommand, rest);
 
   const env = { ...process.env };
-  delete env.GIT_DIR;
-  delete env.GIT_WORK_TREE;
-  delete env.GIT_EXEC_PATH;
-  delete env.GIT_INDEX_FILE;
+  for (const key of SCRUBBED_ENV_VARS) {
+    delete env[key];
+  }
 
   const result = spawnSync("git", [subcommand, ...rest], {
     cwd,

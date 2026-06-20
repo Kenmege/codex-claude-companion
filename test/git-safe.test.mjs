@@ -157,6 +157,27 @@ test("git-safe scrubs GIT_DIR / GIT_WORK_TREE env vars", () => {
   assert.equal(result.status, 0);
 });
 
+test("git-safe scrubs GIT_EXTERNAL_DIFF so git cannot run an external program", () => {
+  const cwd = makeRepo();
+  const marker = path.join(cwd, "pwned.txt");
+  const hook = path.join(cwd, "hook.sh");
+  fs.writeFileSync(hook, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`, "utf8");
+  fs.chmodSync(hook, 0o755);
+
+  const result = runWrapper(["diff"], {
+    cwd,
+    env: { GIT_EXTERNAL_DIFF: hook }
+  });
+
+  // The diff itself should run fine; the external-diff program must NOT fire.
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(
+    fs.existsSync(marker),
+    false,
+    "GIT_EXTERNAL_DIFF was not scrubbed: external program executed"
+  );
+});
+
 test("git-safe rejects oversized arguments", () => {
   const huge = "a/".repeat(3000); // 6000 chars
   const result = runWrapper(["log", huge]);
