@@ -152,7 +152,9 @@ plugins/codex/.generated/
 /coverage/
 
 # ByteRover local context cache (created by codex-review subagent runs)
+/.brv
 /.brv/
+/.brv-backup/
 
 # Internal one-shot review or release prompts should not be published.
 docs/*_PROMPT.md
