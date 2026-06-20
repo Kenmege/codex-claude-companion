@@ -792,11 +792,17 @@ export function validateStructuredReviewOutput(parsed, reviewKind) {
 }
 
 export function getClaudeAvailability(cwd) {
-  return binaryAvailable("claude", ["--help"], { cwd });
+  return binaryAvailable("claude", ["--help"], {
+    cwd,
+    timeout: getClaudeSetupProbeTimeoutMs()
+  });
 }
 
 export function getClaudeVersion(cwd) {
-  const result = runCommand("claude", ["--version"], { cwd });
+  const result = runCommand("claude", ["--version"], {
+    cwd,
+    timeout: getClaudeSetupProbeTimeoutMs()
+  });
   if (result.error) {
     return {
       version: null,
@@ -818,7 +824,10 @@ export function getClaudeVersion(cwd) {
 }
 
 export function getClaudeAuthStatus(cwd) {
-  const result = runCommand("claude", ["auth", "status"], { cwd });
+  const result = runCommand("claude", ["auth", "status"], {
+    cwd,
+    timeout: getClaudeSetupProbeTimeoutMs()
+  });
   if (result.error) {
     return {
       loggedIn: false,

@@ -62,7 +62,7 @@ JSON.parse(fs.readFileSync(path.join(root, "schemas/elite-review-output.schema.j
 JSON.parse(fs.readFileSync(path.join(root, "schemas/agentic-review-output.schema.json"), "utf8"));
 
 if (pluginManifest.skills !== "./skills/") {
-  throw new Error("plugin.json must expose bundled Codex skills through skills: ./skills/.");
+  throw new Error('plugin.json must expose bundled Codex skills through the "skills": "./skills/" field.');
 }
 
 if (!Array.isArray(pluginManifest.interface?.defaultPrompt) || pluginManifest.interface.defaultPrompt.length === 0) {

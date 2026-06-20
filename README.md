@@ -357,62 +357,39 @@ Once loaded as a Codex plugin, the slash command surface is:
 The command docs are thin wrappers that tell Codex to invoke the local helper
 and return its stdout directly.
 
-## Codex Companion Commands
+## Slash Commands
 
-The core `codex-plugin-cc` experience is still `/claude-review:*`: Codex
-delegates review work to an elite Claude reviewer and gets evidence-cited
-ship/no-ship feedback. The bundled `/codex:*` companion commands below are
-secondary plumbing for setup, status, and Codex task delegation. They keep
-rescue flows available without making rescue the center of the plugin.
+Once the plugin marketplace is loaded, these `/claude-review:*` commands are
+available from inside a Codex CLI session. They are thin wrappers that invoke
+the bundled `codex-claude-review` helper and return its output directly.
 
-### `/codex:setup`
+### Review commands
 
-Checks whether Codex is installed and authenticated. If Codex is missing, setup
-can offer to install Codex for you; if Codex is installed but unauthenticated,
-it still points users to run `!codex login`.
-
-```text
-/codex:setup --enable-review-gate
-/codex:setup --disable-review-gate
-```
-
-### `/codex:review`
-
-Starts a Codex-backed review using the current repository state.
-
-### `/codex:adversarial-review`
-
-Uses the same review target selection as `/codex:review`, then asks Codex to
-challenge the implementation. Example:
+- `/claude-review:review` — Run an agentic Claude review (Opus alias by default)
+  against the current git workspace.
+- `/claude-review:elite-review` — Run an elite, high-scrutiny review.
+- `/claude-review:deep-review` — Run a deep, multi-agent review (Opus alias, max
+  effort).
+- `/claude-review:adversarial-review` — Run a harder challenge review against the
+  current workspace.
+- `/claude-review:security-review` — Run a security-focused agentic review.
 
 ```text
-/codex:adversarial-review --base main challenge whether this was the right caching and retry design
+/claude-review:review --preset ship --base main
+/claude-review:adversarial-review --base main
 ```
 
-### `/codex:rescue`
+### Job and setup commands
 
-Routes follow-up implementation or investigation work through the
-`codex:codex-rescue` subagent. Use `--resume` to continue a previous Codex task
-or `--fresh` to force a new thread. If you do not pass `--model` or `--effort`, Codex chooses its own defaults.
-
-```text
-/codex:rescue --model gpt-5.5 --effort medium fix the failing parser test
-```
-
-If you pass `spark`, the plugin maps that to `gpt-5.3-codex-spark` before
-calling Codex.
-
-### `/codex:status`
-
-Shows tracked Codex jobs for the current repository.
-
-### `/codex:result`
-
-Shows the stored final output for a finished Codex job.
-
-### `/codex:cancel`
-
-Cancels or marks a tracked Codex job as stopped.
+- `/claude-review:status` — Show running and recent review jobs for the current
+  workspace.
+- `/claude-review:result` — Show the stored final output for a finished job.
+- `/claude-review:cancel` — Cancel an active background review job.
+- `/claude-review:setup` — Verify that the local Claude review runtime is
+  installed and authenticated.
+- `/claude-review:enable` — Register the plugin in the local Codex CLI config.
+- `/claude-review:doctor` — Diagnose installation, Claude auth, Codex
+  registration, and runtime readiness.
 
 ## Flags
 

@@ -26,7 +26,10 @@ import {
   buildReviewerSystemPrompt,
   buildWebFetchAllowlist,
   crossCheckEvidenceAgainstStream,
+  getClaudeAuthStatus,
+  getClaudeAvailability,
   getClaudeSetupProbeTimeoutMs,
+  getClaudeVersion,
   isSubscriptionAuth,
   extractClaudeAssistantText,
   normalizeReviewVerdict,
@@ -478,6 +481,44 @@ test("getClaudeSetupProbeTimeoutMs falls back on invalid override values", () =>
     }),
     DEFAULT_CLAUDE_SETUP_PROBE_TIMEOUT_MS
   );
+});
+
+test("claude setup probes time out instead of hanging on a stalled binary", () => {
+  // A misconfigured / first-run claude binary can hang forever. The probes
+  // must bound themselves with the setup-probe timeout so doctor/setup never
+  // wedge. Force a tiny timeout and a binary that sleeps far longer.
+  const fake = withFakeClaudeExecutable("sleep 30\n");
+  const previousTimeout = process.env[CLAUDE_SETUP_PROBE_TIMEOUT_ENV];
+  process.env[CLAUDE_SETUP_PROBE_TIMEOUT_ENV] = "300";
+
+  try {
+    const startedAt = Date.now();
+
+    const version = getClaudeVersion(ROOT);
+    assert.equal(version.version, null);
+    assert.match(version.detail, /claude --version failed/);
+
+    const auth = getClaudeAuthStatus(ROOT);
+    assert.equal(auth.loggedIn, false);
+    assert.match(auth.detail, /claude auth status failed/);
+
+    const availability = getClaudeAvailability(ROOT);
+    assert.equal(availability.available, false);
+
+    // Three probes that each sleep 30s would take 90s+ without a timeout.
+    // With a 300ms bound they must finish in a small multiple of that.
+    assert.ok(
+      Date.now() - startedAt < 10000,
+      "setup probes did not honor the probe timeout"
+    );
+  } finally {
+    if (previousTimeout === undefined) {
+      delete process.env[CLAUDE_SETUP_PROBE_TIMEOUT_ENV];
+    } else {
+      process.env[CLAUDE_SETUP_PROBE_TIMEOUT_ENV] = previousTimeout;
+    }
+    fake.restore();
+  }
 });
 
 test("probeClaudeStructuredOutput verifies the non-interactive runtime with clean setting sources", () => {

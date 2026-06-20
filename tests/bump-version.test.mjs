@@ -22,16 +22,16 @@ function makeVersionFixture() {
   const root = makeTempDir();
 
   writeJson(path.join(root, "package.json"), {
-    name: "@openai/codex-plugin-cc",
+    name: "codex-plugin-cc",
     version: "1.0.2"
   });
   writeJson(path.join(root, "package-lock.json"), {
-    name: "@openai/codex-plugin-cc",
+    name: "codex-plugin-cc",
     version: "1.0.2",
     lockfileVersion: 3,
     packages: {
       "": {
-        name: "@openai/codex-plugin-cc",
+        name: "codex-plugin-cc",
         version: "1.0.2"
       }
     }
@@ -61,7 +61,7 @@ test("bump-version updates every release manifest", () => {
 test("bump-version check mode reports stale metadata", () => {
   const root = makeVersionFixture();
   writeJson(path.join(root, "package.json"), {
-    name: "@openai/codex-plugin-cc",
+    name: "codex-plugin-cc",
     version: "1.0.3"
   });
 
