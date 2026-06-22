@@ -109,7 +109,7 @@ jobs:
 
       - name: Run Claude auto review with OAuth
         if: env.HAS_CLAUDE_CODE_OAUTH_TOKEN == 'true'
-        uses: anthropics/claude-code-action@51705da45eecce209d4700538bf8377d5b5fc695 # v1 -> v1.0.152 (pinned 2026-06-19)
+        uses: anthropics/claude-code-action@2fee15510437d71399d9139ed60433470484a8fb # v1 -> v1.0.152 (pinned 2026-06-19)
         with:
           # JUSTIFIED: anthropic_api_key omitted on purpose. When the
           # ANTHROPIC_API_KEY secret is unset, ${{ secrets.* }} resolves
@@ -145,7 +145,7 @@ jobs:
 
       - name: Run Claude auto review with API key
         if: env.HAS_CLAUDE_CODE_OAUTH_TOKEN != 'true' && env.HAS_ANTHROPIC_API_KEY == 'true'
-        uses: anthropics/claude-code-action@51705da45eecce209d4700538bf8377d5b5fc695 # v1 -> v1.0.152 (pinned 2026-06-19)
+        uses: anthropics/claude-code-action@2fee15510437d71399d9139ed60433470484a8fb # v1 -> v1.0.152 (pinned 2026-06-19)
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           use_sticky_comment: true
@@ -286,7 +286,7 @@ jobs:
 
       - name: Run Claude interactive response with OAuth
         if: steps.preflight.outputs.skip != 'true' && env.HAS_CLAUDE_CODE_OAUTH_TOKEN == 'true'
-        uses: anthropics/claude-code-action@51705da45eecce209d4700538bf8377d5b5fc695 # v1 -> v1.0.152 (pinned 2026-06-19)
+        uses: anthropics/claude-code-action@2fee15510437d71399d9139ed60433470484a8fb # v1 -> v1.0.152 (pinned 2026-06-19)
         with:
           # JUSTIFIED: anthropic_api_key omitted on purpose; same reason
           # as the auto-review job above. Empty-string api key from an
@@ -310,7 +310,7 @@ jobs:
 
       - name: Run Claude interactive response with API key
         if: steps.preflight.outputs.skip != 'true' && env.HAS_CLAUDE_CODE_OAUTH_TOKEN != 'true' && env.HAS_ANTHROPIC_API_KEY == 'true'
-        uses: anthropics/claude-code-action@51705da45eecce209d4700538bf8377d5b5fc695 # v1 -> v1.0.152 (pinned 2026-06-19)
+        uses: anthropics/claude-code-action@2fee15510437d71399d9139ed60433470484a8fb # v1 -> v1.0.152 (pinned 2026-06-19)
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: >-
