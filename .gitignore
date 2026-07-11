@@ -150,6 +150,8 @@ output/
 plugins/codex/.generated/
 /.claude-review/
 /coverage/
+/.production/
+/.worktrees/
 
 # ByteRover local context cache (created by codex-review subagent runs)
 /.brv
