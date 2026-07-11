@@ -354,7 +354,7 @@ test("package.json shape supports public npm publish", () => {
   assert.match(packageJson.repository.url, /Kenmege\/codex-plugin-cc/);
 });
 
-test("npmjs release configuration is public and token-safe", () => {
+test("npmjs release configuration is public and trusted-publisher safe", () => {
   const packageJson = JSON.parse(read("package.json"));
   const workflow = read(".github/workflows/release.yml");
 
@@ -371,7 +371,12 @@ test("npmjs release configuration is public and token-safe", () => {
   assert.match(workflow, /id-token: write/);
   assert.doesNotMatch(workflow, /packages: write/);
   assert.match(workflow, /registry-url: https:\/\/registry\.npmjs\.org/);
-  assert.match(workflow, /NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/);
+  assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN/);
+  assert.doesNotMatch(workflow, /secrets\.NPM_TOKEN/);
+  assert.match(workflow, /npm install --global npm@11\.5\.1/);
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /release_tag:/);
+  assert.match(workflow, /ref: \$\{\{ env\.RELEASE_TAG \}\}/);
   assert.match(workflow, /NPMJS_PUBLISH_ENABLED/);
   assert.doesNotMatch(workflow, /npm pkg set private=false/);
   assert.match(workflow, /id: publish-package/);
@@ -395,7 +400,9 @@ test("release workflow fails closed when tag and package version differ", () => 
   assert.match(workflow, /id: tag-version-gate/);
   assert.match(workflow, /node -p "require\('\.\/package\.json'\)\.version" > \.release-package-version/);
   assert.match(workflow, /read -r PACKAGE_VERSION < \.release-package-version/);
-  assert.match(workflow, /TAG_VERSION="\$\{GITHUB_REF_NAME#v\}"/);
+  assert.match(workflow, /RELEASE_TAG: \$\{\{ github\.event_name == 'workflow_dispatch'/);
+  assert.match(workflow, /Release tag '\$RELEASE_TAG' is not a supported semantic-version tag/);
+  assert.match(workflow, /TAG_VERSION="\$\{RELEASE_TAG#v\}"/);
   assert.match(workflow, /Release tag v\$\{TAG_VERSION\} does not match package\.json version \$\{PACKAGE_VERSION\}/);
   assert.match(workflow, /printf 'version=%s\\n' "\$PACKAGE_VERSION" >> "\$GITHUB_OUTPUT"/);
   assert.match(contributing, /tag and package version differ/);
