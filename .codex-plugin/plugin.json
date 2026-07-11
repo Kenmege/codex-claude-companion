@@ -1,6 +1,6 @@
 {
   "name": "claude-review",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Open a full Claude coding workspace supervised by Codex, or run agentic Claude Opus-alias review passes with isolated read-only tool access.",
   "author": {
     "name": "Kennedy Umege"

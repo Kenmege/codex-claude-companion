@@ -1,6 +1,6 @@
 {
   "name": "codex-plugin-cc",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "type": "module",
   "description": "Codex-supervised Claude coding workspace plus isolated agentic review, adversarial review, deep review, and security review lanes.",
   "license": "Apache-2.0",

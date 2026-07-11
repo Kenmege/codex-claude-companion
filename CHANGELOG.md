@@ -6,6 +6,20 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-07-11
+
+### Changed
+
+- Trusted npm publishing now runs only from the actual release tag, binding the
+  OIDC workflow identity and generated provenance to the immutable tag ref.
+- Manual release recovery must be dispatched from that same tag; recovery from
+  the default branch is rejected before checkout or publication.
+
+### Fixed
+
+- Corrected the release workflow identity mismatch that caused v1.1.0's SLSA
+  provenance to name `refs/heads/main` instead of its release tag.
+
 ## [1.1.0] — 2026-07-11
 
 ### Added
