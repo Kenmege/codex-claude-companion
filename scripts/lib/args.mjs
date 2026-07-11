@@ -65,13 +65,3 @@ export function parseArgs(argv, options = {}) {
 
   return parsed;
 }
-
-export function splitRawArgumentString(raw) {
-  const tokens = [];
-  const pattern = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|`([^`\\]*(?:\\.[^`\\]*)*)`|([^\s]+)/g;
-  for (const match of raw.matchAll(pattern)) {
-    const value = match[1] ?? match[2] ?? match[3] ?? match[4] ?? "";
-    tokens.push(value.replace(/\\(["'`\\])/g, "$1"));
-  }
-  return tokens;
-}

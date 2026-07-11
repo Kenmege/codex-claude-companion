@@ -6,7 +6,7 @@ description: Cancel an active background Claude review job.
 
 ## Preflight
 
-1. Prefer the helper binary `codex-claude-review` if it is available on PATH.
+1. Prefer the helper binary `codex-claude` if it is available on PATH.
 2. If it is not available, tell the user to install the helper with
    `npm install -g codex-plugin-cc` after npmjs publish, or from a cloned
    checkout with `npm install -g .`.
@@ -20,7 +20,7 @@ Run the helper in cancel mode once and return the result.
 Use the exact argument tail the user supplied after `/claude-review:cancel`.
 
 - Preferred:
-  `codex-claude-review cancel <user-arguments>`
+  `codex-claude cancel <user-arguments>`
 
 ## Verification
 

@@ -13,19 +13,19 @@ structured output, and render the result.
 ## Default command
 
 ```bash
-codex-claude-review review "$ARGUMENTS"
+codex-claude review -- "$ARGUMENTS"
 ```
 
 ## Route by intent
 
-- Coding or implementation: `codex-claude workspace "$ARGUMENTS"`; keep the
+- Coding or implementation: `codex-claude workspace -- "$ARGUMENTS"`; keep the
   active Codex task in control and supervise with `workspace-status`,
   `workspace-logs`, and `workspace-stop`.
-- Everyday diff review: `codex-claude-review review "$ARGUMENTS"`
-- Release gate / ship-no-ship: `codex-claude-review review --preset ship "$ARGUMENTS"`
-- Security review: `codex-claude-review review --preset security "$ARGUMENTS"`
-- Research or evidence-heavy folder: `codex-claude-review folder <path> --preset research --long-context "$ARGUMENTS"`
-- Deep multi-agent review: `codex-claude-review review --preset deep --background "$ARGUMENTS"`
+- Everyday diff review: `codex-claude review -- "$ARGUMENTS"`
+- Release gate / ship-no-ship: `codex-claude review --preset ship -- "$ARGUMENTS"`
+- Security review: `codex-claude review --preset security -- "$ARGUMENTS"`
+- Research or evidence-heavy folder: `codex-claude folder <path> --preset research --long-context -- "$ARGUMENTS"`
+- Deep multi-agent review: `codex-claude review --preset deep --background -- "$ARGUMENTS"`
 
 ## Operating rules
 
@@ -35,4 +35,4 @@ codex-claude-review review "$ARGUMENTS"
   the orchestrator and reviewer.
 - Return the helper output verbatim.
 - If the helper exits non-zero, report the exact failure and stop.
-- For first-run problems, ask the user to run `codex-claude-review enable` and `codex-claude-review doctor`.
+- For first-run problems, ask the user to run `codex-claude enable` and `codex-claude doctor`.

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 
@@ -34,8 +34,64 @@ test("pull request workflow cancels superseded matrix runs", () => {
   assert.match(source, /cancel-in-progress: true/);
 });
 
+test("pull request workflow proves the minimum Node release on Windows", () => {
+  const source = read(".github/workflows/pull-request-ci.yml");
+  assert.match(source, /windows-test:/);
+  assert.match(source, /runs-on: windows-latest/);
+  assert.match(source, /node-version: 18\.18\.0/);
+  assert.match(source, /run: npm run check/);
+  assert.match(source, /run: npm run pack:check/);
+});
+
+const packageJson = JSON.parse(read("package.json"));
+
+test("package test command uses shell-independent Node discovery", () => {
+  assert.equal(packageJson.scripts.test, "node --test");
+});
+
+test("packed package installs working primary and compatibility command aliases", { timeout: 60_000 }, () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-claude-packed-bin-"));
+  const packDirectory = path.join(tempRoot, "pack");
+  const installPrefix = path.join(tempRoot, "install");
+  fs.mkdirSync(packDirectory, { recursive: true });
+  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+
+  try {
+    const packed = JSON.parse(execFileSync(
+      npm,
+      ["pack", "--json", "--ignore-scripts", "--pack-destination", packDirectory],
+      { cwd: root, encoding: "utf8" }
+    ));
+    assert.equal(packed.length, 1);
+    const tarball = path.join(packDirectory, packed[0].filename);
+    execFileSync(
+      npm,
+      ["install", "--prefix", installPrefix, "--ignore-scripts", "--no-audit", "--no-fund", tarball],
+      { cwd: tempRoot, encoding: "utf8" }
+    );
+
+    for (const alias of ["codex-claude", "codex-claude-review"]) {
+      const executable = path.join(
+        installPrefix,
+        "node_modules",
+        ".bin",
+        `${alias}${process.platform === "win32" ? ".cmd" : ""}`
+      );
+      const result = spawnSync(executable, ["--help"], {
+        cwd: tempRoot,
+        encoding: "utf8",
+        shell: process.platform === "win32"
+      });
+      assert.equal(result.status, 0, `${alias}: ${result.stderr || result.stdout}`);
+      assert.match(result.stdout, /codex-claude workspace/);
+      assert.match(result.stdout, /Compatibility alias:\s+codex-claude-review/);
+    }
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("package files list excludes bump-version from the shipped tarball surface", () => {
-  const packageJson = JSON.parse(read("package.json"));
   assert.ok(packageJson.files.includes("scripts/claude-review-companion.mjs"));
   assert.ok(packageJson.files.includes("scripts/validate-repo.mjs"));
   assert.ok(packageJson.files.includes("scripts/bin/"));
@@ -174,7 +230,7 @@ test("public trust metadata is attribution-safe and precise", () => {
     "RELEASE_NOTES_v1.0.3.md",
     "RELEASE_NOTES_v1.0.9.md"
   ].map(read).join("\n");
-  const currentReleaseNotes = read("RELEASE_NOTES_v1.0.14.md");
+  const currentReleaseNotes = read(`RELEASE_NOTES_v${packageJson.version}.md`);
 
   assert.match(notice, /Copyright 2026 Kennedy Umege/);
   assert.match(notice, /Copyright 2026 OpenAI/);
@@ -198,9 +254,9 @@ test("public trust metadata is attribution-safe and precise", () => {
   );
   assert.doesNotMatch(bug, /@kenmege\/codex-plugin-cc/);
   assert.doesNotMatch(historicalLaunchNotes, /GPT-5\.5|gpt-5\.5/);
-  assert.match(readme, /`gpt-5\.5` for complex coding\/research work/);
-  assert.match(currentReleaseNotes, /Codex -> Claude review as the primary/);
-  assert.match(currentReleaseNotes, /gpt-5\.5/);
+  assert.match(readme, /active Codex model is inherited automatically/i);
+  assert.match(currentReleaseNotes, /Codex-supervised Claude coding workspace/);
+  assert.match(currentReleaseNotes, /never launches a nested\s+Codex process/);
 });
 
 test("internal prompt artifacts are not tracked for public release", () => {

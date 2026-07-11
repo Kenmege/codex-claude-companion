@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseArgs, splitRawArgumentString } from "../scripts/lib/args.mjs";
+import { parseArgs } from "../scripts/lib/args.mjs";
 
 test("parseArgs handles booleans, values, and positionals", () => {
   const parsed = parseArgs(["--background", "--base", "main", "focus", "text"], {
@@ -29,12 +29,4 @@ test("parseArgs rejects duplicated single-value options", () => {
       valueOptions: ["cwd"]
     });
   }, /Duplicate --cwd/);
-});
-
-test("splitRawArgumentString keeps quoted groups together", () => {
-  assert.deepEqual(splitRawArgumentString('--base main "look for race conditions"'), [
-    "--base",
-    "main",
-    "look for race conditions"
-  ]);
 });

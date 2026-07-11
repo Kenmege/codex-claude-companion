@@ -22,14 +22,15 @@ remain isolated and read-only.
 
 ## Dispatch
 
-Run the exact argument tail supplied after `/claude-review:workspace`:
+Use an explicit option terminator before the coding request so request text that
+starts with a dash can never be reinterpreted as a plugin option:
 
-`codex-claude workspace <user-arguments>`
+`codex-claude workspace [workspace-flags] -- "<coding request>"`
 
-The command returns a Claude session ID immediately. Claude continues under its
-background supervisor and its `agents` panel opens in another terminal. This
-Codex task must remain responsive; do not attach Claude to the Codex terminal or
-wait synchronously for the panel to close.
+The command returns the authoritative short Claude session ID immediately.
+Claude continues under its background supervisor and its `agents` panel opens
+in another terminal. This Codex task must remain responsive; do not attach
+Claude to the Codex terminal or wait synchronously for the panel to close.
 
 Claude defaults to the rolling `opus` selector. The user may pass `--model
 <selector>` or change models through Claude's native controls. `--plan` is
@@ -45,7 +46,8 @@ orchestration—there is no nested GPT model selection.
 3. The user may interact directly in the separate Claude panel. Do not compete
    with user input or overwrite user-owned work.
 4. If a focused repair is needed, dispatch it with `codex-claude workspace
-   --path <directory> --no-panel "<repair request>"` to avoid duplicate panels.
+   --path <directory> --no-panel -- "<repair request>"` to avoid duplicate
+   panels.
 5. Use `codex-claude workspace-stop <session-id>` only when the user asks, the
    task is obsolete, or continuing would be unsafe.
 

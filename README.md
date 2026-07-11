@@ -28,8 +28,8 @@ Public npm is the frictionless install lane:
 
 ```bash
 npm install -g codex-plugin-cc
-codex-claude-review enable
-codex-claude-review doctor
+codex-claude enable
+codex-claude doctor
 ```
 
 For local development on the plugin itself, install from source:
@@ -38,8 +38,8 @@ For local development on the plugin itself, install from source:
 git clone https://github.com/Kenmege/codex-plugin-cc.git
 cd codex-plugin-cc
 npm install -g .
-codex-claude-review enable
-codex-claude-review doctor
+codex-claude enable
+codex-claude doctor
 ```
 
 `enable` registers the plugin with Codex. On current Codex CLI versions it
@@ -54,24 +54,28 @@ Claude runtime access with `--probe-runtime`.
 Dispatch a coding job from a Codex task:
 
 ```bash
-codex-claude workspace --path . "implement the requested change and run tests"
+codex-claude workspace --path . -- "implement the requested change and run tests"
 codex-claude workspace-status --path . --all --json
 codex-claude workspace-logs <session-id>
 codex-claude workspace-stop <session-id>
 ```
 
-The dispatch returns a stable Claude session ID immediately. Use
+The dispatch returns Claude Code's authoritative short session ID immediately;
+it fails closed if Claude does not provide one. Use
 `--no-panel` for focused follow-up workers and `--panel-only` to reopen the
 control panel. Claude defaults to its rolling `opus` selector; pass `--model`
 when a different Claude selector is required. Normal mode has native coding
 capabilities and permission prompts; `--plan` is analysis-only.
 
+`codex-claude-review` remains a fully supported compatibility alias for every
+command, including the isolated read-only review lanes.
+
 Or run a read-only review from any git workspace:
 
 ```bash
-codex-claude-review review
-codex-claude-review review --preset ship --base main
-codex-claude-review review --preset security --add-dir ../shared-libs
+codex-claude review
+codex-claude review --preset ship --base main
+codex-claude review --preset security --add-dir ../shared-libs
 ```
 
 Codex slash commands are available once the plugin marketplace is loaded:
@@ -103,11 +107,11 @@ Use presets when you want one command that chooses the right lane:
 
 | Preset | Command | Use when |
 |---|---|---|
-| `quick` | `codex-claude-review review --preset quick` | Everyday review with high-signal findings. |
-| `ship` | `codex-claude-review review --preset ship --base main` | Pre-merge ship/no-ship gate. Routes to the elite lane. |
-| `security` | `codex-claude-review review --preset security` | Security review without remembering the dedicated command. |
-| `research` | `codex-claude-review folder ./paper --preset research --long-context` | Evidence-heavy code, papers, notes, or research folders. |
-| `deep` | `codex-claude-review review --preset deep --background` | Large or ambiguous tasks that need sub-agent investigation. |
+| `quick` | `codex-claude review --preset quick` | Everyday review with high-signal findings. |
+| `ship` | `codex-claude review --preset ship --base main` | Pre-merge ship/no-ship gate. Routes to the elite lane. |
+| `security` | `codex-claude review --preset security` | Security review without remembering the dedicated command. |
+| `research` | `codex-claude folder ./paper --preset research --long-context` | Evidence-heavy code, papers, notes, or research folders. |
+| `deep` | `codex-claude review --preset deep --background` | Large or ambiguous tasks that need sub-agent investigation. |
 
 ## Why Trust The Boundary?
 
@@ -180,11 +184,11 @@ Plus the operational surface:
 - `/claude-review:setup` — verify local Claude CLI readiness and report
   whether subscription auth is detected (which suppresses budget caps).
   Use `--json` for machine-parseable hook output.
-- `codex-claude-review doctor` — first-run diagnostic for Node, Git, Claude,
+- `codex-claude doctor` — first-run diagnostic for Node, Git, Claude,
   Codex registration, writable job storage, and optional live runtime probing.
 - `/claude-review:status`, `/claude-review:result`, `/claude-review:cancel` —
   manage background review jobs.
-- `codex-claude-review` — direct CLI fallback outside slash commands.
+- `codex-claude` — direct CLI fallback outside slash commands.
 - Bundled Codex skill metadata (`skills/claude-review/SKILL.md`) lets current
   Codex plugin runtimes discover when to route natural-language review requests
   to the helper, not just explicit slash-command invocations.
@@ -235,7 +239,7 @@ For workflows where the diff is fully trusted (your own branch on a private
 repo) and you want raw shell access:
 
 ```bash
-codex-claude-review review --unrestricted
+codex-claude review --unrestricted
 ```
 
 `--unrestricted` switches the agent to the full default tool catalog
@@ -278,8 +282,8 @@ Install from npmjs:
 
 ```bash
 npm install -g codex-plugin-cc
-codex-claude-review enable
-codex-claude-review doctor --probe-runtime
+codex-claude enable
+codex-claude doctor --probe-runtime
 ```
 
 If you previously installed the historical scoped package or a source checkout
@@ -289,8 +293,8 @@ package first:
 ```bash
 npm uninstall -g @kenmege/codex-plugin-cc codex-plugin-cc
 npm install -g codex-plugin-cc
-codex-claude-review enable
-codex-claude-review doctor
+codex-claude enable
+codex-claude doctor
 ```
 
 ### Source install
@@ -339,25 +343,25 @@ Do not commit a token-bearing `.npmrc`.
 ## Direct CLI Usage
 
 ```bash
-codex-claude-review doctor
-codex-claude-review doctor --probe-runtime
-codex-claude-review setup
-codex-claude-review setup --json
-codex-claude-review review
-codex-claude-review review --preset ship --base main
-codex-claude-review review --preset security
-codex-claude-review folder ./paper --preset research --long-context
-codex-claude-review review --preset deep --background
-codex-claude-review review --base main
-codex-claude-review adversarial-review --background look for migration risk
-codex-claude-review elite-review focus on architecture and rollback
-codex-claude-review deep-review --background --timeout-ms 1800000
-codex-claude-review security-review --add-dir ../shared-libs --web-domain 'https://snyk.io/*'
-codex-claude-review review --inherit-mcp --mcp-config /tmp/linear.mcp.json
-codex-claude-review review --unrestricted   # trust boundary off, raw shell
-codex-claude-review status
-codex-claude-review result <job-id>
-codex-claude-review cancel <job-id>
+codex-claude doctor
+codex-claude doctor --probe-runtime
+codex-claude setup
+codex-claude setup --json
+codex-claude review
+codex-claude review --preset ship --base main
+codex-claude review --preset security
+codex-claude folder ./paper --preset research --long-context
+codex-claude review --preset deep --background
+codex-claude review --base main
+codex-claude adversarial-review --background look for migration risk
+codex-claude elite-review focus on architecture and rollback
+codex-claude deep-review --background --timeout-ms 1800000
+codex-claude security-review --add-dir ../shared-libs --web-domain 'https://snyk.io/*'
+codex-claude review --inherit-mcp --mcp-config /tmp/linear.mcp.json
+codex-claude review --unrestricted   # trust boundary off, raw shell
+codex-claude status
+codex-claude result <job-id>
+codex-claude cancel <job-id>
 ```
 
 `setup --json` redacts local auth identity by default. It may still report
@@ -368,7 +372,7 @@ subscription auth from API-key auth without exposing the account address.
 
 Once the plugin marketplace is loaded, these `/claude-review:*` commands are
 available from inside a Codex CLI session. They are thin wrappers that invoke
-the bundled `codex-claude-review` helper and return its output directly.
+the bundled `codex-claude` helper and return its output directly.
 
 ### Review commands
 
@@ -505,7 +509,7 @@ creation, and updated with atomic writes. `status` marks long-running jobs as
 | `3` | Review completed and found ship-blocking findings |
 
 The same gating contract applies when a review is run in the background:
-`codex-claude-review result <job-id>` re-validates the persisted result and
+`codex-claude result <job-id>` re-validates the persisted result and
 exits `3` when the completed job contains ship-blocking findings.
 
 ## Supported Platforms
@@ -513,7 +517,7 @@ exits `3` when the completed job contains ship-blocking findings.
 Supported and tested development platforms are macOS and Linux with Node.js
 18.18 or newer. Windows is not a supported v1 platform because process-tree
 termination and shell/tool semantics have not been verified there. Run
-`codex-claude-review doctor --probe-runtime` on a new machine before trusting a
+`codex-claude doctor --probe-runtime` on a new machine before trusting a
 release gate there, because Claude Code runtime behavior and local auth state
 still depend on the host environment.
 

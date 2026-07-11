@@ -6,7 +6,7 @@ description: Run a harder Claude challenge review against the current git worksp
 
 ## Preflight
 
-1. Prefer the helper binary `codex-claude-review` if it is available on PATH.
+1. Prefer the helper binary `codex-claude` if it is available on PATH.
 2. If it is not available, tell the user to install the helper with
    `npm install -g codex-plugin-cc` after npmjs publish, or from a cloned
    checkout with `npm install -g .`.
@@ -24,7 +24,7 @@ Use the exact argument tail the user supplied after
 `/claude-review:adversarial-review`.
 
 - Preferred:
-  `codex-claude-review adversarial-review <user-arguments>`
+  `codex-claude adversarial-review <user-arguments>`
 
 Useful flags:
 

@@ -6,19 +6,44 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-07-11
+
 ### Added
 
 - Added a split-terminal `workspace` lane that dispatches full Claude coding
   workers in the background, opens Claude's native agent panel separately, and
-  returns a stable session ID to the still-active Codex task.
+  returns Claude Code's authoritative short session ID to the still-active
+  Codex task.
 - Added `workspace-status`, `workspace-logs`, and `workspace-stop` controls for
   Codex-led monitoring and repair loops.
+- Added `--no-panel`, `--panel-only`, `--plan`, `--model`, and privacy-safe
+  `--json-events` workspace controls.
+- Added Windows Node 18.18 CI and packed-tarball install smoke coverage for the
+  primary `codex-claude` executable and the compatibility alias.
 
 ### Changed
 
 - The active Codex task now exclusively owns GPT-side orchestration and review;
   the workspace lane no longer blocks the invoking terminal or starts nested
   Codex processes.
+- `codex-claude` is now the primary executable in help and launch guidance;
+  `codex-claude-review` remains a supported compatibility alias.
+- Workspace request examples use an explicit `--` option terminator so coding
+  text cannot be reinterpreted as privileged CLI options.
+- MCP configuration inputs are consumed from bounded opened descriptors and
+  staged in private exclusive files before Claude starts.
+- Test discovery now uses Node's shell-independent `node --test` entry point.
+
+### Fixed
+
+- Workspace dispatch now parses the native Claude background receipt and fails
+  closed when no controllable session ID is returned instead of manufacturing
+  an unrelated identifier.
+- One-shot terminal launchers are created in private directories with exclusive
+  permissions and remove themselves before opening the Claude agent panel.
+- Review focus text beginning with option-like strings remains untrusted prompt
+  data and cannot activate unrestricted mode, MCP inheritance, extra
+  directories, or a permission-mode change.
 
 ## [1.0.14] — 2026-06-08
 

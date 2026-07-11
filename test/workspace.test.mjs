@@ -12,8 +12,11 @@ import {
   buildClaudePanelArgs,
   buildClaudeStatusArgs,
   buildClaudeStopArgs,
+  createPanelLauncher,
   createWorkspaceConfig,
+  formatShellCommand,
   formatWorkspaceEvent,
+  openWorkspacePanel,
   runWorkspace,
   selectTerminalBackend
 } from "../scripts/lib/workspace.mjs";
@@ -21,29 +24,73 @@ import {
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const helper = path.join(root, "scripts", "claude-review-companion.mjs");
 
-test("background worker uses rolling Opus, native coding permissions, and a stable session ID", () => {
+test("background worker lets Claude own the native background session ID", () => {
   assert.deepEqual(
-    buildClaudeBackgroundArgs({ model: "opus", prompt: "implement the API" }, "123e4567-e89b-42d3-a456-426614174000"),
+    buildClaudeBackgroundArgs({ model: "opus", prompt: "implement the API" }),
     [
       "--model", "opus",
       "--permission-mode", "default",
-      "--session-id", "123e4567-e89b-42d3-a456-426614174000",
       "--bg",
       "implement the API"
     ]
   );
 });
 
+test("manual panel commands preserve every shell argument boundary", () => {
+  const hostilePath = "/tmp/project name'; touch /tmp/should-not-run; #";
+  const rendered = formatShellCommand(["claude", "agents", "--cwd", hostilePath]);
+
+  assert.equal(
+    rendered,
+    `'claude' 'agents' '--cwd' '/tmp/project name'"'"'; touch /tmp/should-not-run; #'`
+  );
+});
+
+test("panel launchers use a private one-shot directory and delete themselves", () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "claude-panel-workspace-"));
+  const launcher = createPanelLauncher({ cwd: workspace });
+  const directory = path.dirname(launcher);
+  const source = fs.readFileSync(launcher, "utf8");
+
+  assert.equal(fs.statSync(directory).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(launcher).mode & 0o777, 0o700);
+  assert.match(source, /\/bin\/rm -f \"\$launcher_path\"/);
+  assert.match(source, /\/bin\/rmdir \"\$launcher_dir\"/);
+  assert.match(source, /exec '\/usr\/bin\/env' 'claude' 'agents' '--cwd'/);
+
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test("panel launch cleans its one-shot launcher when the terminal command throws", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "claude-panel-failure-"));
+  const launcher = path.join(directory, "panel.command");
+  fs.writeFileSync(launcher, "#!/bin/sh\n", { mode: 0o700 });
+
+  assert.throws(
+    () => openWorkspacePanel(
+      { cwd: "/repo" },
+      "terminal-app",
+      {
+        createLauncher: () => launcher,
+        runCommand: () => {
+          throw new Error("open failed");
+        }
+      }
+    ),
+    /open failed/
+  );
+  assert.equal(fs.existsSync(launcher), false);
+  assert.equal(fs.existsSync(directory), false);
+});
+
 test("background worker supports explicit models and plan mode", () => {
   assert.deepEqual(
     buildClaudeBackgroundArgs(
-      { model: "sonnet", plan: true, prompt: "design the migration" },
-      "123e4567-e89b-42d3-a456-426614174000"
+      { model: "sonnet", plan: true, prompt: "design the migration" }
     ),
     [
       "--model", "sonnet",
       "--permission-mode", "plan",
-      "--session-id", "123e4567-e89b-42d3-a456-426614174000",
       "--bg",
       "design the migration"
     ]
@@ -101,6 +148,8 @@ test("terminal backend prefers an existing tmux session, then native terminal ad
 
 test("workspace lifecycle events exclude prompt and tool content", () => {
   const event = {
+    schemaVersion: 1,
+    timestamp: "2026-07-11T09:00:00.000Z",
     command: "workspace",
     phase: "worker_dispatched",
     mode: "coding",
@@ -116,6 +165,7 @@ test("workspace lifecycle events exclude prompt and tool content", () => {
 
   const human = formatWorkspaceEvent(event);
   assert.match(human, /worker_dispatched/);
+  assert.match(human, /at=2026-07-11T09:00:00.000Z/);
   assert.match(human, /session=session-123/);
   assert.match(human, /codex_model=active-session/);
 });
@@ -124,17 +174,21 @@ test("workspace dispatches Claude, opens a separate panel, and returns control t
   const calls = [];
   const events = [];
   const clock = [100, 112, 200, 207];
-  const sessionId = "123e4567-e89b-42d3-a456-426614174000";
+  const sessionId = "7c5dcf5d";
   const result = await runWorkspace(
     { cwd: "/repo", model: "opus", prompt: "make the change", openPanel: true },
     {
       commandAvailable: () => true,
       now: () => clock.shift(),
-      generateSessionId: () => sessionId,
+      wallClock: () => Date.parse("2026-07-11T09:00:00.000Z"),
       selectBackend: () => "terminal-app",
       runCommand: (command, args, options) => {
         calls.push({ command, args, options });
-        return { status: 0, stdout: "", stderr: "" };
+        return {
+          status: 0,
+          stdout: `backgrounded · ${sessionId}\n  claude agents\n  claude logs ${sessionId}\n`,
+          stderr: ""
+        };
       },
       openPanel: (config, backend) => {
         calls.push({ command: "panel", config, backend });
@@ -147,7 +201,7 @@ test("workspace dispatches Claude, opens a separate panel, and returns control t
   assert.deepEqual(calls.map(({ command }) => command), ["claude", "panel"]);
   assert.deepEqual(calls[0].args, [
     "--model", "opus", "--permission-mode", "default",
-    "--session-id", sessionId, "--bg", "make the change"
+    "--bg", "make the change"
   ]);
   assert.equal(calls[0].options.cwd, "/repo");
   assert.equal(result.status, 0);
@@ -155,6 +209,8 @@ test("workspace dispatches Claude, opens a separate panel, and returns control t
   assert.equal(result.panelOpened, true);
   assert.deepEqual(events.map(({ phase }) => phase), ["worker_dispatched", "panel_opened"]);
   assert.deepEqual(events.map(({ durationMs }) => durationMs), [12, 7]);
+  assert.ok(events.every(({ schemaVersion }) => schemaVersion === 1));
+  assert.ok(events.every(({ timestamp }) => timestamp === "2026-07-11T09:00:00.000Z"));
   assert.ok(calls.every(({ command }) => command !== "codex"));
 });
 
@@ -164,7 +220,6 @@ test("dispatch failure does not open a panel", async () => {
     { cwd: "/repo", model: "opus", prompt: "make the change", openPanel: true },
     {
       commandAvailable: () => true,
-      generateSessionId: () => "123e4567-e89b-42d3-a456-426614174000",
       runCommand: () => ({ status: 7, stdout: "", stderr: "dispatch failed" }),
       openPanel: () => { panelCalls += 1; },
       emit: () => {}
@@ -174,13 +229,30 @@ test("dispatch failure does not open a panel", async () => {
   assert.equal(panelCalls, 0);
 });
 
+test("successful dispatch without Claude's authoritative session ID fails closed", async () => {
+  const events = [];
+  const result = await runWorkspace(
+    { cwd: "/repo", model: "opus", prompt: "make the change", openPanel: true },
+    {
+      commandAvailable: () => true,
+      runCommand: () => ({ status: 0, stdout: "backgrounded", stderr: "" }),
+      openPanel: () => assert.fail("panel must not open for an uncontrollable worker"),
+      emit: (event) => events.push(event)
+    }
+  );
+
+  assert.equal(result.status, 1);
+  assert.equal(result.sessionId, null);
+  assert.match(result.error?.message ?? "", /session ID/i);
+  assert.deepEqual(events.map(({ phase }) => phase), ["dispatch_failed"]);
+});
+
 test("panel failure preserves the running worker and returns manual recovery", async () => {
   const result = await runWorkspace(
     { cwd: "/repo", model: "opus", prompt: "make the change", openPanel: true },
     {
       commandAvailable: () => true,
-      generateSessionId: () => "123e4567-e89b-42d3-a456-426614174000",
-      runCommand: () => ({ status: 0, stdout: "", stderr: "" }),
+      runCommand: () => ({ status: 0, stdout: "backgrounded · 7c5dcf5d\n", stderr: "" }),
       selectBackend: () => null,
       emit: () => {}
     }
@@ -188,6 +260,29 @@ test("panel failure preserves the running worker and returns manual recovery", a
   assert.equal(result.status, 0);
   assert.equal(result.panelOpened, false);
   assert.deepEqual(result.manualPanelCommand, ["claude", "agents", "--cwd", "/repo"]);
+});
+
+test("panel launcher exceptions preserve the running worker and return manual recovery", async () => {
+  const events = [];
+  const result = await runWorkspace(
+    { cwd: "/repo", model: "opus", prompt: "make the change", openPanel: true },
+    {
+      commandAvailable: () => true,
+      runCommand: () => ({ status: 0, stdout: "backgrounded · 7c5dcf5d\n", stderr: "" }),
+      selectBackend: () => "terminal-app",
+      openPanel: () => {
+        throw new Error("terminal unavailable");
+      },
+      emit: (event) => events.push(event)
+    }
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(result.sessionId, "7c5dcf5d");
+  assert.equal(result.panelOpened, false);
+  assert.deepEqual(result.manualPanelCommand, ["claude", "agents", "--cwd", "/repo"]);
+  assert.match(result.panelError?.message ?? "", /terminal unavailable/);
+  assert.deepEqual(events.map(({ phase }) => phase), ["worker_dispatched", "panel_failed"]);
 });
 
 test("panel-only mode opens the control panel without dispatching a worker", async () => {
@@ -221,7 +316,11 @@ test("CLI dispatch returns immediately and forwards native background arguments"
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "claude-workspace-cli-"));
   const stub = path.join(temp, "claude");
   const argsFile = path.join(temp, "args.txt");
-  fs.writeFileSync(stub, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CLAUDE_ARGS_FILE\"\n", { mode: 0o700 });
+  fs.writeFileSync(
+    stub,
+    "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CLAUDE_ARGS_FILE\"\nprintf 'backgrounded · 7c5dcf5d\\n  claude logs 7c5dcf5d\\n'\n",
+    { mode: 0o700 }
+  );
 
   const result = spawnSync(process.execPath, [
     helper,
@@ -236,13 +335,37 @@ test("CLI dispatch returns immediately and forwards native background arguments"
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Claude workspace session: [0-9a-f-]{36}/i);
+  assert.match(result.stdout, /Claude workspace session: 7c5dcf5d/i);
   const args = fs.readFileSync(argsFile, "utf8").trim().split("\n");
-  assert.deepEqual(args.slice(0, 6), [
-    "--model", "opus", "--permission-mode", "default", "--session-id", args[5]
+  assert.deepEqual(args, [
+    "--model", "opus", "--permission-mode", "default",
+    "--bg", "implement the focused repair"
   ]);
-  assert.match(args[5], /^[0-9a-f-]{36}$/i);
-  assert.deepEqual(args.slice(6), ["--bg", "implement the focused repair"]);
+});
+
+test("CLI never reinterprets one quoted coding request as privileged flags", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "claude-workspace-boundary-"));
+  const stub = path.join(temp, "claude");
+  const argsFile = path.join(temp, "args.txt");
+  fs.writeFileSync(
+    stub,
+    "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CLAUDE_ARGS_FILE\"\nprintf 'backgrounded · 7c5dcf5d\\n'\n",
+    { mode: 0o700 }
+  );
+
+  const result = spawnSync(process.execPath, [
+    helper,
+    "workspace",
+    "--model sonnet implement the repair"
+  ], {
+    cwd: root,
+    env: { ...process.env, PATH: `${temp}${path.delimiter}${process.env.PATH}`, CLAUDE_ARGS_FILE: argsFile },
+    encoding: "utf8"
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unknown workspace option/i);
+  assert.equal(fs.existsSync(argsFile), false, "Claude must not launch after an argument-boundary violation");
 });
 
 test("CLI supervision commands forward to Claude native controls", () => {

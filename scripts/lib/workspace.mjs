@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -61,16 +60,23 @@ export function createWorkspaceConfig(input = {}, invocationCwd = process.cwd())
   };
 }
 
-export function buildClaudeBackgroundArgs(config, sessionId) {
-  requireNonEmptyString(sessionId, "session ID");
+export function buildClaudeBackgroundArgs(config) {
   requireNonEmptyString(config.prompt, "coding request");
   return [
     "--model", config.model ?? DEFAULT_WORKSPACE_MODEL,
     "--permission-mode", config.plan ? "plan" : "default",
-    "--session-id", sessionId,
     "--bg",
     config.prompt
   ];
+}
+
+export function parseClaudeBackgroundSessionId(output) {
+  const text = String(output ?? "").replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+  const backgrounded = text.match(/^backgrounded\s+[\u00b7•]\s+([0-9a-f]{8})(?:\s|$)/im);
+  if (backgrounded) return backgrounded[1];
+
+  const controlCommand = text.match(/^\s*claude\s+(?:attach|logs|stop)\s+([0-9a-f]{8})(?:\s|$)/im);
+  return controlCommand?.[1] ?? null;
 }
 
 export function buildClaudePanelArgs(config) {
@@ -96,6 +102,7 @@ export function formatWorkspaceEvent(event, options = {}) {
   if (options.json) return JSON.stringify(event);
   return [
     `[claude-workspace] ${event.phase}`,
+    event.timestamp ? `at=${event.timestamp}` : null,
     event.mode ? `mode=${event.mode}` : null,
     event.model ? `model=${event.model}` : null,
     event.codexModelRouting ? `codex_model=${event.codexModelRouting}` : null,
@@ -127,40 +134,69 @@ function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'"'"'`)}'`;
 }
 
-function createPanelLauncher(config) {
-  const directory = path.join(os.tmpdir(), "codex-plugin-cc", "panels");
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const launcherPath = path.join(directory, `claude-agents-${crypto.randomUUID()}.command`);
-  const command = ["/usr/bin/env", "claude", ...buildClaudePanelArgs(config)]
-    .map(shellQuote)
-    .join(" ");
+export function formatShellCommand(args) {
+  return args.map(shellQuote).join(" ");
+}
+
+export function createPanelLauncher(config) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codex-claude-panel-"));
+  fs.chmodSync(directory, 0o700);
+  const launcherPath = path.join(directory, "panel.command");
+  const command = formatShellCommand(["/usr/bin/env", "claude", ...buildClaudePanelArgs(config)]);
   fs.writeFileSync(
     launcherPath,
-    `#!/bin/sh\ncd ${shellQuote(config.cwd)} || exit 1\nexec ${command}\n`,
-    { mode: 0o700 }
+    [
+      "#!/bin/sh",
+      `launcher_path=${shellQuote(launcherPath)}`,
+      `launcher_dir=${shellQuote(directory)}`,
+      '/bin/rm -f "$launcher_path"',
+      '/bin/rmdir "$launcher_dir" 2>/dev/null || true',
+      `cd ${shellQuote(config.cwd)} || exit 1`,
+      `exec ${command}`,
+      ""
+    ].join("\n"),
+    { mode: 0o700, flag: "wx" }
   );
   return launcherPath;
+}
+
+function removePanelLauncher(launcherPath) {
+  if (!launcherPath) return;
+  fs.rmSync(launcherPath, { force: true });
+  try {
+    fs.rmdirSync(path.dirname(launcherPath));
+  } catch (error) {
+    if (error?.code !== "ENOENT" && error?.code !== "ENOTEMPTY") throw error;
+  }
 }
 
 export function openWorkspacePanel(config, backend, dependencies = {}) {
   if (!backend) return { opened: false, backend: null, launcherPath: null };
   const execute = dependencies.runCommand ?? runProcessCommand;
-  const launcherPath = (dependencies.createLauncher ?? createPanelLauncher)(config);
   let command;
-  let args;
   if (backend === "tmux") {
     command = "tmux";
-    args = ["new-window", "-d", "-n", "claude-control", launcherPath];
   } else if (backend === "terminal-app") {
     command = "open";
-    args = ["-na", "Terminal.app", launcherPath];
   } else if (backend === "x-terminal-emulator") {
     command = "x-terminal-emulator";
-    args = ["-e", launcherPath];
   } else {
-    return { opened: false, backend, launcherPath };
+    return { opened: false, backend, launcherPath: null };
   }
-  const result = execute(command, args, { cwd: config.cwd });
+  const launcherPath = (dependencies.createLauncher ?? createPanelLauncher)(config);
+  const args = backend === "tmux"
+    ? ["new-window", "-d", "-n", "claude-control", launcherPath]
+    : backend === "terminal-app"
+      ? ["-na", "Terminal.app", launcherPath]
+      : ["-e", launcherPath];
+  let result;
+  try {
+    result = execute(command, args, { cwd: config.cwd });
+  } catch (error) {
+    removePanelLauncher(launcherPath);
+    throw error;
+  }
+  if (result.status !== 0) removePanelLauncher(launcherPath);
   return {
     opened: result.status === 0,
     backend,
@@ -178,7 +214,13 @@ export async function runWorkspace(config, dependencies = {}) {
   const commandAvailable = dependencies.commandAvailable ?? defaultCommandAvailable;
   const execute = dependencies.runCommand ?? runProcessCommand;
   const now = dependencies.now ?? Date.now;
+  const wallClock = dependencies.wallClock ?? Date.now;
   const emit = dependencies.emit ?? ((event) => defaultEmitter(event, config));
+  const emitEvent = (event) => emit({
+    schemaVersion: 1,
+    timestamp: new Date(wallClock()).toISOString(),
+    ...event
+  });
   const chooseBackend = dependencies.selectBackend ?? (() => selectTerminalBackend({
     commandAvailable,
     cwd: config.cwd
@@ -203,15 +245,20 @@ export async function runWorkspace(config, dependencies = {}) {
 
   let sessionId = null;
   if (!config.panelOnly) {
-    sessionId = (dependencies.generateSessionId ?? crypto.randomUUID)();
     const dispatchStartedAt = now();
-    const result = execute("claude", buildClaudeBackgroundArgs(config, sessionId), { cwd: config.cwd });
+    const result = execute("claude", buildClaudeBackgroundArgs(config), { cwd: config.cwd });
     const durationMs = Math.max(0, now() - dispatchStartedAt);
     if (result.status !== 0) {
-      emit({ ...base, phase: "dispatch_failed", sessionId, durationMs, exitCode: result.status });
+      emitEvent({ ...base, phase: "dispatch_failed", sessionId, durationMs, exitCode: result.status });
       return { status: result.status ?? 1, sessionId, panelOpened: false, error: result.error ?? null };
     }
-    emit({ ...base, phase: "worker_dispatched", sessionId, durationMs });
+    sessionId = parseClaudeBackgroundSessionId(`${result.stdout ?? ""}\n${result.stderr ?? ""}`);
+    if (!sessionId) {
+      const error = new Error("Claude background dispatch succeeded without an authoritative session ID; refusing to report an uncontrollable worker.");
+      emitEvent({ ...base, phase: "dispatch_failed", sessionId, durationMs, exitCode: 1, errorCode: "session_id_unavailable" });
+      return { status: 1, sessionId, panelOpened: false, error };
+    }
+    emitEvent({ ...base, phase: "worker_dispatched", sessionId, durationMs });
   }
 
   if (!config.openPanel) {
@@ -221,18 +268,32 @@ export async function runWorkspace(config, dependencies = {}) {
   const backend = chooseBackend();
   const manualPanelCommand = ["claude", ...buildClaudePanelArgs(config)];
   if (!backend) {
-    emit({ ...base, phase: "panel_unavailable", sessionId });
+    emitEvent({ ...base, phase: "panel_unavailable", sessionId });
     return { status: 0, sessionId, panelOpened: false, terminalBackend: null, manualPanelCommand };
   }
 
   const panelStartedAt = now();
-  const panelResult = openPanel(config, backend);
+  let panelResult;
+  try {
+    panelResult = openPanel(config, backend);
+  } catch (error) {
+    const durationMs = Math.max(0, now() - panelStartedAt);
+    emitEvent({ ...base, phase: "panel_failed", sessionId, terminalBackend: backend, durationMs });
+    return {
+      status: 0,
+      sessionId,
+      panelOpened: false,
+      terminalBackend: backend,
+      manualPanelCommand,
+      panelError: error
+    };
+  }
   const durationMs = Math.max(0, now() - panelStartedAt);
   if (!panelResult?.opened) {
-    emit({ ...base, phase: "panel_failed", sessionId, terminalBackend: backend, durationMs });
+    emitEvent({ ...base, phase: "panel_failed", sessionId, terminalBackend: backend, durationMs });
     return { status: 0, sessionId, panelOpened: false, terminalBackend: backend, manualPanelCommand };
   }
-  emit({ ...base, phase: "panel_opened", sessionId, terminalBackend: backend, durationMs });
+  emitEvent({ ...base, phase: "panel_opened", sessionId, terminalBackend: backend, durationMs });
   return { status: 0, sessionId, panelOpened: true, terminalBackend: backend };
 }
 

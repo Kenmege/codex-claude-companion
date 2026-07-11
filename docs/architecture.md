@@ -4,8 +4,8 @@
 
 ```text
 active Codex task (planner/orchestrator/reviewer)
-  -> codex-claude workspace "coding request"
-  -> claude --session-id <uuid> --bg "coding request"
+  -> codex-claude workspace -- "coding request"
+  -> claude --model <selector> --permission-mode <mode> --bg "coding request"
   -> Claude background supervisor
   -> separate terminal: claude agents --cwd <workspace>
 
@@ -14,18 +14,19 @@ active Codex task
   -> inspect diff -> run project checks -> review -> focused repair
 ```
 
-The dispatch returns immediately with a known session ID. The current Codex
-task stays responsive and is the only GPT-side process; model routing therefore
-inherits the active Codex selection without a hardcoded ID or nested `codex`
-invocation. Claude's normal workspace lane uses native coding permissions and
-approval prompts. The separate review pipeline below retains its read-only
-tool fences.
+The dispatch returns immediately, and the helper parses the authoritative short
+session ID printed by Claude Code. It fails closed instead of inventing an ID
+when that receipt is absent. The current Codex task stays responsive and is the
+only GPT-side process; model routing therefore inherits the active Codex
+selection without a hardcoded ID or nested `codex` invocation. Claude's normal
+workspace lane uses native coding permissions and approval prompts. The
+separate review pipeline below retains its read-only tool fences.
 
 ## Data Flow
 
 ```text
 Codex slash command
-  -> codex-claude-review
+  -> codex-claude
   -> prepareSnapshot
   -> buildReviewInvocation
   -> claude -p --output-format stream-json
@@ -63,6 +64,8 @@ The helper treats diff text, user focus text, and workspace guidance as untruste
 - `scripts/lib/render.mjs`: setup/status/review output rendering.
 - `scripts/lib/workspace.mjs`: Claude background dispatch, terminal adapter
   selection, privacy-safe lifecycle events, and native agent controls.
+- `scripts/lib/mcp-config.mjs`: bounded descriptor reads, JSON validation, and
+  private immutable-by-path staging for caller-supplied MCP configuration.
 - `scripts/bin/git-safe.mjs`: read-only git wrapper used by the Claude Bash allowlist.
 
 ## Claude Invocation
@@ -81,6 +84,18 @@ Legacy mode passes `--tools ""` and `--disable-slash-commands`.
 
 ## Background Jobs
 
+Workspace lifecycle events have `schemaVersion: 1`, an ISO-8601 timestamp,
+phase, mode, model selector, active-session Codex routing, workspace path, and
+only the operational fields relevant to that phase. Prompts and MCP contents
+are never emitted. JSON events are available with `--json-events` for local
+observability without creating a telemetry or data-exfiltration surface.
+
+Claude Code owns workspace session persistence through its per-user background
+supervisor. The plugin uses the native `claude agents`, `claude logs`, and
+`claude stop` controls rather than maintaining a second session database.
+
+## Review Jobs
+
 Background jobs write:
 
 - `<job>.job.json`: versioned job state and final result metadata
@@ -91,7 +106,13 @@ Job records use `schemaVersion: 1`. New jobs are created with exclusive file cre
 
 ## MCP And Subagents
 
-The default MCP stance is strict: project/local MCPs are not inherited unless the user passes `--inherit-mcp`. Custom `--mcp-config` values are parsed and validated before Claude starts.
+The default MCP stance is strict: project/local MCPs are not inherited unless
+the user passes `--inherit-mcp`. Custom `--mcp-config` values are read through
+one opened descriptor with a one-MiB hard limit, parsed and validated, then
+copied into private `0700` temporary directories as exclusive `0600` files.
+Claude receives only those staged paths. The staged roots are removed after a
+foreground review or by the detached job after a background review, so later
+source-path replacement cannot change the configuration Claude consumes.
 
 When `--inherit-mcp` is enabled, the Task subagents launched by Claude can also see project/local MCP-derived tools through the parent tool surface unless the subagent declares a narrower tool list. That is a second-order trust expansion: the main Claude process may stay read-only, but delegated Task investigations inherit more workspace-connected capabilities than strict mode would expose. This is why the helper keeps strict MCP inheritance off by default and treats `--inherit-mcp` as an explicit trust-boundary expansion. Source: Anthropic Claude Code subagents documentation, accessed 2026-05-07: https://docs.anthropic.com/en/docs/claude-code/sub-agents
 

@@ -17,16 +17,16 @@ Safe to re-run: native installs are refreshed idempotently, and legacy config wr
 
 ```bash
 # Register the plugin (run once after install)
-codex-claude-review enable
+codex-claude enable
 
 # Preview what would be written without touching the config
-codex-claude-review enable --dry-run
+codex-claude enable --dry-run
 
 # Machine-parseable output
-codex-claude-review enable --json
+codex-claude enable --json
 
 # Override config path (useful in CI or non-standard installs)
-codex-claude-review enable --config /path/to/config.toml
+codex-claude enable --config /path/to/config.toml
 ```
 
 ## Flags

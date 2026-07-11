@@ -88,17 +88,17 @@ Use a throwaway workspace:
 tmpdir="$(mktemp -d)"
 cd "$tmpdir"
 npm install codex-plugin-cc@<version> --registry=https://registry.npmjs.org
-./node_modules/.bin/codex-claude-review --version
-./node_modules/.bin/codex-claude-review --help
-./node_modules/.bin/codex-claude-review doctor --json
+./node_modules/.bin/codex-claude --version
+./node_modules/.bin/codex-claude --help
+./node_modules/.bin/codex-claude doctor --json
 ```
 
 Then verify the global install path:
 
 ```bash
 npm install -g codex-plugin-cc@<version> --registry=https://registry.npmjs.org
-codex-claude-review --version
-codex-claude-review doctor
+codex-claude --version
+codex-claude doctor
 ```
 
 ## Rollback

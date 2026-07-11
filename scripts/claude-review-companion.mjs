@@ -6,7 +6,7 @@ import process from "node:process";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
+import { parseArgs } from "./lib/args.mjs";
 import {
   ALLOWED_PERMISSION_MODES,
   AUTO_LONG_CONTEXT_BYTES,
@@ -28,6 +28,7 @@ import {
   validateStructuredReviewOutput
 } from "./lib/claude.mjs";
 import { chooseContextMode, collectReviewContext, resolveReviewTarget } from "./lib/git.mjs";
+import { stageMcpConfigs } from "./lib/mcp-config.mjs";
 import { createDirectorySnapshot, isGitRepository } from "./lib/snapshot.mjs";
 import { runCommand, spawnDetached, terminateProcessTree } from "./lib/process.mjs";
 import {
@@ -52,6 +53,7 @@ import {
   buildClaudeStatusArgs,
   buildClaudeStopArgs,
   createWorkspaceConfig,
+  formatShellCommand,
   resolveWorkspaceRoot,
   runWorkspace,
   runWorkspaceControl
@@ -69,7 +71,6 @@ const CODEX_PLUGIN_KEY = `${CODEX_PLUGIN_NAME}@${CODEX_MARKETPLACE_KEY}`;
 const CODEX_MARKETPLACE_WRAPPER_DIR = "marketplaces";
 const CODEX_MARKETPLACE_PLUGIN_SUBDIR = `plugins/${CODEX_PLUGIN_NAME}`;
 const MINIMUM_CLAUDE_VERSION = "2.1.183";
-const MAX_MCP_CONFIG_BYTES = 1024 * 1024;
 const PACKAGE_JSON_PATH = path.join(ROOT_DIR, "package.json");
 
 function getPackageVersion() {
@@ -199,9 +200,6 @@ const REVIEW_LIKE_VALUE_OPTIONS = [
 const REVIEW_LIKE_REPEATABLE_VALUE_OPTIONS = ["add-dir", "exclude", "mcp-config", "web-domain"];
 
 function parseCommandInput(argv, config = {}) {
-  if (argv.length === 1 && argv[0]?.includes(" ")) {
-    return parseArgs(splitRawArgumentString(argv[0]), config);
-  }
   return parseArgs(argv, config);
 }
 
@@ -209,22 +207,23 @@ function printUsage() {
   console.log(
     [
       "Usage:",
-      "  codex-claude-review enable",
-      "  codex-claude-review setup",
-      "  codex-claude-review doctor [--json]",
-      "  codex-claude-review folder <path> [flags] [focus text]",
-      "  codex-claude-review review [flags] [focus text]",
-      "  codex-claude-review adversarial-review [flags] [focus text]",
-      "  codex-claude-review elite-review [flags] [focus text]",
-      "  codex-claude-review deep-review [flags] [focus text]",
-      "  codex-claude-review security-review [flags] [focus text]",
-      "  codex-claude-review workspace [flags] [initial coding request]",
-      "  codex-claude-review workspace-status [--path <dir>] [--all] [--json]",
-      "  codex-claude-review workspace-logs <session-id>",
-      "  codex-claude-review workspace-stop <session-id>",
-      "  codex-claude-review status [job-id]",
-      "  codex-claude-review result <job-id>",
-      "  codex-claude-review cancel <job-id>",
+      "  codex-claude enable",
+      "  codex-claude setup",
+      "  codex-claude doctor [--json]",
+      "  codex-claude folder <path> [flags] [focus text]",
+      "  codex-claude review [flags] [focus text]",
+      "  codex-claude adversarial-review [flags] [focus text]",
+      "  codex-claude elite-review [flags] [focus text]",
+      "  codex-claude deep-review [flags] [focus text]",
+      "  codex-claude security-review [flags] [focus text]",
+      "  codex-claude workspace [flags] -- <coding request>",
+      "  codex-claude workspace-status [--path <dir>] [--all] [--json]",
+      "  codex-claude workspace-logs <session-id>",
+      "  codex-claude workspace-stop <session-id>",
+      "  codex-claude status [job-id]",
+      "  codex-claude result <job-id>",
+      "  codex-claude cancel <job-id>",
+      "  Compatibility alias: codex-claude-review",
       "",
       "Flags (workspace):",
       "  --path <dir>                coding directory (default: cwd)",
@@ -298,7 +297,7 @@ async function handleWorkspace(argv) {
   if (result.panelOpened) {
     console.log(`Claude control panel opened via ${result.terminalBackend}.`);
   } else if (result.manualPanelCommand) {
-    console.log(`Worker is still running. Open the panel manually: ${result.manualPanelCommand.join(" ")}`);
+    console.log(`Worker is still running. Open the panel manually: ${formatShellCommand(result.manualPanelCommand)}`);
   }
   if (result.status !== 0) process.exitCode = result.status;
 }
@@ -453,61 +452,6 @@ function validateAddDir(cwd, value) {
 
 function validateAddDirs(cwd, values) {
   return coerceMultiValue(values).map((value) => validateAddDir(cwd, value));
-}
-
-function parseMcpConfigJson(source, label) {
-  let parsed;
-  try {
-    parsed = JSON.parse(source);
-  } catch (error) {
-    throw new Error(`Invalid --mcp-config ${label}: JSON parse failed (${error.message})`);
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`Invalid --mcp-config ${label}: expected a JSON object`);
-  }
-  const serverContainer = parsed.mcpServers ?? parsed.servers;
-  if (serverContainer != null && (typeof serverContainer !== "object" || Array.isArray(serverContainer))) {
-    throw new Error(`Invalid --mcp-config ${label}: mcpServers/servers must be an object`);
-  }
-  if (serverContainer == null && !Object.values(parsed).some((value) => value && typeof value === "object" && !Array.isArray(value))) {
-    throw new Error(`Invalid --mcp-config ${label}: no server definitions found`);
-  }
-  return parsed;
-}
-
-function validateMcpConfig(cwd, value) {
-  const raw = String(value ?? "").trim();
-  if (!raw) {
-    throw new Error("--mcp-config requires a non-empty file path or JSON object");
-  }
-  if (raw.startsWith("{")) {
-    parseMcpConfigJson(raw, "inline JSON");
-    return raw;
-  }
-  if (raw.includes("\0") || hasParentTraversalSegment(raw)) {
-    throw new Error(`Invalid --mcp-config path: ${raw}`);
-  }
-  const resolved = path.resolve(cwd, raw);
-  const fd = fs.openSync(resolved, "r");
-  let source;
-  try {
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile()) {
-      throw new Error(`Invalid --mcp-config path: ${raw} is not a file`);
-    }
-    if (stat.size > MAX_MCP_CONFIG_BYTES) {
-      throw new Error(`Invalid --mcp-config path: ${raw} exceeds ${MAX_MCP_CONFIG_BYTES} bytes`);
-    }
-    source = fs.readFileSync(fd, "utf8");
-  } finally {
-    fs.closeSync(fd);
-  }
-  parseMcpConfigJson(source, raw);
-  return resolved;
-}
-
-function validateMcpConfigs(cwd, values) {
-  return coerceMultiValue(values).map((value) => validateMcpConfig(cwd, value));
 }
 
 function resolveAgenticPreference(reviewConfig, options) {
@@ -690,6 +634,8 @@ function prepareSnapshot(cwd, kind, options, focusText) {
   const timeoutMs = resolveTimeout(options, reviewConfig);
   const permissionMode = resolvePermissionMode(options);
   const webDomains = coerceMultiValue(options["web-domain"]);
+  const addDirs = validateAddDirs(cwd, options["add-dir"]);
+  const stagedMcp = stageMcpConfigs(cwd, options["mcp-config"]);
 
   return {
     reviewKind: kind,
@@ -712,9 +658,10 @@ function prepareSnapshot(cwd, kind, options, focusText) {
     agentic,
     unrestricted,
     permissionMode,
-    mcpConfigs: validateMcpConfigs(cwd, options["mcp-config"]),
+    mcpConfigs: stagedMcp.configs,
+    mcpConfigTempRoots: stagedMcp.tempRoots,
     strictMcpConfig: strictMcp,
-    addDirs: validateAddDirs(cwd, options["add-dir"]),
+    addDirs,
     maxBudgetUsd: budget,
     systemPromptExtra: options["system-prompt-extra"] ?? null,
     timeoutMs,
@@ -766,12 +713,18 @@ function mergeDiagnostics(base, patch) {
   };
 }
 
-function cleanupSnapshotRoot(snapshot) {
+function cleanupSnapshotArtifacts(snapshot) {
   const snapshotRoot = snapshot?.directorySnapshot?.snapshotRoot;
-  if (!snapshotRoot) return;
-  try {
-    fs.rmSync(snapshotRoot, { recursive: true, force: true });
-  } catch {}
+  if (snapshotRoot) {
+    try {
+      fs.rmSync(snapshotRoot, { recursive: true, force: true });
+    } catch {}
+  }
+  for (const tempRoot of snapshot?.mcpConfigTempRoots ?? []) {
+    try {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    } catch {}
+  }
 }
 
 function persistJobDiagnostics(cwd, jobId, patch) {
@@ -1313,7 +1266,7 @@ function runCodexPluginCliEnable({ configPath, pluginRoot, dryRun, asJson }) {
 function handleEnable(argv) {
   // Pre-scan: detect `--config` passed with no value (parseArgs leaves it as undefined,
   // which is indistinguishable from `--config` not passed at all).
-  const normalizedArgv = argv.length === 1 && argv[0]?.includes(" ") ? splitRawArgumentString(argv[0]) : argv;
+  const normalizedArgv = argv;
   for (let i = 0; i < normalizedArgv.length; i += 1) {
     if (normalizedArgv[i] === "--config") {
       const next = normalizedArgv[i + 1];
@@ -1592,7 +1545,7 @@ function handleDoctor(argv) {
     problems.push({
       code: "NODE_VERSION_UNSUPPORTED",
       message: `Node ${nodeVersion} is below the required ${minimumNodeVersion}.`,
-      recovery: "Install Node.js 18.18 or newer, then re-run `codex-claude-review doctor`."
+      recovery: "Install Node.js 18.18 or newer, then re-run `codex-claude doctor`."
     });
   }
   if (!pluginConfigured) {
@@ -1601,7 +1554,7 @@ function handleDoctor(argv) {
       message: configPathExists
         ? `Codex config at ${codexConfigPath} does not contain the claude-review marketplace/plugin stanzas.`
         : `Codex config not found at ${codexConfigPath}.`,
-      recovery: "Run `codex-claude-review enable` to register the plugin."
+      recovery: "Run `codex-claude enable` to register the plugin."
     });
   }
   if (!claudeCliAvailable) {
@@ -1620,7 +1573,7 @@ function handleDoctor(argv) {
     problems.push({
       code: "CLAUDE_VERSION_TOO_OLD",
       message: `Claude Code CLI ${claudeVersion.version} is below the required ${MINIMUM_CLAUDE_VERSION} for this release's default ${DEFAULT_MODEL} / ${DEFAULT_EFFORT} review profile.`,
-      recovery: "Update Claude Code CLI, then re-run `codex-claude-review doctor --probe-runtime`."
+      recovery: "Update Claude Code CLI, then re-run `codex-claude doctor --probe-runtime`."
     });
   }
   if (!jobDirWritable) {
@@ -1641,20 +1594,20 @@ function handleDoctor(argv) {
     problems.push({
       code: "CLAUDE_RUNTIME_UNHEALTHY",
       message: runtimeProbe.detail || "Claude CLI non-interactive model probe failed.",
-      recovery: "Run `codex-claude-review setup` for the full auth/runtime report, then retry `codex-claude-review doctor --probe-runtime`."
+      recovery: "Run `codex-claude setup` for the full auth/runtime report, then retry `codex-claude doctor --probe-runtime`."
     });
   }
   if (pluginLoadedInCurrentSession === false && pluginConfigured) {
     problems.push({
       code: "PLUGIN_NOT_LOADED_IN_SESSION",
       message: "Plugin is registered in config but the current shell does not appear to be a Codex session.",
-      recovery: "Restart Codex CLI, or use the helper directly (`codex-claude-review folder <path>`)."
+      recovery: "Restart Codex CLI, or use the helper directly (`codex-claude folder <path>`)."
     });
   }
 
   const recommendedAction = problems.length > 0
     ? problems[0].recovery
-    : "All checks passed. Run `codex-claude-review folder <path>` to review a directory.";
+    : "All checks passed. Run `codex-claude folder <path>` to review a directory.";
 
   const payload = {
     ok: problems.length === 0,
@@ -1696,8 +1649,8 @@ function handleDoctor(argv) {
   }
 
   const lines = [
-    "codex-claude-review doctor",
-    "==========================",
+    "codex-claude doctor",
+    "===================",
     "",
     `Node:                         ${payload.node_supported ? "YES" : "NO"} (${payload.node_version}; required ${payload.node_required})`,
     `Helper version:                 ${payload.helper_version}`,
@@ -1747,7 +1700,7 @@ async function handleFolder(argv) {
     rewritten.push(tok);
   }
   if (!folderPath) {
-    throw new Error("Expected a directory path: codex-claude-review folder <path> [flags]");
+    throw new Error("Expected a directory path: codex-claude folder <path> [flags]");
   }
   rewritten.unshift("--path", folderPath);
   await handleReviewLike("review", rewritten);
@@ -1806,8 +1759,9 @@ async function handleReviewLike(kind, argv) {
     // contents directly — there is no meaningful branch diff to compute.
     effectiveOptions.scope = "directory";
   }
+  let snapshot = null;
   try {
-    const snapshot = prepareSnapshot(cwd, kind, effectiveOptions, focusText);
+    snapshot = prepareSnapshot(cwd, kind, effectiveOptions, focusText);
     if (directorySnapshot) {
       const skippedPreview = directorySnapshot.skipped
         .slice(0, 12)
@@ -1835,7 +1789,7 @@ async function handleReviewLike(kind, argv) {
       const job = buildBackgroundJob(cwd, kind, snapshot);
       backgroundJobStarted = true;
       process.stdout.write(
-        `# Claude Review Started\n\nJob: ${job.id}\nStatus: running\nMode: ${snapshot.unrestricted ? "UNRESTRICTED" : snapshot.agentic ? "agentic-safe" : "structured"}\nModel: ${snapshot.model}\nUse \`codex-claude-review status ${job.id}\` to check progress.\n`
+        `# Claude Review Started\n\nJob: ${job.id}\nStatus: running\nMode: ${snapshot.unrestricted ? "UNRESTRICTED" : snapshot.agentic ? "agentic-safe" : "structured"}\nModel: ${snapshot.model}\nUse \`codex-claude status ${job.id}\` to check progress.\n`
       );
       return;
     }
@@ -1889,6 +1843,9 @@ async function handleReviewLike(kind, argv) {
     if (directorySnapshot && (!effectiveOptions.background || !backgroundJobStarted)) {
       directorySnapshot.cleanup();
     }
+    if (!effectiveOptions.background || !backgroundJobStarted) {
+      cleanupSnapshotArtifacts(snapshot);
+    }
     restoreJobDirEnv?.();
   }
 }
@@ -1929,7 +1886,7 @@ async function handleRunJob(argv) {
       diagnostics: mergeDiagnostics(current.diagnostics, { ...(error.diagnostics ?? {}), reason: failureReason })
     });
   } finally {
-    cleanupSnapshotRoot(snapshot);
+    cleanupSnapshotArtifacts(snapshot);
   }
 }
 
