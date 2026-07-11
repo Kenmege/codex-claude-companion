@@ -91,14 +91,22 @@ function removeFileIfExists(filePath) {
 
 function writeJsonAtomic(filePath, payload) {
   const temporaryFile = `${filePath}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  let fileDescriptor;
   try {
-    fs.writeFileSync(temporaryFile, `${JSON.stringify(payload, null, 2)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-      flag: "wx"
-    });
+    fileDescriptor = fs.openSync(temporaryFile, "wx", 0o600);
+    fs.writeFileSync(fileDescriptor, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    fs.fsyncSync(fileDescriptor);
+    fs.closeSync(fileDescriptor);
+    fileDescriptor = undefined;
     fs.renameSync(temporaryFile, filePath);
   } finally {
+    if (fileDescriptor !== undefined) {
+      try {
+        fs.closeSync(fileDescriptor);
+      } catch {
+        // Closing after a failed write or flush is best-effort so the original error survives.
+      }
+    }
     try {
       removeFileIfExists(temporaryFile);
     } catch {

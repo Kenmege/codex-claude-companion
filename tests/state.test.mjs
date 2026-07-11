@@ -69,6 +69,30 @@ test("saveState atomically replaces the state snapshot", { skip: process.platfor
   }
 });
 
+test("saveState flushes the temporary snapshot before atomic replacement", () => {
+  const workspace = makeTempDir();
+  const originalFsyncSync = fs.fsyncSync;
+  const originalRenameSync = fs.renameSync;
+  const operations = [];
+
+  fs.fsyncSync = function patchedFsyncSync(fileDescriptor) {
+    operations.push("fsync");
+    return originalFsyncSync(fileDescriptor);
+  };
+  fs.renameSync = function patchedRenameSync(source, destination) {
+    operations.push("rename");
+    return originalRenameSync(source, destination);
+  };
+
+  try {
+    saveState(workspace, { jobs: [] });
+    assert.deepEqual(operations, ["fsync", "rename"]);
+  } finally {
+    fs.fsyncSync = originalFsyncSync;
+    fs.renameSync = originalRenameSync;
+  }
+});
+
 test("saveState preserves an atomic rename error when temporary cleanup also fails", () => {
   const workspace = makeTempDir();
   const originalRenameSync = fs.renameSync;
