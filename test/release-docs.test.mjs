@@ -503,7 +503,7 @@ test("Claude Code workflow is pinned, current, and auth-gated", () => {
   const interactiveOauthStep = workflowStep(workflow, "Run Claude interactive response with OAuth");
   const interactiveApiKeyStep = workflowStep(workflow, "Run Claude interactive response with API key");
 
-  assert.match(workflow, /pull_request:\n\s+types: \[opened, synchronize, ready_for_review, reopened\]/);
+  assert.match(workflow, /pull_request:\r?\n\s+types: \[opened, synchronize, ready_for_review, reopened\]/);
   assert.match(workflow, /anthropics\/claude-code-action@[a-f0-9]{40}/);
   assert.doesNotMatch(workflow, /anthropics\/claude-code-action@v1/);
   assert.doesNotMatch(workflow, /^\s+mode:/m);
