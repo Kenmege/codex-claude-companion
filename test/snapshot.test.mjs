@@ -469,7 +469,7 @@ test("createDirectorySnapshot refuses to run on a non-directory path", () => {
 });
 
 test("createDirectorySnapshot refuses to run on a missing path", () => {
-  const ghost = path.join(os.tmpdir(), `does-not-exist-${Date.now()}`);
+  const ghost = path.join(process.cwd(), `.does-not-exist-${process.pid}-${Date.now()}`);
   assert.throws(() => createDirectorySnapshot(ghost), /does not exist/);
 });
 

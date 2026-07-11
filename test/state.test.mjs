@@ -58,7 +58,7 @@ test("job IDs use a path-safe portable grammar at every artifact boundary", () =
     assert.equal(assertValidJobId(valid), valid);
   }
 
-  for (const invalid of ["", ".", "..", "../escape", "a/b", "a\\b", "/tmp/escape", "x".repeat(129), "review job", "é"] ) {
+  for (const invalid of ["", ".", "..", "../escape", "a/b", "a\\b", "/outside/escape", "x".repeat(129), "review job", "é"] ) {
     assert.throws(() => assertValidJobId(invalid), /Invalid job id/);
     assert.throws(() => resolveJobFile(cwd, invalid, options), /Invalid job id/);
     assert.throws(() => readJob(cwd, invalid, options), /Invalid job id/);
