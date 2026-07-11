@@ -69,54 +69,46 @@ test("saveState atomically replaces the state snapshot", { skip: process.platfor
   }
 });
 
-test("saveState flushes the temporary snapshot before atomic replacement", () => {
+test("saveState flushes the temporary snapshot before atomic replacement", (t) => {
   const workspace = makeTempDir();
-  const originalFsyncSync = fs.fsyncSync;
-  const originalRenameSync = fs.renameSync;
+  const originalFsyncSync = fs.fsyncSync.bind(fs);
+  const originalRenameSync = fs.renameSync.bind(fs);
   const operations = [];
 
-  fs.fsyncSync = function patchedFsyncSync(fileDescriptor) {
+  t.mock.method(fs, "fsyncSync", function mockedFsyncSync(fileDescriptor) {
     operations.push("fsync");
     return originalFsyncSync(fileDescriptor);
-  };
-  fs.renameSync = function patchedRenameSync(source, destination) {
+  });
+  t.mock.method(fs, "renameSync", function mockedRenameSync(source, destination) {
     operations.push("rename");
     return originalRenameSync(source, destination);
-  };
+  });
 
-  try {
-    saveState(workspace, { jobs: [] });
-    assert.deepEqual(operations, ["fsync", "rename"]);
-  } finally {
-    fs.fsyncSync = originalFsyncSync;
-    fs.renameSync = originalRenameSync;
-  }
+  saveState(workspace, { jobs: [] });
+  assert.deepEqual(operations, ["fsync", "rename"]);
 });
 
-test("saveState preserves an atomic rename error when temporary cleanup also fails", () => {
+test("saveState preserves an atomic rename error when temporary cleanup also fails", (t) => {
   const workspace = makeTempDir();
-  const originalRenameSync = fs.renameSync;
-  const originalUnlinkSync = fs.unlinkSync;
+  const originalUnlinkSync = fs.unlinkSync.bind(fs);
   let temporaryFile;
 
-  fs.renameSync = function patchedRenameSync(source) {
+  t.mock.method(fs, "renameSync", function mockedRenameSync(source) {
     temporaryFile = String(source);
     const error = new Error("rename failed");
     error.code = "EACCES";
     throw error;
-  };
-  fs.unlinkSync = function patchedUnlinkSync() {
+  });
+  t.mock.method(fs, "unlinkSync", function mockedUnlinkSync() {
     const error = new Error("cleanup failed");
     error.code = "EPERM";
     throw error;
-  };
+  });
 
   try {
     assert.throws(() => saveState(workspace, { jobs: [] }), /rename failed/);
   } finally {
-    fs.renameSync = originalRenameSync;
-    fs.unlinkSync = originalUnlinkSync;
-    if (temporaryFile && fs.existsSync(temporaryFile)) fs.unlinkSync(temporaryFile);
+    if (temporaryFile && fs.existsSync(temporaryFile)) originalUnlinkSync(temporaryFile);
   }
 });
 

@@ -378,6 +378,10 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.match(workflow, /npm install --global --ignore-scripts --no-audit --no-fund npm@11\.5\.1/);
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /release_tag:/);
+  assert.match(
+    workflow,
+    /if: \$\{\{ github\.event_name != 'workflow_dispatch' \|\| github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\) \}\}/
+  );
   assert.match(workflow, /ref: refs\/tags\/\$\{\{ env\.RELEASE_TAG \}\}/);
   assert.match(workflow, /fetch-depth: 0/);
   assert.match(workflow, /NPMJS_PUBLISH_ENABLED/);
