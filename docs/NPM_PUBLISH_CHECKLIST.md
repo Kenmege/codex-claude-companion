@@ -11,12 +11,10 @@ Do not publish until Kennedy explicitly approves the npmjs publish action.
 
 ## Current Registry Facts
 
-Checked on 2026-05-13:
+Checked on 2026-07-11:
 
 - `npm view codex-plugin-cc --registry=https://registry.npmjs.org` returned
-  `E404`, so the unscoped name was available at check time.
-- `npm whoami --registry=https://registry.npmjs.org` returned `ENEEDAUTH`, so
-  this machine was not logged in to npmjs.
+  `1.0.13` as the current version at check time.
 - The repo is configured for npmjs publishing through `publishConfig.registry`
   and `.github/workflows/release.yml`.
 
@@ -31,13 +29,14 @@ Registry state can change. Re-run the checks immediately before publishing.
    npm whoami --registry=https://registry.npmjs.org
    ```
 
-2. Create an npm automation token with publish rights for `codex-plugin-cc`.
+2. In the npm package settings, add an npm trusted publisher for GitHub Actions
+   with owner `Kenmege`, repository `codex-plugin-cc`, workflow filename
+   `release.yml`, and allowed action `npm publish`. Leave the environment blank
+   unless the workflow is updated to use that exact GitHub environment.
 
-3. Add repository secret:
-
-   ```bash
-   gh secret set NPM_TOKEN --repo Kenmege/codex-plugin-cc
-   ```
+3. Confirm `.github/workflows/release.yml` grants `id-token: write` and publishes
+   with provenance. GitHub OIDC exchanges the workflow identity for short-lived
+   npm publishing access; do not configure a long-lived npm publishing secret.
 
 4. Enable the publish gate only when the next tag should publish:
 
@@ -53,13 +52,16 @@ Run locally:
 npm run check
 npm run pack:check
 npm view codex-plugin-cc --registry=https://registry.npmjs.org
+npm view codex-plugin-cc@<version> version --registry=https://registry.npmjs.org
 ```
 
-Expected before first npmjs publish:
+Expected before publishing a new version:
 
 - `npm run check` passes.
 - `npm run pack:check` shows only intended package files.
-- `npm view codex-plugin-cc` returns `E404`.
+- `npm view codex-plugin-cc` returns the currently published version.
+- `npm view codex-plugin-cc@<version>` returns `E404`, proving the immutable
+  target version has not already been published.
 
 ## Publish
 

@@ -89,6 +89,32 @@ function removeFileIfExists(filePath) {
   }
 }
 
+function writeJsonAtomic(filePath, payload) {
+  const temporaryFile = `${filePath}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  let fileDescriptor;
+  try {
+    fileDescriptor = fs.openSync(temporaryFile, "wx", 0o600);
+    fs.writeFileSync(fileDescriptor, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    fs.fsyncSync(fileDescriptor);
+    fs.closeSync(fileDescriptor);
+    fileDescriptor = undefined;
+    fs.renameSync(temporaryFile, filePath);
+  } finally {
+    if (fileDescriptor !== undefined) {
+      try {
+        fs.closeSync(fileDescriptor);
+      } catch {
+        // Closing after a failed write or flush is best-effort so the original error survives.
+      }
+    }
+    try {
+      removeFileIfExists(temporaryFile);
+    } catch {
+      // Cleanup is best-effort so it cannot mask the original write or rename error.
+    }
+  }
+}
+
 export function saveState(cwd, state) {
   const previousJobs = loadState(cwd).jobs;
   ensureStateDir(cwd);
@@ -111,7 +137,7 @@ export function saveState(cwd, state) {
     removeFileIfExists(job.logFile);
   }
 
-  fs.writeFileSync(resolveStateFile(cwd), `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
+  writeJsonAtomic(resolveStateFile(cwd), nextState);
   return nextState;
 }
 

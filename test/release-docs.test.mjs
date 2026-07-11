@@ -354,7 +354,7 @@ test("package.json shape supports public npm publish", () => {
   assert.match(packageJson.repository.url, /Kenmege\/codex-plugin-cc/);
 });
 
-test("npmjs release configuration is public and token-safe", () => {
+test("npmjs release configuration is public and trusted-publisher safe", () => {
   const packageJson = JSON.parse(read("package.json"));
   const workflow = read(".github/workflows/release.yml");
 
@@ -371,7 +371,19 @@ test("npmjs release configuration is public and token-safe", () => {
   assert.match(workflow, /id-token: write/);
   assert.doesNotMatch(workflow, /packages: write/);
   assert.match(workflow, /registry-url: https:\/\/registry\.npmjs\.org/);
-  assert.match(workflow, /NODE_AUTH_TOKEN: \$\{\{ secrets\.NPM_TOKEN \}\}/);
+  assert.match(workflow, /package-manager-cache: false/);
+  assert.doesNotMatch(workflow, /^\s+cache: npm$/m);
+  assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN/);
+  assert.doesNotMatch(workflow, /secrets\.NPM_TOKEN/);
+  assert.match(workflow, /npm install --global --ignore-scripts --no-audit --no-fund npm@11\.5\.1/);
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /release_tag:/);
+  assert.match(
+    workflow,
+    /if: \$\{\{ github\.event_name != 'workflow_dispatch' \|\| github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\) \}\}/
+  );
+  assert.match(workflow, /ref: refs\/tags\/\$\{\{ env\.RELEASE_TAG \}\}/);
+  assert.match(workflow, /fetch-depth: 0/);
   assert.match(workflow, /NPMJS_PUBLISH_ENABLED/);
   assert.doesNotMatch(workflow, /npm pkg set private=false/);
   assert.match(workflow, /id: publish-package/);
@@ -390,16 +402,50 @@ test("npmjs release configuration is public and token-safe", () => {
 test("release workflow fails closed when tag and package version differ", () => {
   const workflow = read(".github/workflows/release.yml");
   const contributing = read("CONTRIBUTING.md");
+  const tagPatternMatch = workflow.match(/const tagPattern = \/(.+)\/; process\.exit/);
 
   assert.match(workflow, /Verify tag matches package version/);
   assert.match(workflow, /id: tag-version-gate/);
   assert.match(workflow, /node -p "require\('\.\/package\.json'\)\.version" > \.release-package-version/);
   assert.match(workflow, /read -r PACKAGE_VERSION < \.release-package-version/);
-  assert.match(workflow, /TAG_VERSION="\$\{GITHUB_REF_NAME#v\}"/);
+  assert.match(workflow, /RELEASE_TAG: \$\{\{ github\.event_name == 'workflow_dispatch'/);
+  assert.match(workflow, /Release tag '\$RELEASE_TAG' is not a supported semantic-version tag/);
+  assert.ok(tagPatternMatch, "release workflow must expose its exact SemVer tag pattern");
+  const tagPattern = new RegExp(tagPatternMatch[1]);
+  for (const tag of ["v1.2.3", "v1.2.3-alpha.1", "v1.2.3+build.1", "v0.0.0-0+meta"]) {
+    assert.equal(tagPattern.test(tag), true, `${tag} must be accepted`);
+  }
+  for (const tag of ["1.2.3", "v01.2.3", "v1.2.3.foo", "v1.2.3-01", "v1.2.3+build..1"]) {
+    assert.equal(tagPattern.test(tag), false, `${tag} must be rejected`);
+  }
+  assert.match(workflow, /git rev-parse HEAD/);
+  assert.match(workflow, /git rev-parse --verify "refs\/tags\/\$\{RELEASE_TAG\}\^\{commit\}"/);
+  assert.match(workflow, /Checked-out commit \$\{CHECKED_OUT_COMMIT\} does not match tag \$\{RELEASE_TAG\} commit \$\{TAG_COMMIT\}/);
+  assert.match(workflow, /TAG_VERSION="\$\{RELEASE_TAG#v\}"/);
   assert.match(workflow, /Release tag v\$\{TAG_VERSION\} does not match package\.json version \$\{PACKAGE_VERSION\}/);
   assert.match(workflow, /printf 'version=%s\\n' "\$PACKAGE_VERSION" >> "\$GITHUB_OUTPUT"/);
   assert.match(contributing, /tag and package version differ/);
   assert.match(contributing, /1\.0\.3-rc\.1/);
+});
+
+test("release runbooks require npm trusted publishing without long-lived tokens", () => {
+  for (const relativePath of [
+    "CONTRIBUTING.md",
+    "README.md",
+    "docs/NPM_PUBLISH_CHECKLIST.md"
+  ]) {
+    const source = read(relativePath);
+
+    assert.match(source, /npm\s+trusted\s+publish(?:er|ing)/i, relativePath);
+    assert.doesNotMatch(source, /NPM_TOKEN/, relativePath);
+    assert.doesNotMatch(source, /NODE_AUTH_TOKEN/, relativePath);
+  }
+
+  const contributing = read("CONTRIBUTING.md");
+  const checklist = read("docs/NPM_PUBLISH_CHECKLIST.md");
+  assert.match(contributing, /id-token: write/);
+  assert.match(checklist, /release\.yml/);
+  assert.match(checklist, /allowed action[^\n]*npm publish/i);
 });
 
 test("README release docs do not pin stale package versions", () => {
@@ -595,8 +641,8 @@ test("workspace documentation promises stdin prompt transport", () => {
 test("release checklist documents npmjs publish switch and v-tag trigger", () => {
   const source = read("CONTRIBUTING.md");
   assert.match(source, /NPMJS_PUBLISH_ENABLED=true/);
-  assert.match(source, new RegExp("NPM" + "_TOKEN"));
-  assert.match(source, /NODE_AUTH_TOKEN/);
+  assert.match(source, /npm trusted publisher/);
+  assert.match(source, /GitHub OIDC identity/);
   assert.match(source, /v1\.0\.3/);
   assert.match(source, /matching the package version exactly/);
   assert.match(source, /RELEASE_NOTES_v\$\{VERSION\}\.md/);
