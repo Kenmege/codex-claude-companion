@@ -4,9 +4,9 @@
 
 v1.1.1 republishes the v1.1 feature line through the tag-bound npm trusted
 publishing workflow. The coding workspace, Codex orchestration, and isolated
-review capabilities introduced in v1.1.0 are unchanged. The plugin never launches a nested
-Codex process; GPT-side supervision remains with the active Codex task and
-inherits its selected model.
+review capabilities introduced in v1.1.0 are unchanged. The plugin
+never launches a nested Codex process; GPT-side supervision remains with the
+active Codex task and inherits its selected model.
 
 ## What changed
 
