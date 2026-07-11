@@ -54,7 +54,7 @@ jobs:
       - name: Verify tag matches package version
         id: tag-version-gate
         run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+          if ! node -e 'const tagPattern = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/; process.exit(tagPattern.test(process.argv[1]) ? 0 : 1)' "$RELEASE_TAG"; then
             echo "Release tag '$RELEASE_TAG' is not a supported semantic-version tag." >&2
             exit 1
           fi

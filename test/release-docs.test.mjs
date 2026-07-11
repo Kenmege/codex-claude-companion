@@ -395,6 +395,7 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
 test("release workflow fails closed when tag and package version differ", () => {
   const workflow = read(".github/workflows/release.yml");
   const contributing = read("CONTRIBUTING.md");
+  const tagPatternMatch = workflow.match(/const tagPattern = \/(.+)\/; process\.exit/);
 
   assert.match(workflow, /Verify tag matches package version/);
   assert.match(workflow, /id: tag-version-gate/);
@@ -402,6 +403,14 @@ test("release workflow fails closed when tag and package version differ", () => 
   assert.match(workflow, /read -r PACKAGE_VERSION < \.release-package-version/);
   assert.match(workflow, /RELEASE_TAG: \$\{\{ github\.event_name == 'workflow_dispatch'/);
   assert.match(workflow, /Release tag '\$RELEASE_TAG' is not a supported semantic-version tag/);
+  assert.ok(tagPatternMatch, "release workflow must expose its exact SemVer tag pattern");
+  const tagPattern = new RegExp(tagPatternMatch[1]);
+  for (const tag of ["v1.2.3", "v1.2.3-alpha.1", "v1.2.3+build.1", "v0.0.0-0+meta"]) {
+    assert.equal(tagPattern.test(tag), true, `${tag} must be accepted`);
+  }
+  for (const tag of ["1.2.3", "v01.2.3", "v1.2.3.foo", "v1.2.3-01", "v1.2.3+build..1"]) {
+    assert.equal(tagPattern.test(tag), false, `${tag} must be rejected`);
+  }
   assert.match(workflow, /git rev-parse HEAD/);
   assert.match(workflow, /git rev-parse --verify "refs\/tags\/\$\{RELEASE_TAG\}\^\{commit\}"/);
   assert.match(workflow, /Checked-out commit \$\{CHECKED_OUT_COMMIT\} does not match tag \$\{RELEASE_TAG\} commit \$\{TAG_COMMIT\}/);
