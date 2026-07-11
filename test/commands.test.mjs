@@ -460,6 +460,74 @@ test("--job-dir flag overrides everything else", () => {
   assert.equal(payload.job_dir, path.resolve(customJobDir));
 });
 
+test("an unusable explicit --job-dir fails closed without creating workspace artifacts", () => {
+  const cwd = makeDirtyRepo();
+  const unusableJobDir = path.join(cwd, "not-a-directory");
+  const fakeConfig = path.join(cwd, "config.toml");
+  fs.writeFileSync(unusableJobDir, "regular file\n", "utf8");
+  fs.writeFileSync(fakeConfig, "", "utf8");
+
+  const result = spawnSync(
+    process.execPath,
+    [helper, "doctor", "--json", "--config", fakeConfig, "--job-dir", unusableJobDir],
+    { cwd, encoding: "utf8" }
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, /explicit job directory/i);
+  assert.equal(fs.existsSync(path.join(cwd, ".claude-review", "jobs")), false);
+});
+
+test("review and control commands keep every artifact in an explicit --job-dir", () => {
+  const cwd = makeDirtyRepo();
+  const customJobDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-jobdir-e2e-"));
+  const fake = withFakeClaudeForReview(validBasicStructuredStream());
+  const run = spawnSync(
+    process.execPath,
+    [helper, "review", "--legacy", "--cwd", cwd, "--job-dir", customJobDir],
+    { cwd, encoding: "utf8", env: fake.env }
+  );
+
+  assert.equal(run.status, 0, run.stderr || run.stdout);
+  const entries = fs.readdirSync(customJobDir);
+  for (const suffix of [".job.json", ".input.json", ".log", ".prompt.md"]) {
+    assert.ok(entries.some((entry) => entry.endsWith(suffix)), `missing ${suffix} in explicit job dir`);
+  }
+  assert.equal(fs.existsSync(path.join(cwd, ".claude-review", "jobs")), false);
+
+  const jobId = entries.find((entry) => entry.endsWith(".job.json")).replace(/\.job\.json$/, "");
+  const status = spawnSync(
+    process.execPath,
+    [helper, "status", jobId, "--cwd", cwd, "--job-dir", customJobDir],
+    { cwd, encoding: "utf8" }
+  );
+  assert.equal(status.status, 0, status.stderr || status.stdout);
+  assert.match(status.stdout, new RegExp(jobId));
+
+  const result = spawnSync(
+    process.execPath,
+    [helper, "result", jobId, "--cwd", cwd, "--job-dir", customJobDir],
+    { cwd, encoding: "utf8" }
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Verdict: OK/);
+});
+
+test("status, result, and cancel reject path-like job IDs before state lookup", () => {
+  const cwd = makeDirtyRepo();
+  const jobDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-jobid-reject-"));
+
+  for (const command of ["status", "result", "cancel"]) {
+    const result = spawnSync(
+      process.execPath,
+      [helper, command, "../escape", "--cwd", cwd, "--job-dir", jobDir],
+      { cwd, encoding: "utf8" }
+    );
+    assert.equal(result.status, 1, `${command}: ${result.stderr || result.stdout}`);
+    assert.match(result.stderr, /Invalid job id/);
+  }
+});
+
 test("adversarial command stays read-only", () => {
   const source = read("commands/adversarial-review.md");
   assert.match(source, /Keep this command read-only/i);
@@ -522,6 +590,12 @@ test("review command advertises agentic mode and read-only tools", () => {
   assert.match(source, /Read, Glob, Grep/);
 });
 
+test("safe-mode runtime note matches the tools actually exposed to Claude", () => {
+  const helperSource = read("scripts/claude-review-companion.mjs");
+  assert.match(helperSource, /read-only native tools \(Read\/Glob\/Grep\/Task\/WebSearch\)/);
+  assert.doesNotMatch(helperSource, /SAFE mode[^\n]*fenced git wrapper/i);
+});
+
 test("review command preserves positional focus text in the job snapshot", () => {
   const cwd = makeDirtyRepo();
   const fake = withFakeClaudeForReview(validBasicStructuredStream());
@@ -569,6 +643,18 @@ test("review focus text is never reinterpreted as privileged review flags", () =
     assert.deepEqual(snapshot.addDirs, []);
     assert.equal(snapshot.permissionMode, "default");
   }
+});
+
+test("review rejects misspelled inline safety booleans with usage exit code", () => {
+  const cwd = makeDirtyRepo();
+  const result = spawnSync(
+    process.execPath,
+    [helper, "review", "--cwd", cwd, "--unrestricted=flase"],
+    { cwd, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /Invalid --unrestricted boolean value/i);
 });
 
 test("helper rejects unsafe --add-dir before invoking Claude", () => {

@@ -16,6 +16,24 @@ test("runCommandCapture escalates timeout to SIGKILL when SIGTERM is ignored", {
   assert.equal(result.error?.code, "ETIMEDOUT_KILL");
 });
 
+test("runCommandCapture stops retaining output at maxBuffer while terminating a noisy child", { skip: process.platform === "win32" }, async () => {
+  const maxBuffer = 1_024;
+  const result = await runCommandCapture(
+    process.execPath,
+    [
+      "-e",
+      "process.on('SIGTERM',()=>{});const chunk='x'.repeat(4096);setInterval(()=>process.stdout.write(chunk),0)"
+    ],
+    { timeout: 5_000, terminationGraceMs: 50, maxBuffer, tailBytes: maxBuffer }
+  );
+
+  assert.equal(result.error?.code, "EMAXBUFFER");
+  assert.equal(result.reason, "buffer");
+  assert.ok(result.stdoutBytes > maxBuffer, `expected observed bytes > ${maxBuffer}, got ${result.stdoutBytes}`);
+  assert.ok(Buffer.byteLength(result.stdout) <= maxBuffer);
+  assert.ok(Buffer.byteLength(result.stdoutTail) <= maxBuffer);
+});
+
 test("spawnDetached redirects early stdout and stderr to a log file", async () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-process-"));
   const logFile = path.join(cwd, "child.log");
@@ -40,6 +58,43 @@ test("spawnDetached redirects early stdout and stderr to a log file", async () =
   }
 
   assert.fail(`detached child output was not written to ${logFile}`);
+});
+
+test("spawnDetached closes an opened input descriptor when log setup fails", () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-process-fd-"));
+  const inputPath = path.join(cwd, "input.txt");
+  const logFile = path.join(cwd, "child.log");
+  fs.writeFileSync(inputPath, "prompt\n", "utf8");
+
+  const originalOpenSync = fs.openSync;
+  const originalCloseSync = fs.closeSync;
+  let inputFd;
+  let inputCloseCount = 0;
+  fs.openSync = function patchedOpenSync(file, ...args) {
+    if (file === logFile) {
+      const error = new Error("simulated log open failure");
+      error.code = "EACCES";
+      throw error;
+    }
+    const fd = originalOpenSync.call(this, file, ...args);
+    if (file === inputPath) inputFd = fd;
+    return fd;
+  };
+  fs.closeSync = function patchedCloseSync(fd) {
+    if (fd === inputFd) inputCloseCount += 1;
+    return originalCloseSync.call(this, fd);
+  };
+
+  try {
+    assert.throws(
+      () => spawnDetached(process.execPath, ["-e", ""], { cwd, inputPath, logFile }),
+      /simulated log open failure/
+    );
+  } finally {
+    fs.openSync = originalOpenSync;
+    fs.closeSync = originalCloseSync;
+  }
+  assert.equal(inputCloseCount, 1);
 });
 
 
@@ -150,4 +205,106 @@ test("runCommandCapture can stop early when the expected output is complete", as
   assert.equal(result.reason, "structured_output_complete");
   assert.match(result.stdout, /ready/);
   assert.ok(Date.now() - startedAt < 800, "early stop should avoid waiting for process timeout");
+});
+
+test("runCommandCapture catches descendants launched during early-stop termination", {
+  skip: process.platform === "win32"
+}, async () => {
+  const startedAt = Date.now();
+  const result = await runCommandCapture(
+    process.execPath,
+    [
+      "-e",
+      [
+        "const { spawn } = require('node:child_process');",
+        "process.on('SIGTERM', () => {",
+        "spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+        "});",
+        "setTimeout(() => process.stdout.write('ready'), 50);",
+        "setInterval(() => {}, 1000);"
+      ].join("")
+    ],
+    {
+      timeout: 1_500,
+      shouldStopEarly: ({ stdout }) => stdout.includes("ready"),
+      earlyStopReason: "structured_output_complete"
+    }
+  );
+
+  assert.equal(result.error, null);
+  assert.equal(result.completedEarly, true);
+  assert.ok(result.killEscalated, "early completion should re-signal the process group after a short grace period");
+  assert.ok(Date.now() - startedAt < 900, "a late descendant must not keep inherited output pipes open");
+});
+
+test("runCommandCapture confirms a TERM-resistant process tree is closed before early success", {
+  skip: process.platform === "win32"
+}, async () => {
+  let childPid = null;
+  const startedAt = Date.now();
+  const result = await runCommandCapture(
+    process.execPath,
+    [
+      "-e",
+      [
+        "const { spawn } = require('node:child_process');",
+        "process.on('SIGTERM', () => {});",
+        "const descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+        "process.stdout.write(`descendant:${descendant.pid}\\nready\\n`);",
+        "setInterval(() => {}, 1000);"
+      ].join("")
+    ],
+    {
+      timeout: 5_000,
+      terminationGraceMs: 75,
+      onSpawn: ({ pid }) => { childPid = pid; },
+      shouldStopEarly: ({ stdout }) => stdout.includes("ready"),
+      earlyStopReason: "structured_output_complete"
+    }
+  );
+
+  const descendantPid = Number(result.stdout.match(/descendant:(\d+)/)?.[1]);
+  assert.equal(result.error, null);
+  assert.equal(result.completedEarly, true);
+  assert.equal(result.killEscalated, true);
+  assert.ok(Date.now() - startedAt >= 60, "resolution must wait for bounded kill escalation");
+  assert.throws(() => process.kill(childPid, 0), /ESRCH/);
+  assert.throws(() => process.kill(descendantPid, 0), /ESRCH/);
+});
+
+test("runCommandCapture preserves cumulative callback output across many chunks", async () => {
+  const callbackLengths = [];
+  const result = await runCommandCapture(
+    process.execPath,
+    ["-e", "let n=0;const t=setInterval(()=>{process.stdout.write(String(n%10));if(++n===128)clearInterval(t)},1)"],
+    {
+      timeout: 5_000,
+      onStdout: ({ stdout }) => callbackLengths.push(stdout.length)
+    }
+  );
+
+  assert.equal(result.error, null, result.stderr);
+  assert.equal(result.stdout.length, 128);
+  assert.ok(callbackLengths.length > 1);
+  assert.equal(callbackLengths.at(-1), result.stdout.length);
+  assert.ok(callbackLengths.every((length, index) => index === 0 || length >= callbackLengths[index - 1]));
+});
+
+test("runCommandCapture preserves UTF-8 characters split across chunks", async () => {
+  const callbackOutput = [];
+  const result = await runCommandCapture(
+    process.execPath,
+    [
+      "-e",
+      "process.stdout.write(Buffer.from([0xf0,0x9f]));setTimeout(()=>process.stdout.write(Buffer.from([0x9a,0x80])),10)"
+    ],
+    {
+      timeout: 5_000,
+      onStdout: ({ stdout }) => callbackOutput.push(stdout)
+    }
+  );
+
+  assert.equal(result.error, null, result.stderr);
+  assert.equal(result.stdout, "🚀");
+  assert.equal(callbackOutput.at(-1), "🚀");
 });

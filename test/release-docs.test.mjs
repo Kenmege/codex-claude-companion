@@ -4,8 +4,10 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { bumpVersion, recoverInterruptedTransaction } from "../scripts/bump-version.mjs";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function read(relativePath) {
   return fs.readFileSync(path.join(root, relativePath), "utf8");
@@ -108,6 +110,35 @@ test("bump-version checks the current release manifests", () => {
   });
 });
 
+test("bump-version enforces Semantic Versioning identifier rules", () => {
+  const invalidVersions = [
+    "1.2.3-01",
+    "1.2.3-alpha..1",
+    "1.2.3-alpha.",
+    "1.2.3+build..1",
+    "1.2.3+build."
+  ];
+
+  for (const version of invalidVersions) {
+    const result = spawnSync(
+      process.execPath,
+      [path.join(root, "scripts", "bump-version.mjs"), "--check", version, "--root", root],
+      { cwd: root, encoding: "utf8" }
+    );
+    assert.notEqual(result.status, 0, `${version} must be rejected`);
+    assert.match(result.stderr, /Expected a valid Semantic Version/);
+  }
+
+  for (const version of ["1.2.3-alpha.1", "1.2.3+001"]) {
+    const result = spawnSync(
+      process.execPath,
+      [path.join(root, "scripts", "bump-version.mjs"), "--check", version, "--root", root],
+      { cwd: root, encoding: "utf8" }
+    );
+    assert.doesNotMatch(result.stderr, /Expected a valid Semantic Version/, `${version} must be accepted`);
+  }
+});
+
 test("bump-version updates the package and Codex plugin manifests", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bump-version-targets-"));
   fs.mkdirSync(path.join(tempRoot, ".codex-plugin"), { recursive: true });
@@ -127,6 +158,185 @@ test("bump-version updates the package and Codex plugin manifests", () => {
   assert.equal(packageLock.version, "9.9.9");
   assert.equal(packageLock.packages[""].version, "9.9.9");
   assert.equal(pluginJson.version, "9.9.9");
+});
+
+test("bump-version validates every manifest before changing any file", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bump-version-atomic-"));
+  fs.mkdirSync(path.join(tempRoot, ".codex-plugin"), { recursive: true });
+  for (const relative of ["package.json", "package-lock.json"]) {
+    fs.copyFileSync(path.join(root, relative), path.join(tempRoot, relative));
+  }
+  fs.writeFileSync(path.join(tempRoot, ".codex-plugin", "plugin.json"), "{ malformed\n", "utf8");
+
+  const packageBefore = fs.readFileSync(path.join(tempRoot, "package.json"));
+  const lockBefore = fs.readFileSync(path.join(tempRoot, "package-lock.json"));
+  const result = spawnSync(
+    process.execPath,
+    [path.join(root, "scripts", "bump-version.mjs"), "9.9.9", "--root", tempRoot],
+    { cwd: tempRoot, encoding: "utf8" }
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(fs.readFileSync(path.join(tempRoot, "package.json")), packageBefore);
+  assert.deepEqual(fs.readFileSync(path.join(tempRoot, "package-lock.json")), lockBefore);
+});
+
+test("bump-version preserves a concurrent manifest edit made after staging", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bump-version-concurrent-"));
+  fs.mkdirSync(path.join(tempRoot, ".codex-plugin"), { recursive: true });
+  for (const relative of ["package.json", "package-lock.json", ".codex-plugin/plugin.json"]) {
+    fs.copyFileSync(path.join(root, relative), path.join(tempRoot, relative));
+  }
+
+  const packagePath = path.join(tempRoot, "package.json");
+  const lockBefore = fs.readFileSync(path.join(tempRoot, "package-lock.json"));
+  const pluginBefore = fs.readFileSync(path.join(tempRoot, ".codex-plugin", "plugin.json"));
+  const concurrent = `${fs.readFileSync(packagePath, "utf8").trimEnd()}\n `;
+
+  assert.throws(
+    () => bumpVersion(tempRoot, "9.9.9", {
+      beforeCommit() {
+        fs.writeFileSync(packagePath, concurrent, "utf8");
+      }
+    }),
+    /Manifest changed during version preparation: package\.json/
+  );
+  assert.equal(fs.readFileSync(packagePath, "utf8"), concurrent);
+  assert.deepEqual(fs.readFileSync(path.join(tempRoot, "package-lock.json")), lockBefore);
+  assert.deepEqual(fs.readFileSync(path.join(tempRoot, ".codex-plugin", "plugin.json")), pluginBefore);
+});
+
+test("bump-version never overwrites a manifest changed at the replacement boundary", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bump-version-replace-race-"));
+  fs.mkdirSync(path.join(tempRoot, ".codex-plugin"), { recursive: true });
+  const originals = new Map();
+  for (const relative of ["package.json", "package-lock.json", ".codex-plugin/plugin.json"]) {
+    fs.copyFileSync(path.join(root, relative), path.join(tempRoot, relative));
+    originals.set(relative, fs.readFileSync(path.join(tempRoot, relative)));
+  }
+
+  const packagePath = path.join(tempRoot, "package.json");
+  const concurrent = `${fs.readFileSync(packagePath, "utf8").trimEnd()}\n `;
+
+  assert.throws(
+    () => bumpVersion(tempRoot, "9.9.9", {
+      beforeReplace({ index }) {
+        if (index === 0) fs.writeFileSync(packagePath, concurrent, "utf8");
+      }
+    }),
+    /Manifest changed at version replacement boundary: package\.json/
+  );
+
+  assert.equal(fs.readFileSync(packagePath, "utf8"), concurrent);
+  assert.deepEqual(fs.readFileSync(path.join(tempRoot, "package-lock.json")), originals.get("package-lock.json"));
+  assert.deepEqual(fs.readFileSync(path.join(tempRoot, ".codex-plugin", "plugin.json")), originals.get(".codex-plugin/plugin.json"));
+  assert.ok(!fs.existsSync(path.join(tempRoot, ".codex-version-bump.transaction")));
+});
+
+test("bump-version rolls back every replacement when an in-process commit fails", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bump-version-rollback-"));
+  fs.mkdirSync(path.join(tempRoot, ".codex-plugin"), { recursive: true });
+  const originals = new Map();
+  for (const relative of ["package.json", "package-lock.json", ".codex-plugin/plugin.json"]) {
+    fs.copyFileSync(path.join(root, relative), path.join(tempRoot, relative));
+    originals.set(relative, fs.readFileSync(path.join(tempRoot, relative)));
+  }
+
+  assert.throws(
+    () => bumpVersion(tempRoot, "9.9.9", {
+      afterReplace({ index }) {
+        if (index === 0) throw new Error("injected replacement failure");
+      }
+    }),
+    /injected replacement failure/
+  );
+
+  for (const [relative, original] of originals) {
+    assert.deepEqual(fs.readFileSync(path.join(tempRoot, relative)), original, relative);
+  }
+  assert.ok(!fs.existsSync(path.join(tempRoot, ".codex-version-bump.transaction")));
+});
+
+test("bump-version recovers an abrupt process exit without leaving a canonical manifest absent", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bump-version-crash-"));
+  fs.mkdirSync(path.join(tempRoot, ".codex-plugin"), { recursive: true });
+  for (const relative of ["package.json", "package-lock.json", ".codex-plugin/plugin.json"]) {
+    fs.copyFileSync(path.join(root, relative), path.join(tempRoot, relative));
+  }
+
+  const moduleUrl = new URL("../scripts/bump-version.mjs", import.meta.url).href;
+  const childScript = [
+    `import { bumpVersion } from ${JSON.stringify(moduleUrl)};`,
+    `bumpVersion(${JSON.stringify(tempRoot)}, "9.9.9", {`,
+    "  afterReplace({ index }) { if (index === 0) process.exit(91); }",
+    "});"
+  ].join("\n");
+  const crashed = spawnSync(process.execPath, ["--input-type=module", "-e", childScript], {
+    cwd: tempRoot,
+    encoding: "utf8"
+  });
+
+  assert.equal(crashed.status, 91, crashed.stderr || crashed.stdout);
+  for (const relative of ["package.json", "package-lock.json", ".codex-plugin/plugin.json"]) {
+    assert.ok(fs.statSync(path.join(tempRoot, relative)).isFile(), `${relative} must remain present`);
+  }
+  assert.ok(fs.existsSync(path.join(tempRoot, ".codex-version-bump.transaction")));
+
+  execFileSync(process.execPath, [path.join(root, "scripts", "bump-version.mjs"), "9.9.9", "--root", tempRoot], {
+    cwd: tempRoot,
+    encoding: "utf8"
+  });
+
+  const packageJson = JSON.parse(fs.readFileSync(path.join(tempRoot, "package.json"), "utf8"));
+  const packageLock = JSON.parse(fs.readFileSync(path.join(tempRoot, "package-lock.json"), "utf8"));
+  const pluginJson = JSON.parse(fs.readFileSync(path.join(tempRoot, ".codex-plugin", "plugin.json"), "utf8"));
+  assert.equal(packageJson.version, "9.9.9");
+  assert.equal(packageLock.version, "9.9.9");
+  assert.equal(packageLock.packages[""].version, "9.9.9");
+  assert.equal(pluginJson.version, "9.9.9");
+  assert.ok(!fs.existsSync(path.join(tempRoot, ".codex-version-bump.transaction")));
+});
+
+test("bump-version recovery distinguishes a stale reused PID from the original process", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bump-version-pid-reuse-"));
+  fs.mkdirSync(path.join(tempRoot, ".codex-plugin"), { recursive: true });
+  for (const relative of ["package.json", "package-lock.json", ".codex-plugin/plugin.json"]) {
+    fs.copyFileSync(path.join(root, relative), path.join(tempRoot, relative));
+  }
+
+  const moduleUrl = new URL("../scripts/bump-version.mjs", import.meta.url).href;
+  const childScript = [
+    `import { bumpVersion } from ${JSON.stringify(moduleUrl)};`,
+    `bumpVersion(${JSON.stringify(tempRoot)}, "9.9.9", {`,
+    "  afterReplace({ index }) { if (index === 0) process.exit(92); }",
+    "});"
+  ].join("\n");
+  const crashed = spawnSync(process.execPath, ["--input-type=module", "-e", childScript], {
+    cwd: tempRoot,
+    encoding: "utf8"
+  });
+  assert.equal(crashed.status, 92, crashed.stderr || crashed.stdout);
+
+  const ownerPath = path.join(tempRoot, ".codex-version-bump.transaction", "owner.json");
+  const owner = JSON.parse(fs.readFileSync(ownerPath, "utf8"));
+  owner.pid = process.pid;
+  owner.processIdentity = "original-process-instance";
+  fs.writeFileSync(ownerPath, `${JSON.stringify(owner, null, 2)}\n`, { mode: 0o600 });
+
+  assert.throws(
+    () => recoverInterruptedTransaction(tempRoot, {
+      isProcessAlive: () => true,
+      processIdentityLookup: () => "original-process-instance"
+    }),
+    /transaction is active/
+  );
+
+  const conflicts = recoverInterruptedTransaction(tempRoot, {
+    isProcessAlive: () => true,
+    processIdentityLookup: () => "reused-process-instance"
+  });
+  assert.deepEqual(conflicts, []);
+  assert.equal(fs.existsSync(path.dirname(ownerPath)), false);
 });
 
 test("package.json shape supports public npm publish", () => {
@@ -369,6 +579,17 @@ test("public docs document the add-dir boundary override", () => {
   }
 });
 
+test("workspace documentation promises stdin prompt transport", () => {
+  const readme = read("README.md");
+  const architecture = read("docs/architecture.md");
+  const changelog = read("CHANGELOG.md");
+
+  assert.match(readme, /delivered to Claude over stdin instead of the process argument list/);
+  assert.match(architecture, /coding request is piped over stdin rather than included in process arguments/);
+  assert.match(changelog, /transported to Claude over stdin/);
+  assert.doesNotMatch(architecture, /--bg \"coding request\"/);
+});
+
 test("release checklist documents npmjs publish switch and v-tag trigger", () => {
   const source = read("CONTRIBUTING.md");
   assert.match(source, /NPMJS_PUBLISH_ENABLED=true/);
@@ -413,5 +634,32 @@ test("repository validation accepts fork-renamed local marketplace names", () =>
     assert.match(output, /Repository validation passed/);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("repository validation works from paths containing spaces and Unicode", () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "codex-plugin-path-"));
+  const tempRoot = path.join(parent, "plugin review 雪");
+  try {
+    fs.cpSync(root, tempRoot, {
+      recursive: true,
+      filter(source) {
+        const relative = path.relative(root, source);
+        return (
+          relative !== ".git" &&
+          !relative.startsWith(".git/") &&
+          relative !== ".claude-review" &&
+          !relative.startsWith(".claude-review/")
+        );
+      }
+    });
+
+    const output = execFileSync(process.execPath, ["scripts/validate-repo.mjs"], {
+      cwd: tempRoot,
+      encoding: "utf8"
+    });
+    assert.match(output, /Repository validation passed/);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
   }
 });

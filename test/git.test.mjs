@@ -33,6 +33,46 @@ test("git helpers collect working tree review context", () => {
   assert.equal(selected.mode, "full");
 });
 
+test("working tree paths preserve control characters, quotes, slashes, and Unicode", () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-git-paths-"));
+  run(cwd, "init");
+  run(cwd, "config", "user.email", "test@example.com");
+  run(cwd, "config", "user.name", "Test User");
+  const tracked = ["line\nbreak.txt", "tab\tname.txt", 'quote"name.txt', "back\\slash.txt", "snow-雪.txt"];
+  const untracked = "new\nfile-ß.txt";
+  for (const file of tracked) fs.writeFileSync(path.join(cwd, file), "baseline\n", "utf8");
+  run(cwd, "add", "--", ...tracked);
+  run(cwd, "commit", "-m", "baseline");
+  for (const file of tracked) fs.appendFileSync(path.join(cwd, file), "changed\n", "utf8");
+  fs.writeFileSync(path.join(cwd, untracked), "new\n", "utf8");
+
+  const context = collectReviewContext(cwd, resolveReviewTarget(cwd, {}));
+
+  assert.deepEqual(context.changedFiles, [...tracked, untracked].sort());
+  for (const file of [...tracked, untracked]) {
+    assert.match(context.summaryContent, new RegExp(JSON.stringify(file).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+});
+
+test("branch paths preserve control characters and Unicode", () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-branch-paths-"));
+  run(cwd, "init");
+  run(cwd, "config", "user.email", "test@example.com");
+  run(cwd, "config", "user.name", "Test User");
+  fs.writeFileSync(path.join(cwd, "baseline.txt"), "baseline\n", "utf8");
+  run(cwd, "add", "baseline.txt");
+  run(cwd, "commit", "-m", "baseline");
+  const files = ["branch\nname.txt", "branch-雪.txt", 'branch"quote.txt'];
+  for (const file of files) fs.writeFileSync(path.join(cwd, file), "content\n", "utf8");
+  run(cwd, "add", "--", ...files);
+  run(cwd, "commit", "-m", "feature");
+
+  const context = collectReviewContext(cwd, { mode: "branch", baseRef: "HEAD~1" });
+
+  assert.deepEqual(context.changedFiles, [...files].sort());
+  for (const file of files) assert.ok(context.changedFiles.includes(file));
+});
+
 test("git helpers ignore internal .claude-review artifacts", () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-git-"));
   run(cwd, "init");
@@ -52,6 +92,32 @@ test("git helpers ignore internal .claude-review artifacts", () => {
   assert.equal(target.mode, "working-tree");
   assert.deepEqual(context.changedFiles, ["index.js"]);
   assert.doesNotMatch(context.fullContent, /\.claude-review\/jobs\/review\.job\.json/);
+});
+
+test("branch context excludes committed internal review artifacts", () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-branch-artifacts-"));
+  run(cwd, "init");
+  run(cwd, "config", "user.email", "test@example.com");
+  run(cwd, "config", "user.name", "Test User");
+  fs.writeFileSync(path.join(cwd, "index.js"), "export const value = 1;\n", "utf8");
+  run(cwd, "add", "index.js");
+  run(cwd, "commit", "-m", "baseline");
+
+  fs.writeFileSync(path.join(cwd, "index.js"), "export const value = 2;\n", "utf8");
+  fs.mkdirSync(path.join(cwd, ".claude-review", "jobs"), { recursive: true });
+  fs.writeFileSync(
+    path.join(cwd, ".claude-review", "jobs", "secret.prompt.md"),
+    "DO_NOT_DISCLOSE_BRANCH_ARTIFACT\n",
+    "utf8"
+  );
+  run(cwd, "add", "index.js", ".claude-review/jobs/secret.prompt.md");
+  run(cwd, "commit", "-m", "feature with accidental review artifact");
+
+  const context = collectReviewContext(cwd, { mode: "branch", baseRef: "HEAD~1" });
+
+  assert.deepEqual(context.changedFiles, ["index.js"]);
+  assert.doesNotMatch(context.fullContent, /secret\.prompt\.md|DO_NOT_DISCLOSE_BRANCH_ARTIFACT/);
+  assert.doesNotMatch(context.summaryContent, /secret\.prompt\.md/);
 });
 
 test("directory scope reviews a clean snapshot instead of falling back to branch diff", () => {
@@ -106,6 +172,31 @@ test("directory scope loudly reports oversized and binary skipped files", () => 
   assert.match(context.fullContent, /huge\.js \(size, 1048577 bytes\)/);
   assert.match(context.fullContent, /binary\.dat \(binary, 4 bytes\)/);
   assert.match(context.summaryContent, /Directory Snapshot Skipped Files/);
+});
+
+test("Git review context never follows tracked or untracked symlinks", () => {
+  if (process.platform === "win32") return;
+
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-git-symlink-"));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-git-outside-"));
+  const secret = "OUTSIDE_REVIEW_SECRET_7f294";
+  const outsideFile = path.join(outside, "secret.txt");
+  fs.writeFileSync(outsideFile, `${secret}\n`, "utf8");
+  run(cwd, "init");
+  run(cwd, "config", "user.email", "test@example.com");
+  run(cwd, "config", "user.name", "Test User");
+  fs.symlinkSync(outsideFile, path.join(cwd, "tracked-link.txt"), "file");
+  run(cwd, "add", "tracked-link.txt");
+  run(cwd, "commit", "-m", "tracked symlink");
+
+  const directory = collectReviewContext(cwd, resolveReviewTarget(cwd, { scope: "directory" }));
+  assert.doesNotMatch(directory.fullContent, new RegExp(secret));
+  assert.match(directory.fullContent, /tracked-link\.txt \(symlink/);
+
+  fs.symlinkSync(outsideFile, path.join(cwd, "untracked-link.txt"), "file");
+  const workingTree = collectReviewContext(cwd, resolveReviewTarget(cwd, {}));
+  assert.doesNotMatch(workingTree.fullContent, new RegExp(secret));
+  assert.match(workingTree.fullContent, /untracked-link\.txt[\s\S]*skipped: symlink/);
 });
 
 test("chooseContextMode honors inline and long-context boundaries", () => {

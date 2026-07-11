@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { runCommandCapture } from "../scripts/lib/process.mjs";
+
 import {
   buildClaudeBackgroundArgs,
   buildClaudeLogsArgs,
@@ -30,8 +32,7 @@ test("background worker lets Claude own the native background session ID", () =>
     [
       "--model", "opus",
       "--permission-mode", "default",
-      "--bg",
-      "implement the API"
+      "--bg"
     ]
   );
 });
@@ -91,8 +92,7 @@ test("background worker supports explicit models and plan mode", () => {
     [
       "--model", "sonnet",
       "--permission-mode", "plan",
-      "--bg",
-      "design the migration"
+      "--bg"
     ]
   );
 });
@@ -102,8 +102,12 @@ test("panel and supervision commands use Claude native agent controls", () => {
   assert.deepEqual(buildClaudeStatusArgs({ cwd: "/repo", all: true, json: true }), [
     "agents", "--cwd", "/repo", "--all", "--json"
   ]);
-  assert.deepEqual(buildClaudeLogsArgs("session-123"), ["logs", "session-123"]);
-  assert.deepEqual(buildClaudeStopArgs("session-123"), ["stop", "session-123"]);
+  assert.deepEqual(buildClaudeLogsArgs("7c5dcf5d"), ["logs", "7c5dcf5d"]);
+  assert.deepEqual(buildClaudeStopArgs("7c5dcf5d"), ["stop", "7c5dcf5d"]);
+  for (const invalid of ["--help", "--version", "session-123", "7c5dcf5d-extra"]) {
+    assert.throws(() => buildClaudeLogsArgs(invalid), /valid Claude background session ID/i);
+    assert.throws(() => buildClaudeStopArgs(invalid), /valid Claude background session ID/i);
+  }
 });
 
 test("workspace config validates paths and panel modes", () => {
@@ -115,6 +119,13 @@ test("workspace config validates paths and panel modes", () => {
   assert.equal(config.cwd, nested);
   assert.equal(config.prompt, "fix tests");
   assert.equal(config.openPanel, true);
+
+  const terminated = createWorkspaceConfig({
+    path: "nested",
+    positionals: ["--fix", "support", "for", "--json"],
+    optionTerminatorIndex: 0
+  }, cwd);
+  assert.equal(terminated.prompt, "--fix support for --json");
 
   assert.throws(
     () => createWorkspaceConfig({ panelOnly: true, positionals: ["unexpected"] }, cwd),
@@ -201,9 +212,10 @@ test("workspace dispatches Claude, opens a separate panel, and returns control t
   assert.deepEqual(calls.map(({ command }) => command), ["claude", "panel"]);
   assert.deepEqual(calls[0].args, [
     "--model", "opus", "--permission-mode", "default",
-    "--bg", "make the change"
+    "--bg"
   ]);
   assert.equal(calls[0].options.cwd, "/repo");
+  assert.equal(calls[0].options.inputData, "make the change\n");
   assert.equal(result.status, 0);
   assert.equal(result.sessionId, sessionId);
   assert.equal(result.panelOpened, true);
@@ -227,6 +239,31 @@ test("dispatch failure does not open a panel", async () => {
   );
   assert.equal(result.status, 7);
   assert.equal(panelCalls, 0);
+});
+
+test("workspace bounds a stalled Claude background dispatch and terminates its process tree", async () => {
+  const startedAt = Date.now();
+  const events = [];
+  const result = await runWorkspace(
+    { cwd: root, model: "opus", prompt: "make the change", openPanel: true },
+    {
+      commandAvailable: () => true,
+      dispatchTimeoutMs: 75,
+      dispatchTerminationGraceMs: 25,
+      runCommandCapture: (_command, _args, options) => runCommandCapture(
+        process.execPath,
+        ["-e", "setInterval(() => {}, 1000)"],
+        options
+      ),
+      openPanel: () => assert.fail("panel must not open after a dispatch timeout"),
+      emit: (event) => events.push(event)
+    }
+  );
+
+  assert.equal(result.status, 1);
+  assert.equal(result.error?.code, "ETIMEDOUT");
+  assert.ok(Date.now() - startedAt < 2_000);
+  assert.deepEqual(events.map(({ phase }) => phase), ["dispatch_failed"]);
 });
 
 test("successful dispatch without Claude's authoritative session ID fails closed", async () => {
@@ -316,9 +353,10 @@ test("CLI dispatch returns immediately and forwards native background arguments"
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "claude-workspace-cli-"));
   const stub = path.join(temp, "claude");
   const argsFile = path.join(temp, "args.txt");
+  const stdinFile = path.join(temp, "stdin.txt");
   fs.writeFileSync(
     stub,
-    "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CLAUDE_ARGS_FILE\"\nprintf 'backgrounded · 7c5dcf5d\\n  claude logs 7c5dcf5d\\n'\n",
+    "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CLAUDE_ARGS_FILE\"\ncat > \"$CLAUDE_STDIN_FILE\"\nprintf 'backgrounded · 7c5dcf5d\\n  claude logs 7c5dcf5d\\n'\n",
     { mode: 0o700 }
   );
 
@@ -330,7 +368,12 @@ test("CLI dispatch returns immediately and forwards native background arguments"
     "implement the focused repair"
   ], {
     cwd: root,
-    env: { ...process.env, PATH: `${temp}${path.delimiter}${process.env.PATH}`, CLAUDE_ARGS_FILE: argsFile },
+    env: {
+      ...process.env,
+      PATH: `${temp}${path.delimiter}${process.env.PATH}`,
+      CLAUDE_ARGS_FILE: argsFile,
+      CLAUDE_STDIN_FILE: stdinFile
+    },
     encoding: "utf8"
   });
 
@@ -339,8 +382,43 @@ test("CLI dispatch returns immediately and forwards native background arguments"
   const args = fs.readFileSync(argsFile, "utf8").trim().split("\n");
   assert.deepEqual(args, [
     "--model", "opus", "--permission-mode", "default",
-    "--bg", "implement the focused repair"
+    "--bg"
   ]);
+  assert.equal(fs.readFileSync(stdinFile, "utf8"), "implement the focused repair\n");
+});
+
+test("CLI sends every token after -- verbatim as Claude coding request data", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "claude-workspace-terminator-"));
+  const stub = path.join(temp, "claude");
+  const argsFile = path.join(temp, "args.txt");
+  const stdinFile = path.join(temp, "stdin.txt");
+  fs.writeFileSync(
+    stub,
+    "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CLAUDE_ARGS_FILE\"\ncat > \"$CLAUDE_STDIN_FILE\"\nprintf 'backgrounded · 7c5dcf5d\\n'\n",
+    { mode: 0o700 }
+  );
+
+  const result = spawnSync(process.execPath, [
+    helper,
+    "workspace",
+    "--path", root,
+    "--no-panel",
+    "--",
+    "--fix", "support", "for", "--json"
+  ], {
+    cwd: root,
+    env: {
+      ...process.env,
+      PATH: `${temp}${path.delimiter}${process.env.PATH}`,
+      CLAUDE_ARGS_FILE: argsFile,
+      CLAUDE_STDIN_FILE: stdinFile
+    },
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.readFileSync(stdinFile, "utf8"), "--fix support for --json\n");
+  assert.doesNotMatch(fs.readFileSync(argsFile, "utf8"), /--fix|--json/);
 });
 
 test("CLI never reinterprets one quoted coding request as privileged flags", () => {
@@ -380,15 +458,26 @@ test("CLI supervision commands forward to Claude native controls", () => {
   assert.equal(status.status, 0, status.stderr);
   assert.deepEqual(status.stdout.trim().split("\n"), ["agents", "--cwd", root, "--all", "--json"]);
 
-  const logs = spawnSync(process.execPath, [helper, "workspace-logs", "session-123"], {
+  const logs = spawnSync(process.execPath, [helper, "workspace-logs", "7c5dcf5d"], {
     cwd: root, env, encoding: "utf8"
   });
   assert.equal(logs.status, 0, logs.stderr);
-  assert.deepEqual(logs.stdout.trim().split("\n"), ["logs", "session-123"]);
+  assert.deepEqual(logs.stdout.trim().split("\n"), ["logs", "7c5dcf5d"]);
 
-  const stop = spawnSync(process.execPath, [helper, "workspace-stop", "session-123"], {
+  const stop = spawnSync(process.execPath, [helper, "workspace-stop", "7c5dcf5d"], {
     cwd: root, env, encoding: "utf8"
   });
   assert.equal(stop.status, 0, stop.stderr);
-  assert.deepEqual(stop.stdout.trim().split("\n"), ["stop", "session-123"]);
+  assert.deepEqual(stop.stdout.trim().split("\n"), ["stop", "7c5dcf5d"]);
+
+  for (const command of ["workspace-logs", "workspace-stop"]) {
+    for (const invalid of ["--help", "--version", "session-123"]) {
+      const rejected = spawnSync(process.execPath, [helper, command, invalid], {
+        cwd: root, env, encoding: "utf8"
+      });
+      assert.notEqual(rejected.status, 0, `${command} ${invalid} must fail locally`);
+      assert.match(rejected.stderr, /valid Claude background session ID/i);
+      assert.equal(rejected.stdout, "", "invalid IDs must not reach the Claude CLI stub");
+    }
+  }
 });

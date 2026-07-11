@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { runCommand, runCommandChecked } from "./process.mjs";
 
@@ -54,6 +55,10 @@ const DEFAULT_SECRET_DIRS = Object.freeze([
 ]);
 
 const STALE_SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+export const SNAPSHOT_NAMESPACE = "codex-claude-review-snapshots-v2";
+const SNAPSHOT_NAMESPACE_VERSION = 2;
+const SNAPSHOT_NAMESPACE_MARKER = ".codex-snapshot-owner.json";
+const SNAPSHOT_METADATA = ".codex-snapshot.meta.json";
 
 // Hard cap on snapshot size — defensive guard against runaway directories.
 export const DEFAULT_SNAPSHOT_MAX_BYTES = 256 * 1024 * 1024;
@@ -70,6 +75,22 @@ export function isGitRepository(dir) {
     return fs.existsSync(gitPath);
   } catch {
     return false;
+  }
+}
+
+function findAncestorGitControlEntry(dir) {
+  let current = path.resolve(dir);
+  while (true) {
+    const gitEntry = path.join(current, ".git");
+    try {
+      fs.lstatSync(gitEntry);
+      return gitEntry;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
   }
 }
 
@@ -91,21 +112,128 @@ function isSensitiveSnapshotPath(relativePath) {
   const base = path.basename(normalised);
   const lowerBase = base.toLowerCase();
   const parts = normalised.split("/");
+  const lowerParts = parts.map((part) => part.toLowerCase());
 
-  if (DEFAULT_SECRET_BASENAMES.includes(base)) return true;
-  if (base.startsWith(".env.")) return true;
-  if (base.startsWith("id_rsa") || base.startsWith("id_ed25519")) return true;
-  if (DEFAULT_SECRET_DIRS.some((dir) => parts.includes(dir))) return true;
+  if (DEFAULT_SECRET_BASENAMES.some((name) => name.toLowerCase() === lowerBase)) return true;
+  if (lowerBase.startsWith(".env.")) return true;
+  if (lowerBase.startsWith("id_rsa") || lowerBase.startsWith("id_ed25519")) return true;
+  if (DEFAULT_SECRET_DIRS.some((dir) => lowerParts.includes(dir.toLowerCase()))) return true;
   if (/\.(pem|key|pfx|p12|kdbx)$/i.test(lowerBase)) return true;
   if (/\.(tfvars|tfvars\.json|tfstate|tfstate\.backup)$/i.test(lowerBase)) return true;
   return /(service[-_]?account|firebase-adminsdk).*\.json$/i.test(lowerBase) || /\.key\.json$/i.test(lowerBase);
 }
 
+function readJsonNoFollow(filePath) {
+  let fd;
+  try {
+    const before = fs.lstatSync(filePath);
+    if (before.isSymbolicLink() || !before.isFile()) {
+      throw new Error(`Refusing non-regular metadata file: ${filePath}`);
+    }
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    const opened = fs.fstatSync(fd);
+    const contents = fs.readFileSync(fd, "utf8");
+    const after = fs.lstatSync(filePath);
+    if (!opened.isFile() || after.isSymbolicLink() || !sameFileIdentity(before, opened) || !sameFileIdentity(opened, after)) {
+      throw new Error(`Metadata changed during secure read: ${filePath}`);
+    }
+    return JSON.parse(contents);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+function writeExclusiveJson(filePath, value, mode = 0o600) {
+  const fd = fs.openSync(filePath, "wx", mode);
+  try {
+    fs.writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function loadSnapshotNamespace(tempRoot) {
+  const namespaceRoot = path.join(path.resolve(tempRoot), SNAPSHOT_NAMESPACE);
+  const stat = fs.lstatSync(namespaceRoot);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`Snapshot namespace is not a private directory: ${namespaceRoot}`);
+  }
+  const canonicalTempRoot = fs.realpathSync.native(path.resolve(tempRoot));
+  const canonicalNamespaceRoot = fs.realpathSync.native(namespaceRoot);
+  if (!isWithinRoot(canonicalNamespaceRoot, canonicalTempRoot)) {
+    throw new Error(`Snapshot namespace resolved outside temp root: ${namespaceRoot}`);
+  }
+  const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
+  const currentGid = typeof process.getgid === "function" ? process.getgid() : null;
+  if (
+    (currentUid !== null && stat.uid !== currentUid) ||
+    (currentGid !== null && stat.gid !== currentGid) ||
+    (process.platform !== "win32" && (stat.mode & 0o077) !== 0)
+  ) {
+    throw new Error(`Snapshot namespace ownership is unsafe: ${namespaceRoot}`);
+  }
+  const marker = readJsonNoFollow(path.join(namespaceRoot, SNAPSHOT_NAMESPACE_MARKER));
+  if (
+    marker?.version !== SNAPSHOT_NAMESPACE_VERSION ||
+    marker?.namespace !== SNAPSHOT_NAMESPACE ||
+    marker?.uid !== currentUid ||
+    marker?.gid !== currentGid ||
+    typeof marker?.ownerId !== "string" ||
+    !/^[0-9a-f-]{36}$/i.test(marker.ownerId)
+  ) {
+    throw new Error(`Snapshot namespace ownership marker is invalid: ${namespaceRoot}`);
+  }
+  return { namespaceRoot: canonicalNamespaceRoot, ownerId: marker.ownerId };
+}
+
+function ensureSnapshotNamespace(tempRoot) {
+  const resolvedTempRoot = path.resolve(tempRoot);
+  fs.mkdirSync(resolvedTempRoot, { recursive: true, mode: 0o700 });
+  const namespaceRoot = path.join(resolvedTempRoot, SNAPSHOT_NAMESPACE);
+  try {
+    fs.mkdirSync(namespaceRoot, { mode: 0o700 });
+    fs.chmodSync(namespaceRoot, 0o700);
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+  }
+  const markerPath = path.join(namespaceRoot, SNAPSHOT_NAMESPACE_MARKER);
+  try {
+    writeExclusiveJson(markerPath, {
+      version: SNAPSHOT_NAMESPACE_VERSION,
+      namespace: SNAPSHOT_NAMESPACE,
+      ownerId: randomUUID(),
+      uid: typeof process.getuid === "function" ? process.getuid() : null,
+      gid: typeof process.getgid === "function" ? process.getgid() : null,
+      createdAt: new Date().toISOString()
+    });
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+  }
+  return loadSnapshotNamespace(resolvedTempRoot);
+}
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
 export function reapStaleDirectorySnapshots(tempRoot, options = {}) {
   const maxAgeMs = options.maxAgeMs ?? STALE_SNAPSHOT_MAX_AGE_MS;
+  let namespace;
+  try {
+    namespace = options.namespace ?? loadSnapshotNamespace(tempRoot);
+  } catch {
+    return { removed: 0, skipped: 0 };
+  }
   let entries;
   try {
-    entries = fs.readdirSync(tempRoot, { withFileTypes: true });
+    entries = fs.readdirSync(namespace.namespaceRoot, { withFileTypes: true });
   } catch {
     return { removed: 0, skipped: 0 };
   }
@@ -115,22 +243,41 @@ export function reapStaleDirectorySnapshots(tempRoot, options = {}) {
   const now = Date.now();
   for (const entry of entries) {
     if (!entry.isDirectory() || !entry.name.startsWith("snapshot-")) continue;
-    const snapshotDir = path.join(tempRoot, entry.name);
-    const metadataPath = path.join(snapshotDir, ".codex-snapshot.meta.json");
-    let createdAt = null;
+    const snapshotDir = path.join(namespace.namespaceRoot, entry.name);
+    const metadataPath = path.join(snapshotDir, SNAPSHOT_METADATA);
+    let metadata;
     try {
-      createdAt = JSON.parse(fs.readFileSync(metadataPath, "utf8")).createdAt;
+      metadata = readJsonNoFollow(metadataPath);
     } catch {
       skipped += 1;
       continue;
     }
-    const createdMs = Date.parse(createdAt);
-    if (!Number.isFinite(createdMs) || now - createdMs < maxAgeMs) {
+    const createdMs = Date.parse(metadata?.createdAt);
+    if (
+      metadata?.version !== SNAPSHOT_NAMESPACE_VERSION ||
+      metadata?.ownerId !== namespace.ownerId ||
+      typeof metadata?.snapshotId !== "string" ||
+      !/^[0-9a-f-]{36}$/i.test(metadata.snapshotId) ||
+      !Number.isFinite(createdMs) ||
+      now - createdMs < maxAgeMs ||
+      isProcessAlive(metadata.pid)
+    ) {
       skipped += 1;
       continue;
     }
     try {
-      fs.rmSync(snapshotDir, { recursive: true, force: true });
+      const before = fs.lstatSync(snapshotDir);
+      const canonicalSnapshot = fs.realpathSync.native(snapshotDir);
+      if (before.isSymbolicLink() || !before.isDirectory() || !isWithinRoot(canonicalSnapshot, namespace.namespaceRoot)) {
+        throw new Error("snapshot candidate is outside the owned namespace");
+      }
+      const claimedPath = path.join(namespace.namespaceRoot, `reap-${randomUUID()}`);
+      fs.renameSync(snapshotDir, claimedPath);
+      const claimed = fs.lstatSync(claimedPath);
+      if (!sameFileIdentity(before, claimed) || claimed.isSymbolicLink() || !claimed.isDirectory()) {
+        throw new Error("snapshot candidate changed during reap claim");
+      }
+      fs.rmSync(claimedPath, { recursive: true, force: true });
       removed += 1;
     } catch {
       skipped += 1;
@@ -140,17 +287,38 @@ export function reapStaleDirectorySnapshots(tempRoot, options = {}) {
 }
 
 function collectGitIgnoredPaths(sourceRoot) {
-  if (!isGitRepository(sourceRoot)) return new Set();
-  const result = runCommand("git", ["ls-files", "--ignored", "--others", "--exclude-standard", "-z"], {
+  const discovery = runCommand("git", ["rev-parse", "--show-toplevel"], {
     cwd: sourceRoot,
+    maxBuffer: 1024 * 1024
+  });
+  if (discovery.status !== 0) {
+    if (!findAncestorGitControlEntry(sourceRoot)) return new Set();
+    const detail = String(discovery.stderr || discovery.stdout || `git exited ${discovery.status}`).trim();
+    throw new Error(`Git ignore discovery failed for ${sourceRoot}: ${detail}`);
+  }
+
+  const worktreeRoot = fs.realpathSync.native(String(discovery.stdout).trim());
+  const canonicalSourceRoot = fs.realpathSync.native(sourceRoot);
+  if (!isWithinRoot(canonicalSourceRoot, worktreeRoot)) {
+    throw new Error(`Git ignore discovery failed for ${sourceRoot}: source resolved outside its worktree`);
+  }
+  const sourcePathspec = path.relative(worktreeRoot, canonicalSourceRoot).split(path.sep).join("/") || ".";
+  const result = runCommand("git", ["ls-files", "--ignored", "--others", "--exclude-standard", "-z", "--", sourcePathspec], {
+    cwd: worktreeRoot,
     maxBuffer: 64 * 1024 * 1024
   });
-  if (result.status !== 0) return new Set();
-  return new Set(
-    String(result.stdout ?? "")
-      .split("\0")
-      .filter(Boolean)
-  );
+  if (result.status !== 0) {
+    const detail = String(result.stderr || result.stdout || `git exited ${result.status}`).trim();
+    throw new Error(`Git ignore discovery failed for ${sourceRoot}: ${detail}`);
+  }
+  const ignored = new Set();
+  for (const gitPath of String(result.stdout ?? "").split("\0").filter(Boolean)) {
+    const absolutePath = path.resolve(worktreeRoot, gitPath);
+    if (isWithinRoot(absolutePath, canonicalSourceRoot)) {
+      ignored.add(path.relative(canonicalSourceRoot, absolutePath).split(path.sep).join("/"));
+    }
+  }
+  return ignored;
 }
 
 function isIgnoredPath(relativePath, ignoredPaths) {
@@ -164,6 +332,119 @@ function isIgnoredPath(relativePath, ignoredPaths) {
   return false;
 }
 
+function isWithinRoot(candidate, root) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function readStableDirectory(src, canonicalSourceRoot) {
+  const before = fs.lstatSync(src);
+  if (before.isSymbolicLink() || !before.isDirectory()) {
+    throw Object.assign(new Error("directory changed or became a symlink"), { code: "ERACE" });
+  }
+  const resolvedBefore = fs.realpathSync.native(src);
+  if (!isWithinRoot(resolvedBefore, canonicalSourceRoot)) {
+    throw Object.assign(new Error("directory resolved outside source root"), { code: "EOUTSIDE" });
+  }
+
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  const after = fs.lstatSync(src);
+  const resolvedAfter = fs.realpathSync.native(src);
+  if (
+    after.isSymbolicLink() ||
+    !after.isDirectory() ||
+    !sameFileIdentity(before, after) ||
+    !isWithinRoot(resolvedAfter, canonicalSourceRoot)
+  ) {
+    throw Object.assign(new Error("directory changed during enumeration"), { code: "ERACE" });
+  }
+  return entries;
+}
+
+function copyRegularFileNoFollow(srcPath, dstPath, canonicalSourceRoot, maxBytes) {
+  let sourceFd;
+  let destinationFd;
+  let destinationCreated = false;
+  let copyCompleted = false;
+  try {
+    const before = fs.lstatSync(srcPath);
+    if (before.isSymbolicLink() || !before.isFile()) {
+      return { copied: false, reason: before.isSymbolicLink() ? "symlink" : "non-regular" };
+    }
+    const resolvedBefore = fs.realpathSync.native(srcPath);
+    if (!isWithinRoot(resolvedBefore, canonicalSourceRoot)) {
+      return { copied: false, reason: "resolved outside source root" };
+    }
+
+    const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+    sourceFd = fs.openSync(srcPath, fs.constants.O_RDONLY | noFollow);
+    const opened = fs.fstatSync(sourceFd);
+    const current = fs.lstatSync(srcPath);
+    const resolvedAfter = fs.realpathSync.native(srcPath);
+    if (
+      !opened.isFile() ||
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      !sameFileIdentity(opened, current) ||
+      !isWithinRoot(resolvedAfter, canonicalSourceRoot)
+    ) {
+      return { copied: false, reason: "file changed during secure open" };
+    }
+    if (opened.size > maxBytes) {
+      return { copied: false, reason: "size cap" };
+    }
+
+    fs.mkdirSync(path.dirname(dstPath), { recursive: true });
+    destinationFd = fs.openSync(
+      dstPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
+      opened.mode & 0o777
+    );
+    destinationCreated = true;
+
+    const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, Math.max(1, opened.size)));
+    let remaining = opened.size;
+    let copiedBytes = 0;
+    while (remaining > 0) {
+      const bytesRead = fs.readSync(sourceFd, buffer, 0, Math.min(buffer.length, remaining), null);
+      if (bytesRead === 0) {
+        throw Object.assign(new Error("file changed during copy (short read)"), { code: "ERACE" });
+      }
+      let written = 0;
+      while (written < bytesRead) {
+        written += fs.writeSync(destinationFd, buffer, written, bytesRead - written);
+      }
+      copiedBytes += bytesRead;
+      remaining -= bytesRead;
+    }
+
+    const afterCopy = fs.fstatSync(sourceFd);
+    if (
+      !sameFileIdentity(opened, afterCopy) ||
+      afterCopy.size !== opened.size ||
+      afterCopy.mtimeMs !== opened.mtimeMs ||
+      afterCopy.ctimeMs !== opened.ctimeMs
+    ) {
+      throw Object.assign(new Error("file changed during copy"), { code: "ERACE" });
+    }
+    copyCompleted = true;
+    return { copied: true, size: copiedBytes };
+  } catch (error) {
+    const detail = error.code ? `${error.code}: ${error.message}` : error.message;
+    return { copied: false, reason: `secure open/copy failed: ${detail}` };
+  } finally {
+    if (destinationFd !== undefined) fs.closeSync(destinationFd);
+    if (sourceFd !== undefined) fs.closeSync(sourceFd);
+    if (destinationCreated && !copyCompleted) {
+      fs.rmSync(dstPath, { force: true });
+    }
+  }
+}
+
 /**
  * Walk `sourceRoot` and copy reviewable files into `snapshotRoot`, honouring excludes
  * and size/file-count caps. Returns { copiedFiles, totalBytes, skipped }.
@@ -172,6 +453,7 @@ function isIgnoredPath(relativePath, ignoredPaths) {
  * path.join so it works on macOS, Linux, and Windows identically.
  */
 function copyTree(sourceRoot, snapshotRoot, excludes, limits, ignoredPaths) {
+  const canonicalSourceRoot = fs.realpathSync.native(sourceRoot);
   const stack = [{ src: sourceRoot, rel: "" }];
   let copiedFiles = 0;
   let totalBytes = 0;
@@ -181,7 +463,8 @@ function copyTree(sourceRoot, snapshotRoot, excludes, limits, ignoredPaths) {
     const { src, rel } = stack.pop();
     let entries;
     try {
-      entries = fs.readdirSync(src, { withFileTypes: true });
+      entries = readStableDirectory(src, canonicalSourceRoot);
+      if (rel) fs.mkdirSync(path.join(snapshotRoot, rel), { recursive: true });
     } catch (err) {
       skipped.push({ path: rel || ".", reason: `readdir failed: ${err.code ?? err.message}` });
       continue;
@@ -211,7 +494,6 @@ function copyTree(sourceRoot, snapshotRoot, excludes, limits, ignoredPaths) {
         continue;
       }
       if (entry.isDirectory()) {
-        fs.mkdirSync(dstPath, { recursive: true });
         stack.push({ src: srcPath, rel: relPath });
         continue;
       }
@@ -220,27 +502,26 @@ function copyTree(sourceRoot, snapshotRoot, excludes, limits, ignoredPaths) {
         continue;
       }
 
-      let stat;
-      try {
-        stat = fs.statSync(srcPath);
-      } catch (err) {
-        skipped.push({ path: relPath, reason: `stat failed: ${err.code ?? err.message}` });
-        continue;
-      }
-
       if (copiedFiles + 1 > limits.maxFiles) {
         skipped.push({ path: relPath, reason: `file-count cap (${limits.maxFiles}) reached` });
         continue;
       }
-      if (totalBytes + stat.size > limits.maxBytes) {
-        skipped.push({ path: relPath, reason: `size cap (${limits.maxBytes} bytes) reached` });
+
+      const result = copyRegularFileNoFollow(
+        srcPath,
+        dstPath,
+        canonicalSourceRoot,
+        limits.maxBytes - totalBytes
+      );
+      if (!result.copied) {
+        const reason = result.reason === "size cap"
+          ? `size cap (${limits.maxBytes} bytes) reached`
+          : result.reason;
+        skipped.push({ path: relPath, reason });
         continue;
       }
-
-      fs.mkdirSync(path.dirname(dstPath), { recursive: true });
-      fs.copyFileSync(srcPath, dstPath);
       copiedFiles += 1;
-      totalBytes += stat.size;
+      totalBytes += result.size;
     }
   }
 
@@ -282,10 +563,12 @@ export function createDirectorySnapshot(sourceRoot, options = {}) {
   }
 
   const tempRoot = options.tempRoot ? path.resolve(options.tempRoot) : path.join(os.tmpdir(), "codex-claude-review");
-  fs.mkdirSync(tempRoot, { recursive: true });
-  reapStaleDirectorySnapshots(tempRoot);
+  const namespace = ensureSnapshotNamespace(tempRoot);
+  reapStaleDirectorySnapshots(tempRoot, { namespace });
 
-  const snapshotRoot = fs.mkdtempSync(path.join(tempRoot, "snapshot-"));
+  const snapshotRoot = fs.mkdtempSync(path.join(namespace.namespaceRoot, "snapshot-"));
+  const snapshotId = randomUUID();
+  const populateSnapshot = () => {
   const excludes = resolveExcludes(options.excludes);
   const limits = {
     maxFiles: options.maxFiles ?? DEFAULT_SNAPSHOT_MAX_FILES,
@@ -321,8 +604,8 @@ export function createDirectorySnapshot(sourceRoot, options = {}) {
   // home directory because the wrapper ignored cwd. We additionally assert that the cwd
   // we pass is inside the temp root we just created.
   const expectedTemp = path.resolve(snapshotRoot);
-  if (!expectedTemp.startsWith(path.resolve(tempRoot))) {
-    throw new Error(`snapshot root ${expectedTemp} is not inside temp root ${tempRoot} — refusing git init`);
+  if (!isWithinRoot(expectedTemp, namespace.namespaceRoot)) {
+    throw new Error(`snapshot root ${expectedTemp} is not inside the owned snapshot namespace — refusing git init`);
   }
 
   runCommandChecked("git", ["init", "--quiet"], { cwd: snapshotRoot });
@@ -341,8 +624,12 @@ export function createDirectorySnapshot(sourceRoot, options = {}) {
   }
 
   // Persist metadata for later reference / cleanup.
-  const metadataPath = path.join(snapshotRoot, ".codex-snapshot.meta.json");
+  const metadataPath = path.join(snapshotRoot, SNAPSHOT_METADATA);
   const metadata = {
+    version: SNAPSHOT_NAMESPACE_VERSION,
+    ownerId: namespace.ownerId,
+    snapshotId,
+    pid: process.pid,
     sourceRoot: absSourceRoot,
     snapshotRoot,
     createdAt: new Date().toISOString(),
@@ -351,7 +638,7 @@ export function createDirectorySnapshot(sourceRoot, options = {}) {
     skipped: skipped.slice(0, 200), // cap to avoid runaway metadata
     excludes: [...excludes]
   };
-  fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), "utf8");
+  writeExclusiveJson(metadataPath, metadata);
 
   return {
     snapshotRoot,
@@ -364,8 +651,9 @@ export function createDirectorySnapshot(sourceRoot, options = {}) {
       const normalised = String(input);
       const absSnapshot = path.resolve(snapshotRoot);
       // Absolute path under snapshot → rewrite to absolute path under source.
-      if (path.isAbsolute(normalised) && normalised.startsWith(absSnapshot)) {
-        const rel = path.relative(absSnapshot, normalised);
+      const absoluteInput = path.isAbsolute(normalised) ? path.resolve(normalised) : null;
+      if (absoluteInput && isWithinRoot(absoluteInput, absSnapshot)) {
+        const rel = path.relative(absSnapshot, absoluteInput);
         return path.join(absSourceRoot, rel);
       }
       // Relative paths are already source-relative for the reviewer's purposes.
@@ -376,4 +664,12 @@ export function createDirectorySnapshot(sourceRoot, options = {}) {
       try { fs.rmSync(snapshotRoot, { recursive: true, force: true }); } catch (_err) { /* OS will reap */ }
     }
   };
+  };
+
+  try {
+    return populateSnapshot();
+  } catch (error) {
+    try { fs.rmSync(snapshotRoot, { recursive: true, force: true }); } catch (_cleanupError) { /* OS temp reaper is the fallback */ }
+    throw error;
+  }
 }

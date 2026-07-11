@@ -22,6 +22,19 @@ function unique(values) {
   return [...new Set(values.filter(Boolean))].sort();
 }
 
+function parseNullDelimitedPaths(output) {
+  return String(output ?? "").split("\0").filter(Boolean);
+}
+
+function formatPath(relativePath) {
+  const value = String(relativePath);
+  return /^[A-Za-z0-9._/@+-]+$/.test(value) ? value : JSON.stringify(value);
+}
+
+function formatPathList(paths) {
+  return paths.map(formatPath).join("\n");
+}
+
 function isInternalReviewArtifact(relativePath) {
   return relativePath === ".claude-review" || relativePath.startsWith(".claude-review/");
 }
@@ -34,22 +47,87 @@ function formatSection(title, body) {
   return [`## ${title}`, "", body.trim() || "(none)", ""].join("\n");
 }
 
+function isWithinRoot(candidate, root) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
 function readBoundedTextFile(cwd, relativePath, maxBytes) {
-  const fullPath = path.join(cwd, relativePath);
-  const fd = fs.openSync(fullPath, "r");
+  const canonicalRoot = fs.realpathSync.native(cwd);
+  const fullPath = path.resolve(cwd, relativePath);
+  if (!isWithinRoot(fullPath, path.resolve(cwd))) {
+    return { kind: "skipped", reason: "outside workspace" };
+  }
+
+  let before;
   try {
-    const stat = fs.fstatSync(fd);
-    if (stat.isDirectory()) {
-      return { kind: "skipped", reason: "directory" };
+    before = fs.lstatSync(fullPath);
+  } catch (error) {
+    return { kind: "skipped", reason: `unreadable: ${error.code ?? error.message}` };
+  }
+  if (before.isSymbolicLink()) {
+    return { kind: "skipped", reason: "symlink" };
+  }
+  if (before.isDirectory()) {
+    return { kind: "skipped", reason: "directory" };
+  }
+  if (!before.isFile()) {
+    return { kind: "skipped", reason: "non-regular file" };
+  }
+
+  let resolvedBefore;
+  try {
+    resolvedBefore = fs.realpathSync.native(fullPath);
+  } catch (error) {
+    return { kind: "skipped", reason: `unreadable: ${error.code ?? error.message}` };
+  }
+  if (!isWithinRoot(resolvedBefore, canonicalRoot)) {
+    return { kind: "skipped", reason: "resolved outside workspace" };
+  }
+
+  let fd;
+  try {
+    fd = fs.openSync(fullPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    return { kind: "skipped", reason: error?.code === "ELOOP" ? "symlink" : `unreadable: ${error.code ?? error.message}` };
+  }
+  try {
+    const opened = fs.fstatSync(fd);
+    const current = fs.lstatSync(fullPath);
+    const resolvedAfter = fs.realpathSync.native(fullPath);
+    if (
+      !opened.isFile() ||
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      !sameFileIdentity(before, opened) ||
+      !sameFileIdentity(opened, current) ||
+      !isWithinRoot(resolvedAfter, canonicalRoot)
+    ) {
+      return { kind: "skipped", reason: "file changed during secure open" };
     }
-    if (stat.size > maxBytes) {
-      return { kind: "skipped", reason: "size", bytes: stat.size };
+    if (opened.size > maxBytes) {
+      return { kind: "skipped", reason: "size", bytes: opened.size };
     }
     const buffer = fs.readFileSync(fd);
     if (!isProbablyText(buffer)) {
-      return { kind: "skipped", reason: "binary", bytes: stat.size };
+      return { kind: "skipped", reason: "binary", bytes: opened.size };
+    }
+    const afterRead = fs.fstatSync(fd);
+    if (
+      !sameFileIdentity(opened, afterRead) ||
+      afterRead.size !== opened.size ||
+      afterRead.mtimeMs !== opened.mtimeMs ||
+      afterRead.ctimeMs !== opened.ctimeMs
+    ) {
+      return { kind: "skipped", reason: "file changed during read" };
     }
     return { kind: "text", text: buffer.toString("utf8").trimEnd() };
+  } catch (error) {
+    return { kind: "skipped", reason: `secure read failed: ${error.code ?? error.message}` };
   } finally {
     fs.closeSync(fd);
   }
@@ -57,40 +135,51 @@ function readBoundedTextFile(cwd, relativePath, maxBytes) {
 
 function readUntrackedFile(cwd, relativePath) {
   const result = readBoundedTextFile(cwd, relativePath, MAX_UNTRACKED_BYTES);
+  const displayPath = formatPath(relativePath);
   if (result.reason === "directory") {
-    return `### ${relativePath}\n(skipped: directory)`;
+    return `### ${displayPath}\n(skipped: directory)`;
   }
   if (result.reason === "size") {
-    return `### ${relativePath}\n(skipped: ${result.bytes} bytes exceeds ${MAX_UNTRACKED_BYTES} byte limit)`;
+    return `### ${displayPath}\n(skipped: ${result.bytes} bytes exceeds ${MAX_UNTRACKED_BYTES} byte limit)`;
   }
   if (result.reason === "binary") {
-    return `### ${relativePath}\n(skipped: binary file)`;
+    return `### ${displayPath}\n(skipped: binary file)`;
   }
-  return `### ${relativePath}\n\`\`\`\n${result.text}\n\`\`\``;
+  if (result.kind === "skipped") {
+    return `### ${displayPath}\n(skipped: ${result.reason})`;
+  }
+  return `### ${displayPath}\n\`\`\`\n${result.text}\n\`\`\``;
 }
 
 function readReviewFile(cwd, relativePath) {
   const result = readBoundedTextFile(cwd, relativePath, MAX_DIRECTORY_REVIEW_FILE_BYTES);
+  const displayPath = formatPath(relativePath);
   if (result.reason === "directory") {
     return {
-      text: `### ${relativePath}\n(skipped: directory)`,
+      text: `### ${displayPath}\n(skipped: directory)`,
       skipped: { path: relativePath, bytes: null, reason: "directory" }
     };
   }
   if (result.reason === "size") {
     return {
-      text: `### ${relativePath}\n(skipped: ${result.bytes} bytes exceeds ${MAX_DIRECTORY_REVIEW_FILE_BYTES} byte directory-review limit)`,
+      text: `### ${displayPath}\n(skipped: ${result.bytes} bytes exceeds ${MAX_DIRECTORY_REVIEW_FILE_BYTES} byte directory-review limit)`,
       skipped: { path: relativePath, bytes: result.bytes, reason: "size" }
     };
   }
   if (result.reason === "binary") {
     return {
-      text: `### ${relativePath}\n(skipped: binary file)`,
+      text: `### ${displayPath}\n(skipped: binary file)`,
       skipped: { path: relativePath, bytes: result.bytes, reason: "binary" }
     };
   }
+  if (result.kind === "skipped") {
+    return {
+      text: `### ${displayPath}\n(skipped: ${result.reason})`,
+      skipped: { path: relativePath, bytes: null, reason: result.reason }
+    };
+  }
   return {
-    text: `### ${relativePath}\n\`\`\`\n${result.text}\n\`\`\``,
+    text: `### ${displayPath}\n\`\`\`\n${result.text}\n\`\`\``,
     skipped: null
   };
 }
@@ -118,20 +207,11 @@ export function detectDefaultBranch(cwd) {
 
 export function getWorkingTreeState(cwd) {
   return {
-    staged: String(gitChecked(cwd, ["diff", "--cached", "--name-only"]).stdout)
-      .trim()
-      .split("\n")
-      .filter(Boolean)
+    staged: parseNullDelimitedPaths(gitChecked(cwd, ["diff", "--cached", "--name-only", "-z"]).stdout)
       .filter((file) => !isInternalReviewArtifact(file)),
-    unstaged: String(gitChecked(cwd, ["diff", "--name-only"]).stdout)
-      .trim()
-      .split("\n")
-      .filter(Boolean)
+    unstaged: parseNullDelimitedPaths(gitChecked(cwd, ["diff", "--name-only", "-z"]).stdout)
       .filter((file) => !isInternalReviewArtifact(file)),
-    untracked: String(gitChecked(cwd, ["ls-files", "--others", "--exclude-standard"]).stdout)
-      .trim()
-      .split("\n")
-      .filter(Boolean)
+    untracked: parseNullDelimitedPaths(gitChecked(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]).stdout)
       .filter((file) => !isInternalReviewArtifact(file))
   };
 }
@@ -199,23 +279,26 @@ function collectWorkingTreeContext(cwd) {
       formatSection("Git Status", status),
       formatSection("Staged Diff Stat", stagedStat),
       formatSection("Unstaged Diff Stat", unstagedStat),
-      formatSection("Changed Files", changedFiles.join("\n"))
+      formatSection("Changed Files", formatPathList(changedFiles))
     ].join("\n")
   };
 }
 
 function collectBranchContext(cwd, baseRef) {
-  const stat = String(gitChecked(cwd, ["diff", "--shortstat", `${baseRef}...HEAD`]).stdout).trim();
-  const changedFiles = String(gitChecked(cwd, ["diff", "--name-only", `${baseRef}...HEAD`]).stdout)
-    .trim()
-    .split("\n")
-    .filter(Boolean);
+  const stat = String(
+    gitChecked(cwd, ["diff", "--shortstat", `${baseRef}...HEAD`, ...REVIEW_PATHSPEC]).stdout
+  ).trim();
+  const changedFiles = unique(parseNullDelimitedPaths(
+    gitChecked(cwd, ["diff", "--name-only", "-z", `${baseRef}...HEAD`, ...REVIEW_PATHSPEC]).stdout
+  ));
   if (!stat && changedFiles.length === 0) {
     throw new Error(`Nothing to review between ${baseRef} and HEAD.`);
   }
 
   const diff = String(
-    gitChecked(cwd, ["diff", "--no-ext-diff", "--submodule=diff", `${baseRef}...HEAD`]).stdout
+    gitChecked(cwd, [
+      "diff", "--no-ext-diff", "--submodule=diff", `${baseRef}...HEAD`, ...REVIEW_PATHSPEC
+    ]).stdout
   );
   const commits = String(gitChecked(cwd, ["log", "--oneline", `${baseRef}..HEAD`]).stdout).trim();
 
@@ -229,17 +312,14 @@ function collectBranchContext(cwd, baseRef) {
     summaryContent: [
       formatSection("Commit Range", commits),
       formatSection("Diff Stat", stat),
-      formatSection("Changed Files", changedFiles.join("\n"))
+      formatSection("Changed Files", formatPathList(changedFiles))
     ].join("\n")
   };
 }
 
 function collectDirectoryContext(cwd) {
   const files = unique(
-    String(gitChecked(cwd, ["ls-files", ...REVIEW_PATHSPEC]).stdout)
-      .trim()
-      .split("\n")
-      .filter(Boolean)
+    parseNullDelimitedPaths(gitChecked(cwd, ["ls-files", "-z", ...REVIEW_PATHSPEC]).stdout)
       .filter((file) => !isInternalReviewArtifact(file))
   );
   if (files.length === 0) {
@@ -248,7 +328,10 @@ function collectDirectoryContext(cwd) {
   const renderedFiles = files.map((file) => readReviewFile(cwd, file));
   const skipped = renderedFiles.map((file) => file.skipped).filter(Boolean);
   const skippedSummary = skipped.length
-    ? skipped.map((file) => `${file.path} (${file.reason}, ${file.bytes} bytes)`).join("\n")
+    ? skipped.map((file) => {
+      const detail = file.bytes == null ? file.reason : `${file.reason}, ${file.bytes} bytes`;
+      return `${formatPath(file.path)} (${detail})`;
+    }).join("\n")
     : "";
   const skippedNotice = skipped.length
     ? ` ${skipped.length} file(s) were skipped; see Directory Snapshot Skipped Files.`
@@ -258,12 +341,12 @@ function collectDirectoryContext(cwd) {
     summary: `Reviewing ${files.length} file(s) from a directory snapshot.${skippedNotice}`,
     changedFiles: files,
     fullContent: [
-      formatSection("Directory Snapshot Files", files.join("\n")),
+      formatSection("Directory Snapshot Files", formatPathList(files)),
       formatSection("Directory Snapshot Content", renderedFiles.map((file) => file.text).join("\n\n")),
       skipped.length ? formatSection("Directory Snapshot Skipped Files", skippedSummary) : ""
     ].join("\n"),
     summaryContent: [
-      formatSection("Directory Snapshot Files", files.join("\n")),
+      formatSection("Directory Snapshot Files", formatPathList(files)),
       skipped.length ? formatSection("Directory Snapshot Skipped Files", skippedSummary) : ""
     ].join("\n")
   };

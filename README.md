@@ -17,8 +17,8 @@ Codex process or hardcodes a GPT model.
 The plugin has two explicit surfaces: a writable Codex-supervised Claude coding
 workspace and isolated read-only review lanes. Reviews can use Claude Code's
 current Opus alias, including the Opus 1M long-context alias, with `Read`,
-`Glob`, `Grep`, Task sub-agents, domain-fenced web access, and a narrow git
-wrapper. They do not get `Edit`, `Write`, raw shell, or arbitrary git by
+`Glob`, `Grep`, Task sub-agents, and domain-fenced web access. They do not get
+`Edit`, `Write`, Bash, raw shell, or repository-controlled Claude settings by
 default. Every elite-tier finding must cite tool-call evidence, and malformed
 structured output fails closed.
 
@@ -61,11 +61,14 @@ codex-claude workspace-stop <session-id>
 ```
 
 The dispatch returns Claude Code's authoritative short session ID immediately;
-it fails closed if Claude does not provide one. Use
+it fails closed if Claude does not provide one, and a 30-second startup guard
+terminates a stalled dispatch process tree. Use
 `--no-panel` for focused follow-up workers and `--panel-only` to reopen the
 control panel. Claude defaults to its rolling `opus` selector; pass `--model`
 when a different Claude selector is required. Normal mode has native coding
-capabilities and permission prompts; `--plan` is analysis-only.
+capabilities and permission prompts; `--plan` is analysis-only. Coding requests
+are delivered to Claude over stdin instead of the process argument list, and
+privacy-safe lifecycle events exclude prompts and tool arguments.
 
 `codex-claude-review` remains a fully supported compatibility alias for every
 command, including the isolated read-only review lanes.
@@ -121,6 +124,9 @@ Use presets when you want one command that chooses the right lane:
   are wrapped as untrusted data before Claude sees them.
 - Fenced external access: `WebFetch` starts with a domain allowlist and expands
   only through explicit `--web-domain` flags.
+- Fail-closed local inputs: snapshots require successful Git ignore discovery,
+  run inside a private owned temp namespace, preserve live sessions during
+  cleanup, and exclude secret-bearing files by default.
 - Strict release controls: pinned GitHub Actions, Node 18/20/22 CI, package
   content checks, tag/package version matching, and npmjs publishing with
   provenance attestation once the human publish gate is enabled.
@@ -195,9 +201,9 @@ Plus the operational surface:
 
 ## Agent Capabilities (safe-mode default)
 
-Each review lane spawns a Claude session with a fenced tool catalog. The
-agent gets *more* investigative capability than v0.2.0 (native tools beat
-shell duplicates) while losing the file-exfil channels that v0.2.0 had.
+Each review lane spawns a Claude session with a shell-free, fenced tool
+catalog. Native workspace tools provide structured investigation without
+exposing repository-defined shell permissions.
 
 | Tool                          | Notes                                                                  |
 |-------------------------------|------------------------------------------------------------------------|
@@ -208,20 +214,13 @@ shell duplicates) while losing the file-exfil channels that v0.2.0 had.
 | `WebSearch`                   | Web search (broad).                                                    |
 | `WebFetch`                    | Default domain allowlist (vendor docs, NIST/CWE/OWASP, package         |
 |                               | registries, NICE/BNF/BMJ/Lancet/NHS); extend with `--web-domain`.      |
-| `Bash(node scripts/bin/git-safe.mjs:*)` | Single git wrapper. Subcommand allowlist:                       |
-|                               | `diff`, `log`, `show`, `blame`, `status`, `branch`, `rev-parse`,       |
-|                               | `diff-tree`, `ls-files`, `ls-tree`, `shortlog`, `describe`,            |
-|                               | `config --get/--list`, `remote` (read-only), `tag` (listing only).     |
-|                               | Rejects `--no-index`, absolute paths outside cwd, `..` traversal,      |
-|                               | shell metacharacters, `-c`/`-C`, `--exec-path`, `--git-dir`,           |
-|                               | `--upload-pack`, `--receive-pack`.                                     |
-| `Bash(node --check:*)` / `Bash(node --test:*)` | Read-only syntax/test runners.                        |
-| `Bash(npm test:*)` / `Bash(npm run lint/check/typecheck:*)` | Project-defined verification.            |
 
-`Edit`, `Write`, and `NotebookEdit` are explicitly disallowed. Raw `cat`,
-`head`, `tail`, `find`, `ls`, `grep`, `rg`, `wc`, and arbitrary `git` are
-**not** in the allowlist — the native tools (Read/Glob/Grep) are strictly
-more capable, structured, and workspace-fenced.
+`Edit`, `Write`, and `NotebookEdit` are explicitly disallowed, and `Bash` is
+absent from both the safe tool catalog and permission rules. Persistent
+user/project/local Claude settings are not loaded in safe mode. The bundled
+`git-safe.mjs` remains a hardened standalone compatibility helper, but is not
+exposed to safe review sessions. Runtime test execution remains the outer
+Codex orchestrator's verification responsibility.
 
 `--permission-mode` is whitelisted to `default` and `plan` only. Passing
 anything else (`bypassPermissions`, `acceptEdits`, etc.) causes the helper
@@ -435,8 +434,10 @@ Setup accepts `--json` for machine-parseable readiness checks. Doctor accepts
 
 ## Runtime Hardening
 
-- `--setting-sources project,local` keeps user-level Claude plugins/hooks
-  from hijacking or stalling the review flow.
+- `--setting-sources=` excludes persistent user, project, and local Claude
+  settings from safe reviews, preventing repository settings from restoring
+  shell permissions or hooks. Unrestricted and setup flows retain their
+  documented settings behavior.
 - `--strict-mcp-config` is **on by default** so the agent's MCP tool surface
   is exactly the set the user passed via `--mcp-config`. Opt out with
   `--inherit-mcp`.
@@ -494,6 +495,16 @@ Per-workspace review state is stored under:
 Background jobs survive across Codex turns without polluting global state.
 The `.claude-review/` directory is excluded from review snapshots so review
 artefacts do not feed back into themselves.
+
+Pass `--job-dir <path>` (or set `CODEX_CLAUDE_REVIEW_JOB_DIR`) to keep every
+job record, immutable input, prompt, and log in an alternate directory. Reuse
+the same option with `status`, `result`, and `cancel`. Job IDs accept only
+1–128 ASCII letters, digits, underscores, and hyphens.
+
+Directory snapshots live under a versioned, privately owned temp namespace.
+Stale cleanup validates the namespace and snapshot metadata, preserves workers
+whose owner PID is still live, atomically claims dead snapshots, and never
+scans or deletes similarly named directories outside that namespace.
 
 Job records are versioned with `schemaVersion: 1`, created with exclusive file
 creation, and updated with atomic writes. `status` marks long-running jobs as

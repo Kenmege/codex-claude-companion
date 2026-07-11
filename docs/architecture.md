@@ -5,7 +5,8 @@
 ```text
 active Codex task (planner/orchestrator/reviewer)
   -> codex-claude workspace -- "coding request"
-  -> claude --model <selector> --permission-mode <mode> --bg "coding request"
+  -> stdin: "coding request"
+  -> claude --model <selector> --permission-mode <mode> --bg
   -> Claude background supervisor
   -> separate terminal: claude agents --cwd <workspace>
 
@@ -16,11 +17,14 @@ active Codex task
 
 The dispatch returns immediately, and the helper parses the authoritative short
 session ID printed by Claude Code. It fails closed instead of inventing an ID
-when that receipt is absent. The current Codex task stays responsive and is the
+when that receipt is absent. A 30-second startup bound terminates the dispatch
+process tree if Claude's native background handoff stalls. The current Codex
+task stays responsive and is the
 only GPT-side process; model routing therefore inherits the active Codex
 selection without a hardcoded ID or nested `codex` invocation. Claude's normal
 workspace lane uses native coding permissions and approval prompts. The
-separate review pipeline below retains its read-only tool fences.
+coding request is piped over stdin rather than included in process arguments.
+The separate review pipeline below retains its read-only tool fences.
 
 ## Data Flow
 
@@ -59,24 +63,30 @@ The helper treats diff text, user focus text, and workspace guidance as untruste
 - `scripts/claude-review-companion.mjs`: CLI router, setup checks, snapshot creation, background job lifecycle, input validation.
 - `scripts/lib/git.mjs`: git status/diff collection and context-size selection.
 - `scripts/lib/claude.mjs`: Claude command construction, tool fences, prompts, stream parsing, structured-output validation.
-- `scripts/lib/process.mjs`: child-process capture with timeout and interrupt handling.
+- `scripts/lib/process.mjs`: bounded child-process capture with timeout,
+  interruption, and process-tree termination handling.
 - `scripts/lib/state.mjs`: versioned job records, atomic writes, exclusive job creation, logs.
 - `scripts/lib/render.mjs`: setup/status/review output rendering.
 - `scripts/lib/workspace.mjs`: Claude background dispatch, terminal adapter
   selection, privacy-safe lifecycle events, and native agent controls.
 - `scripts/lib/mcp-config.mjs`: bounded descriptor reads, JSON validation, and
   private immutable-by-path staging for caller-supplied MCP configuration.
-- `scripts/bin/git-safe.mjs`: read-only git wrapper used by the Claude Bash allowlist.
+- `scripts/bin/git-safe.mjs`: hardened standalone read-only Git compatibility
+  helper; safe Claude reviews do not receive Bash access.
 
 ## Claude Invocation
 
 `buildReviewInvocation` constructs one `claude -p` call per review. Safe-mode agentic lanes pass:
 
-- `--tools Read Glob Grep Bash Task WebFetch WebSearch`
-- `--allowedTools` with native tools, the git-safe wrapper, node/npm verification commands, and WebFetch domain rules
+- `--setting-sources=` to exclude persistent user/project/local settings
+- `--tools Read Glob Grep Task WebFetch WebSearch`
+- `--allowedTools` with native read/search/task tools and WebFetch domain rules
 - `--disallowedTools Edit Write NotebookEdit`
 - `--permission-mode default` unless the user explicitly selects `plan`
 - `--strict-mcp-config` unless `--inherit-mcp` is explicit
+
+The bundled Git wrapper remains defense in depth for direct compatibility use,
+but safe review sessions have no shell tool and therefore cannot invoke it.
 
 Claude Code 2.1.183 improved auto-mode safety for destructive git and infra commands, but this plugin still does not opt into auto mode: reviews are read-only by product design, so `--permission-mode auto` remains rejected rather than delegated to Claude Code's classifier. Source: Anthropic Claude Code changelog, accessed 2026-06-19: https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md
 
@@ -87,7 +97,8 @@ Legacy mode passes `--tools ""` and `--disable-slash-commands`.
 Workspace lifecycle events have `schemaVersion: 1`, an ISO-8601 timestamp,
 phase, mode, model selector, active-session Codex routing, workspace path, and
 only the operational fields relevant to that phase. Prompts and MCP contents
-are never emitted. JSON events are available with `--json-events` for local
+are never emitted, and workspace prompts are sent through stdin rather than
+process arguments. JSON events are available with `--json-events` for local
 observability without creating a telemetry or data-exfiltration surface.
 
 Claude Code owns workspace session persistence through its per-user background
@@ -102,7 +113,13 @@ Background jobs write:
 - `<job>.input.json`: the immutable review snapshot
 - `<job>.log`: timestamped progress lines with job id and level
 
-Job records use `schemaVersion: 1`. New jobs are created with exclusive file creation, and updates use atomic rename writes to avoid partial JSON files. `status` marks stale `running` jobs as `stalled` once their timeout window has elapsed.
+Job records use `schemaVersion: 1`. New jobs are created with exclusive file creation, updates use atomic rename writes to avoid partial JSON files, and concurrent writers serialize through immutable per-contender ticket directories rather than a replaceable shared lock file. `status` marks stale `running` jobs as `stalled` once their timeout window has elapsed.
+
+Every job artifact resolver validates a portable 1–128 character identifier
+grammar before path construction and verifies the final artifact remains a
+direct child of the selected jobs directory. An explicit `--job-dir` is
+threaded through the foreground pipeline, detached worker, diagnostics, and
+all lifecycle controls instead of relying on mutable process-global state.
 
 ## MCP And Subagents
 

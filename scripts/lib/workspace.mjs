@@ -2,9 +2,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { binaryAvailable, runCommand as runProcessCommand } from "./process.mjs";
+import {
+  binaryAvailable,
+  runCommand as runProcessCommand,
+  runCommandCapture
+} from "./process.mjs";
 
 export const DEFAULT_WORKSPACE_MODEL = "opus";
+export const DEFAULT_WORKSPACE_DISPATCH_TIMEOUT_MS = 30_000;
 
 export function resolveWorkspaceRoot(cwd) {
   const result = runProcessCommand("git", ["rev-parse", "--show-toplevel"], { cwd });
@@ -19,6 +24,14 @@ function requireNonEmptyString(value, flag) {
   return value;
 }
 
+function requireClaudeBackgroundSessionId(value) {
+  const sessionId = requireNonEmptyString(value, "session ID");
+  if (!/^[0-9a-f]{8}$/i.test(sessionId)) {
+    throw new Error("session ID requires a valid Claude background session ID (8 hexadecimal characters)");
+  }
+  return sessionId;
+}
+
 export function createWorkspaceConfig(input = {}, invocationCwd = process.cwd()) {
   if (input.model !== undefined) requireNonEmptyString(input.model, "--model");
   if (input.panelOnly && input.noPanel) {
@@ -26,7 +39,12 @@ export function createWorkspaceConfig(input = {}, invocationCwd = process.cwd())
   }
 
   const positionals = input.positionals ?? [];
-  const unknownOption = positionals.find((value) => value.startsWith("-"));
+  const optionTerminatorIndex = Number.isInteger(input.optionTerminatorIndex)
+    ? input.optionTerminatorIndex
+    : positionals.length;
+  const unknownOption = positionals
+    .slice(0, optionTerminatorIndex)
+    .find((value) => value.startsWith("-"));
   if (unknownOption) throw new Error(`Unknown workspace option: ${unknownOption}`);
 
   const prompt = positionals.join(" ").trim() || null;
@@ -65,8 +83,7 @@ export function buildClaudeBackgroundArgs(config) {
   return [
     "--model", config.model ?? DEFAULT_WORKSPACE_MODEL,
     "--permission-mode", config.plan ? "plan" : "default",
-    "--bg",
-    config.prompt
+    "--bg"
   ];
 }
 
@@ -91,11 +108,11 @@ export function buildClaudeStatusArgs(config = {}) {
 }
 
 export function buildClaudeLogsArgs(sessionId) {
-  return ["logs", requireNonEmptyString(sessionId, "session ID")];
+  return ["logs", requireClaudeBackgroundSessionId(sessionId)];
 }
 
 export function buildClaudeStopArgs(sessionId) {
-  return ["stop", requireNonEmptyString(sessionId, "session ID")];
+  return ["stop", requireClaudeBackgroundSessionId(sessionId)];
 }
 
 export function formatWorkspaceEvent(event, options = {}) {
@@ -213,6 +230,12 @@ function defaultEmitter(event, config) {
 export async function runWorkspace(config, dependencies = {}) {
   const commandAvailable = dependencies.commandAvailable ?? defaultCommandAvailable;
   const execute = dependencies.runCommand ?? runProcessCommand;
+  const dispatch = dependencies.runCommandCapture ?? (
+    dependencies.runCommand
+      ? async (...args) => dependencies.runCommand(...args)
+      : runCommandCapture
+  );
+  const dispatchTimeoutMs = dependencies.dispatchTimeoutMs ?? DEFAULT_WORKSPACE_DISPATCH_TIMEOUT_MS;
   const now = dependencies.now ?? Date.now;
   const wallClock = dependencies.wallClock ?? Date.now;
   const emit = dependencies.emit ?? ((event) => defaultEmitter(event, config));
@@ -246,10 +269,23 @@ export async function runWorkspace(config, dependencies = {}) {
   let sessionId = null;
   if (!config.panelOnly) {
     const dispatchStartedAt = now();
-    const result = execute("claude", buildClaudeBackgroundArgs(config), { cwd: config.cwd });
+    const result = await dispatch("claude", buildClaudeBackgroundArgs(config), {
+      cwd: config.cwd,
+      inputData: `${config.prompt}\n`,
+      timeout: dispatchTimeoutMs,
+      terminationGraceMs: dependencies.dispatchTerminationGraceMs
+    });
     const durationMs = Math.max(0, now() - dispatchStartedAt);
     if (result.status !== 0) {
-      emitEvent({ ...base, phase: "dispatch_failed", sessionId, durationMs, exitCode: result.status });
+      const exitCode = Number.isInteger(result.status) ? result.status : 1;
+      emitEvent({
+        ...base,
+        phase: "dispatch_failed",
+        sessionId,
+        durationMs,
+        exitCode,
+        errorCode: result.error?.code ?? result.reason ?? null
+      });
       return { status: result.status ?? 1, sessionId, panelOpened: false, error: result.error ?? null };
     }
     sessionId = parseClaudeBackgroundSessionId(`${result.stdout ?? ""}\n${result.stderr ?? ""}`);

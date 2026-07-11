@@ -49,7 +49,10 @@ come from the active Codex task.
 The default review lanes are read-only:
 
 - `Edit`, `Write`, and `NotebookEdit` are denied.
-- Bash is limited to `scripts/bin/git-safe.mjs` plus node/npm verification commands.
+- Bash is absent from the safe review tool catalog and permission rules.
+- Persistent user, project, and local Claude settings are excluded in safe
+  mode, so repository-controlled settings cannot restore shell permissions or
+  hooks.
 - Review text is wrapped as untrusted data.
 - Project/local MCPs are not inherited unless `--inherit-mcp` is explicit.
 - Extra directories and MCP config files are validated before Claude starts.
@@ -77,6 +80,12 @@ Please include:
 ## Secrets And Logs
 
 Do not paste API keys, OAuth tokens, private MCP credentials, patient data, or proprietary customer data into prompts, review focus text, MCP JSON, issue reports, or job logs. Job records under `.claude-review/jobs/` are local workspace artifacts and should not be committed.
+
+Review job identifiers are restricted to 1–128 ASCII letters, digits,
+underscores, and hyphens before any artifact path is resolved. Use
+`--job-dir <path>` or `CODEX_CLAUDE_REVIEW_JOB_DIR` when job artifacts must be
+kept outside the workspace; the selected directory applies to foreground and
+detached execution as well as status, result, and cancel commands.
 
 `codex-claude-review setup --json` redacts local auth identity before printing
 machine-readable readiness output. Still review setup output before sharing it

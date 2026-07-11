@@ -25,8 +25,9 @@ Use `--plan` for analysis-only work, `--no-panel` for focused follow-ups, and
 ## Native supervision
 
 The workspace command parses Claude Code's authoritative short session ID and
-fails closed when the receipt is missing. Codex can supervise the native worker
-without blocking its own terminal:
+fails closed when the receipt is missing. A 30-second startup guard terminates
+the dispatch process tree if Claude's native background handoff stalls. Codex
+can supervise the native worker without blocking its own terminal:
 
 ```bash
 codex-claude workspace-status --path . --all --json
@@ -44,6 +45,22 @@ operational state without logging prompts or MCP configuration contents.
   private exclusive files before Claude starts.
 - Terminal launchers use private one-shot directories and self-delete before
   opening the panel.
+- Secret-path filtering is case-insensitive, Git paths are handled as
+  NUL-delimited data, and repository validation supports spaces and Unicode.
+- Snapshot creation fails closed if Git ignore discovery cannot complete.
+- Safe reviews expose no Bash tool and load no persistent user/project/local
+  Claude settings, closing repository-controlled permission and hook paths.
+- Snapshot cleanup is limited to a private owned namespace and preserves
+  snapshots belonging to live worker processes.
+- Read-only Git calls reject external config, include, contents, exclude, and
+  pathspec-file inputs; job-state locks use immutable per-contender tickets and
+  safe abandoned-contender recovery under multi-process contention.
+- Release version updates use atomic fsynced replacements plus a durable crash
+  journal, so canonical manifests remain present and interrupted bumps recover
+  on the next invocation without overwriting concurrent edits.
+- Child output retention is bounded during termination, job identifiers are
+  path-safe, and `--job-dir` remains authoritative through foreground,
+  background, status, result, and cancel flows.
 - Packed-install tests verify both `codex-claude` and the supported
   `codex-claude-review` compatibility alias.
 - CI now exercises the minimum Node 18.18 runtime on Windows in addition to the
