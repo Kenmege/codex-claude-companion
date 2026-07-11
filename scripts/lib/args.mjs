@@ -3,7 +3,7 @@ export function parseArgs(argv, options = {}) {
   const valueOptions = new Set(options.valueOptions ?? []);
   const repeatableValueOptions = new Set(options.repeatableValueOptions ?? []);
   const aliasMap = options.aliasMap ?? {};
-  const parsed = { options: {}, positionals: [] };
+  const parsed = { options: {}, positionals: [], optionTerminatorIndex: null };
 
   function setValueOption(name, value) {
     if (Object.hasOwn(parsed.options, name)) {
@@ -17,9 +17,20 @@ export function parseArgs(argv, options = {}) {
     }
   }
 
+  function requireSeparateValue(name, index) {
+    const value = argv[index + 1];
+    if (typeof value !== "string" || value.length === 0 || value.startsWith("-")) {
+      throw new Error(
+        `--${name} requires a value; use --${name}=<value> for values beginning with '-'`
+      );
+    }
+    return value;
+  }
+
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === "--") {
+      parsed.optionTerminatorIndex = parsed.positionals.length;
       parsed.positionals.push(...argv.slice(index + 1));
       break;
     }
@@ -30,10 +41,21 @@ export function parseArgs(argv, options = {}) {
     }
 
     if (token.startsWith("--")) {
-      const [rawName, inlineValue] = token.slice(2).split("=", 2);
+      const optionBody = token.slice(2);
+      const equalsIndex = optionBody.indexOf("=");
+      const rawName = equalsIndex === -1 ? optionBody : optionBody.slice(0, equalsIndex);
+      const inlineValue = equalsIndex === -1 ? undefined : optionBody.slice(equalsIndex + 1);
       const name = aliasMap[rawName] ?? rawName;
       if (booleanOptions.has(name)) {
-        parsed.options[name] = inlineValue == null ? true : inlineValue !== "false";
+        if (inlineValue == null) {
+          parsed.options[name] = true;
+        } else if (inlineValue === "true") {
+          parsed.options[name] = true;
+        } else if (inlineValue === "false") {
+          parsed.options[name] = false;
+        } else {
+          throw new Error(`Invalid --${name} boolean value: expected true or false`);
+        }
         continue;
       }
       if (valueOptions.has(name)) {
@@ -41,8 +63,9 @@ export function parseArgs(argv, options = {}) {
           setValueOption(name, inlineValue);
           continue;
         }
+        const value = requireSeparateValue(name, index);
         index += 1;
-        setValueOption(name, argv[index]);
+        setValueOption(name, value);
         continue;
       }
       parsed.positionals.push(token);
@@ -56,22 +79,13 @@ export function parseArgs(argv, options = {}) {
       continue;
     }
     if (valueOptions.has(name)) {
+      const value = requireSeparateValue(name, index);
       index += 1;
-      setValueOption(name, argv[index]);
+      setValueOption(name, value);
       continue;
     }
     parsed.positionals.push(token);
   }
 
   return parsed;
-}
-
-export function splitRawArgumentString(raw) {
-  const tokens = [];
-  const pattern = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|`([^`\\]*(?:\\.[^`\\]*)*)`|([^\s]+)/g;
-  for (const match of raw.matchAll(pattern)) {
-    const value = match[1] ?? match[2] ?? match[3] ?? match[4] ?? "";
-    tokens.push(value.replace(/\\(["'`\\])/g, "$1"));
-  }
-  return tokens;
 }

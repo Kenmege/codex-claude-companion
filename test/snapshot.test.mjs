@@ -8,7 +8,8 @@ import {
   createDirectorySnapshot,
   isGitRepository,
   DEFAULT_SNAPSHOT_EXCLUDES,
-  reapStaleDirectorySnapshots
+  reapStaleDirectorySnapshots,
+  SNAPSHOT_NAMESPACE
 } from "../scripts/lib/snapshot.mjs";
 import { runCommandCapture, runCommandChecked } from "../scripts/lib/process.mjs";
 
@@ -45,12 +46,13 @@ test("createDirectorySnapshot copies reviewable files and inits a git repo", () 
   writeFile(source, "src/index.js", "console.log('hello');\n");
   writeFile(source, "src/util.js", "export const x = 1;\n");
   writeFile(source, "README.md", "# project\n");
+  writeFile(source, "..valid-source.txt", "dot-prefix\n");
 
   const snap = createDirectorySnapshot(source);
   try {
     assert.ok(snap.snapshotRoot, "snapshotRoot must be set");
     assert.equal(snap.sourceRoot, path.resolve(source));
-    assert.equal(snap.copiedFiles, 3);
+    assert.equal(snap.copiedFiles, 4);
 
     // Files exist at expected relative paths
     assert.equal(
@@ -61,6 +63,10 @@ test("createDirectorySnapshot copies reviewable files and inits a git repo", () 
       fs.readFileSync(path.join(snap.snapshotRoot, "README.md"), "utf8"),
       "# project\n"
     );
+    assert.equal(
+      fs.readFileSync(path.join(snap.snapshotRoot, "..valid-source.txt"), "utf8"),
+      "dot-prefix\n"
+    );
 
     // Git repo was initialised inside the snapshot dir
     assert.ok(fs.existsSync(path.join(snap.snapshotRoot, ".git")), "snapshot must be git-init'd");
@@ -70,6 +76,38 @@ test("createDirectorySnapshot copies reviewable files and inits a git repo", () 
     assert.match(gi, /\.claude-review\//);
   } finally {
     snap.cleanup();
+  }
+});
+
+test("createDirectorySnapshot defaults to a private home-owned namespace", {
+  skip: process.platform === "win32"
+}, () => {
+  const source = makeTempDir("snapshot-private-default-source-");
+  const privateHome = makeTempDir("snapshot-private-default-home-");
+  const previousHome = process.env.HOME;
+  writeFile(source, "index.js", "ok\n");
+
+  process.env.HOME = privateHome;
+  let snap;
+  try {
+    snap = createDirectorySnapshot(source);
+    const expectedRoot = path.join(
+      fs.realpathSync.native(privateHome),
+      ".claude-review",
+      "snapshots",
+      SNAPSHOT_NAMESPACE
+    );
+    assert.equal(
+      snap.snapshotRoot.startsWith(`${expectedRoot}${path.sep}`),
+      true,
+      `snapshot escaped private home namespace: ${snap.snapshotRoot}`
+    );
+    assert.equal(fs.statSync(expectedRoot).mode & 0o777, 0o700);
+  } finally {
+    snap?.cleanup();
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    fs.rmSync(privateHome, { recursive: true, force: true });
   }
 });
 
@@ -98,6 +136,11 @@ test("createDirectorySnapshot excludes secret-bearing files by default", () => {
   writeFile(source, "terraform/prod.tfvars", "password = \"secret\"\n");
   writeFile(source, "firebase-service-account.json", "{\"private_key\":\"secret\"}\n");
   writeFile(source, ".kube/config", "token: secret\n");
+  writeFile(source, ".ENV.PRODUCTION", "TOKEN=secret\n");
+  writeFile(source, "config/.NPMRC", "//registry.npmjs.org/:_authToken=secret\n");
+  writeFile(source, ".SSH/config", "IdentityFile private-key\n");
+  writeFile(source, "AZUREPROFILE.JSON", "{\"token\":\"secret\"}\n");
+  writeFile(source, "SERVICEACCOUNTKEY.JSON", "{\"private_key\":\"secret\"}\n");
 
   const snap = createDirectorySnapshot(source);
   try {
@@ -109,31 +152,95 @@ test("createDirectorySnapshot excludes secret-bearing files by default", () => {
     assert.equal(fs.existsSync(path.join(snap.snapshotRoot, "firebase-service-account.json")), false);
     assert.equal(fs.existsSync(path.join(snap.snapshotRoot, ".kube")), false);
     assert.ok(snap.skipped.some((s) => s.path === ".env" && s.reason === "sensitive-pattern"));
+    assert.equal(fs.existsSync(path.join(snap.snapshotRoot, ".SSH")), false);
+    assert.ok(
+      snap.skipped.some(
+        (item) => item.path === ".SSH" && item.reason === "sensitive-pattern"
+      )
+    );
+    for (const secretPath of [
+      ".ENV.PRODUCTION",
+      "config/.NPMRC",
+      "AZUREPROFILE.JSON",
+      "SERVICEACCOUNTKEY.JSON"
+    ]) {
+      assert.equal(fs.existsSync(path.join(snap.snapshotRoot, secretPath)), false, secretPath);
+      assert.ok(
+        snap.skipped.some((item) => item.path === secretPath && item.reason === "sensitive-pattern"),
+        secretPath
+      );
+    }
   } finally {
     snap.cleanup();
   }
 });
 
-test("reapStaleDirectorySnapshots removes old snapshot dirs only", () => {
+test("reapStaleDirectorySnapshots removes only dead owned snapshots from the private namespace", () => {
   const tempRoot = makeTempDir("snapshot-reaper-");
-  const oldSnap = fs.mkdtempSync(path.join(tempRoot, "snapshot-"));
-  const newSnap = fs.mkdtempSync(path.join(tempRoot, "snapshot-"));
-  fs.writeFileSync(
-    path.join(oldSnap, ".codex-snapshot.meta.json"),
-    JSON.stringify({ createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString() }),
-    "utf8"
-  );
-  fs.writeFileSync(
-    path.join(newSnap, ".codex-snapshot.meta.json"),
-    JSON.stringify({ createdAt: new Date().toISOString() }),
-    "utf8"
-  );
+  const source = makeTempDir("snapshot-reaper-source-");
+  writeFile(source, "index.js", "ok\n");
+  const oldSnapshot = createDirectorySnapshot(source, { tempRoot });
+  const newSnapshot = createDirectorySnapshot(source, { tempRoot });
+  const unrelated = fs.mkdtempSync(path.join(tempRoot, "snapshot-user-data-"));
+  fs.writeFileSync(path.join(unrelated, "sentinel.txt"), "keep\n", "utf8");
+
+  const oldMetadataPath = path.join(oldSnapshot.snapshotRoot, ".codex-snapshot.meta.json");
+  const oldMetadata = JSON.parse(fs.readFileSync(oldMetadataPath, "utf8"));
+  oldMetadata.createdAt = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  oldMetadata.pid = 2_147_483_647;
+  fs.writeFileSync(oldMetadataPath, `${JSON.stringify(oldMetadata, null, 2)}\n`, "utf8");
 
   const result = reapStaleDirectorySnapshots(tempRoot);
 
   assert.equal(result.removed, 1);
-  assert.equal(fs.existsSync(oldSnap), false);
-  assert.equal(fs.existsSync(newSnap), true);
+  assert.equal(fs.existsSync(oldSnapshot.snapshotRoot), false);
+  assert.equal(fs.existsSync(newSnapshot.snapshotRoot), true);
+  assert.equal(fs.readFileSync(path.join(unrelated, "sentinel.txt"), "utf8"), "keep\n");
+  newSnapshot.cleanup();
+});
+
+test("createDirectorySnapshot rejects a forged namespace ownership marker", {
+  skip: typeof process.getuid !== "function"
+}, () => {
+  const tempRoot = makeTempDir("snapshot-forged-owner-");
+  const source = makeTempDir("snapshot-forged-source-");
+  writeFile(source, "index.js", "ok\n");
+  const namespaceRoot = path.join(tempRoot, SNAPSHOT_NAMESPACE);
+  fs.mkdirSync(namespaceRoot, { mode: 0o700 });
+  fs.writeFileSync(
+    path.join(namespaceRoot, ".codex-snapshot-owner.json"),
+    `${JSON.stringify({
+      version: 2,
+      namespace: SNAPSHOT_NAMESPACE,
+      ownerId: "00000000-0000-4000-8000-000000000000",
+      uid: process.getuid() + 1,
+      createdAt: new Date().toISOString()
+    }, null, 2)}\n`,
+    { encoding: "utf8", mode: 0o600 }
+  );
+
+  assert.throws(
+    () => createDirectorySnapshot(source, { tempRoot }),
+    /ownership marker is invalid/
+  );
+});
+
+test("reapStaleDirectorySnapshots preserves an old snapshot owned by a live process", () => {
+  const tempRoot = makeTempDir("snapshot-live-reaper-");
+  const source = makeTempDir("snapshot-live-source-");
+  writeFile(source, "index.js", "ok\n");
+  const snapshot = createDirectorySnapshot(source, { tempRoot });
+  const metadataPath = path.join(snapshot.snapshotRoot, ".codex-snapshot.meta.json");
+  const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+  metadata.createdAt = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  assert.equal(metadata.pid, process.pid);
+  fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+
+  const result = reapStaleDirectorySnapshots(tempRoot);
+
+  assert.equal(result.removed, 0);
+  assert.equal(fs.existsSync(snapshot.snapshotRoot), true);
+  snapshot.cleanup();
 });
 
 test("createDirectorySnapshot honours source gitignore", () => {
@@ -153,6 +260,66 @@ test("createDirectorySnapshot honours source gitignore", () => {
   } finally {
     snap.cleanup();
   }
+});
+
+test("createDirectorySnapshot honours parent worktree ignore rules for a nested source", () => {
+  const repository = makeTempDir();
+  const source = path.join(repository, "packages", "app");
+  fs.mkdirSync(source, { recursive: true });
+  writeFile(repository, ".gitignore", "packages/app/private.txt\n");
+  writeFile(source, "public.txt", "ok\n");
+  writeFile(source, "private.txt", "must-not-copy\n");
+  runCommandChecked("git", ["init", "--quiet"], { cwd: repository });
+  runCommandChecked("git", ["config", "user.email", "test@example.com"], { cwd: repository });
+  runCommandChecked("git", ["config", "user.name", "Test User"], { cwd: repository });
+
+  const snap = createDirectorySnapshot(source);
+  try {
+    assert.equal(fs.existsSync(path.join(snap.snapshotRoot, "public.txt")), true);
+    assert.equal(fs.existsSync(path.join(snap.snapshotRoot, "private.txt")), false);
+    assert.ok(snap.skipped.some((item) => item.path === "private.txt" && item.reason === "gitignore"));
+  } finally {
+    snap.cleanup();
+  }
+});
+
+test("createDirectorySnapshot fails closed when Git ignore discovery fails", () => {
+  const source = makeTempDir();
+  const tempRoot = makeTempDir("snapshot-ignore-failure-");
+  writeFile(source, ".gitignore", "private-review.txt\n");
+  writeFile(source, "public.txt", "ok\n");
+  writeFile(source, "private-review.txt", "must-not-copy\n");
+  fs.writeFileSync(path.join(source, ".git"), "gitdir: /definitely/missing/git-dir\n", "utf8");
+
+  assert.throws(
+    () => createDirectorySnapshot(source, { tempRoot }),
+    /Git ignore discovery failed/i
+  );
+  assert.deepEqual(
+    fs.readdirSync(tempRoot).filter((name) => name.startsWith("snapshot-")),
+    [],
+    "failed snapshot containing ignored data survived cleanup"
+  );
+});
+
+test("createDirectorySnapshot fails closed for a nested source when ancestor Git discovery fails", () => {
+  const repository = makeTempDir();
+  const source = path.join(repository, "packages", "app");
+  const tempRoot = makeTempDir("snapshot-nested-ignore-failure-");
+  fs.mkdirSync(source, { recursive: true });
+  writeFile(source, "public.txt", "ok\n");
+  writeFile(source, "private-review.txt", "must-not-copy\n");
+  fs.writeFileSync(path.join(repository, ".git"), "gitdir: /definitely/missing/git-dir\n", "utf8");
+
+  assert.throws(
+    () => createDirectorySnapshot(source, { tempRoot }),
+    /Git ignore discovery failed/i
+  );
+  assert.deepEqual(
+    fs.readdirSync(tempRoot).filter((name) => name.startsWith("snapshot-")),
+    [],
+    "failed nested snapshot survived cleanup"
+  );
 });
 
 test("createDirectorySnapshot honours caller-supplied --exclude entries", () => {
@@ -188,6 +355,92 @@ test("createDirectorySnapshot skips symlinks (no escape from source root)", () =
   }
 });
 
+test("createDirectorySnapshot rejects a file swapped to an outside symlink before open", () => {
+  if (process.platform === "win32") return;
+
+  const source = makeTempDir();
+  const outside = makeTempDir();
+  const victim = path.join(source, "victim.txt");
+  const outsideSecret = path.join(outside, "outside-secret.txt");
+  writeFile(source, "victim.txt", "safe\n");
+  writeFile(outside, "outside-secret.txt", "must-not-copy\n");
+
+  const originalOpenSync = fs.openSync;
+  let swapped = false;
+  fs.openSync = function patchedOpenSync(file, flags, ...rest) {
+    if (!swapped && path.resolve(String(file)) === victim && (Number(flags) & fs.constants.O_RDONLY) === fs.constants.O_RDONLY) {
+      swapped = true;
+      fs.unlinkSync(victim);
+      fs.symlinkSync(outsideSecret, victim, "file");
+    }
+    return originalOpenSync.call(this, file, flags, ...rest);
+  };
+
+  let snap;
+  try {
+    snap = createDirectorySnapshot(source);
+    assert.equal(swapped, true, "test did not exercise the pre-open swap");
+    assert.equal(fs.existsSync(path.join(snap.snapshotRoot, "victim.txt")), false);
+    assert.ok(snap.skipped.some((item) => item.path === "victim.txt" && /symlink|open|changed/i.test(item.reason)));
+  } finally {
+    fs.openSync = originalOpenSync;
+    snap?.cleanup();
+  }
+});
+
+test("createDirectorySnapshot rejects and removes a file truncated during copying", () => {
+  const source = makeTempDir();
+  const victim = path.join(source, "large.txt");
+  fs.writeFileSync(victim, Buffer.alloc(192 * 1024, 0x61));
+
+  const originalReadSync = fs.readSync;
+  let truncated = false;
+  fs.readSync = function patchedReadSync(fd, buffer, offset, length, position) {
+    const bytesRead = originalReadSync.call(this, fd, buffer, offset, length, position);
+    if (!truncated && bytesRead > 0 && length === 64 * 1024) {
+      truncated = true;
+      fs.truncateSync(victim, 0);
+    }
+    return bytesRead;
+  };
+
+  let snap;
+  try {
+    snap = createDirectorySnapshot(source);
+    assert.equal(truncated, true, "test did not exercise truncation during copying");
+    assert.equal(fs.existsSync(path.join(snap.snapshotRoot, "large.txt")), false);
+    assert.ok(snap.skipped.some((item) => item.path === "large.txt" && /changed|short read/i.test(item.reason)));
+  } finally {
+    fs.readSync = originalReadSync;
+    snap?.cleanup();
+  }
+});
+
+test("createDirectorySnapshot removes its private directory when setup fails", () => {
+  const source = makeTempDir();
+  const tempRoot = makeTempDir("snapshot-setup-failure-");
+  writeFile(source, "src/index.js", "ok\n");
+
+  const originalOpenSync = fs.openSync;
+  fs.openSync = function patchedOpenSync(file, ...rest) {
+    if (path.basename(String(file)) === ".codex-snapshot.meta.json") {
+      throw new Error("injected metadata failure");
+    }
+    return originalOpenSync.call(this, file, ...rest);
+  };
+
+  try {
+    assert.throws(
+      () => createDirectorySnapshot(source, { tempRoot }),
+      /injected metadata failure/
+    );
+    const namespaceRoot = path.join(tempRoot, SNAPSHOT_NAMESPACE);
+    assert.deepEqual(fs.readdirSync(namespaceRoot), [".codex-snapshot-owner.json"]);
+  } finally {
+    fs.openSync = originalOpenSync;
+  }
+});
+
 test("createDirectorySnapshot mapPathBack rewrites absolute snapshot paths to source paths", () => {
   const source = makeTempDir();
   writeFile(source, "src/index.js", "ok\n");
@@ -196,6 +449,9 @@ test("createDirectorySnapshot mapPathBack rewrites absolute snapshot paths to so
     const snapAbs = path.join(snap.snapshotRoot, "src/index.js");
     const back = snap.mapPathBack(snapAbs);
     assert.equal(back, path.join(snap.sourceRoot, "src/index.js"));
+    const sibling = path.join(`${snap.snapshotRoot}-sibling`, "outside.js");
+    assert.equal(snap.mapPathBack(sibling), sibling);
+    assert.equal(snap.mapPathBack(snap.snapshotRoot), snap.sourceRoot);
     // Relative paths are passed through unchanged
     assert.equal(snap.mapPathBack("src/index.js"), "src/index.js");
   } finally {
@@ -213,7 +469,7 @@ test("createDirectorySnapshot refuses to run on a non-directory path", () => {
 });
 
 test("createDirectorySnapshot refuses to run on a missing path", () => {
-  const ghost = path.join(os.tmpdir(), `does-not-exist-${Date.now()}`);
+  const ghost = path.join(process.cwd(), `.does-not-exist-${process.pid}-${Date.now()}`);
   assert.throws(() => createDirectorySnapshot(ghost), /does not exist/);
 });
 

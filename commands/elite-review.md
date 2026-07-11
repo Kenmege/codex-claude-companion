@@ -6,7 +6,7 @@ description: Run an elite, high-scrutiny Claude review against the current git w
 
 ## Preflight
 
-1. Prefer the helper binary `codex-claude-review` if it is available on PATH.
+1. Prefer the helper binary `codex-claude` if it is available on PATH.
 2. If it is not available, tell the user to install the helper with
    `npm install -g codex-plugin-cc` after npmjs publish, or from a cloned
    checkout with `npm install -g .`.
@@ -28,7 +28,7 @@ Use the exact argument tail the user supplied after
 `/claude-review:elite-review`.
 
 - Preferred:
-  `codex-claude-review elite-review <user-arguments>`
+  `codex-claude elite-review <user-arguments>`
 
 Useful flags:
 

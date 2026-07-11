@@ -78,6 +78,44 @@ const WRITE_CAPABLE_FLAG_PREFIXES = [
   "--output-indicator-context="
 ];
 
+// Git has several options whose values are filesystem paths. Reject these
+// outright rather than attempting to infer their value from the next token:
+// even a path inside the workspace can contain config includes or pathspecs
+// that redirect subsequent reads outside it.
+const FORBIDDEN_PATH_VALUE_FLAGS = new Set([
+  "--file",
+  "-f",
+  "--contents",
+  "--exclude-from",
+  "-X",
+  "--exclude-per-directory",
+  "--pathspec-from-file",
+  "--ignore-revs-file"
+]);
+
+const FORBIDDEN_PATH_VALUE_PREFIXES = [
+  "--file=",
+  "--contents=",
+  "--exclude-from=",
+  "--exclude-per-directory=",
+  "--pathspec-from-file=",
+  "--ignore-revs-file=",
+  "-f",
+  "-X"
+];
+
+const FORBIDDEN_CONFIG_SOURCE_FLAGS = new Set([
+  "--includes",
+  "--global",
+  "--system"
+]);
+
+const EXECUTION_CAPABLE_FLAGS = new Set([
+  "--ext-diff",
+  "--textconv",
+  "--show-signature"
+]);
+
 // Environment variables that let git (a) execute an arbitrary external
 // program, or (b) redirect config / object-store resolution outside the
 // workspace. These are stripped before invoking git so a poisoned parent
@@ -129,6 +167,14 @@ const SCRUBBED_ENV_PREFIXES = [
   "GIT_TRACE"
 ];
 
+const DIFF_CAPABLE_SUBCOMMANDS = new Set([
+  "diff",
+  "log",
+  "show",
+  "blame",
+  "diff-tree"
+]);
+
 const SHELL_METACHAR_RE = /[;&|`$<>(){}\\\n\r\t]|\$\(/;
 
 function fail(message, code = 2) {
@@ -169,6 +215,18 @@ function validateArg(arg, cwd) {
   }
   if (WRITE_CAPABLE_FLAGS.has(arg) || WRITE_CAPABLE_FLAG_PREFIXES.some((prefix) => arg.startsWith(prefix))) {
     fail(`forbidden write-capable flag: ${arg}`);
+  }
+  if (
+    FORBIDDEN_PATH_VALUE_FLAGS.has(arg) ||
+    FORBIDDEN_PATH_VALUE_PREFIXES.some((prefix) => arg.startsWith(prefix))
+  ) {
+    fail(`forbidden path-valued flag: ${arg}`);
+  }
+  if (FORBIDDEN_CONFIG_SOURCE_FLAGS.has(arg)) {
+    fail(`forbidden config source flag: ${arg}`);
+  }
+  if (EXECUTION_CAPABLE_FLAGS.has(arg)) {
+    fail(`forbidden execution-capable flag: ${arg}`);
   }
   if (looksLikePathToken(arg)) {
     if (arg.includes("..")) {
@@ -246,13 +304,13 @@ function validateSubcommandSpecific(subcommand, args) {
     }
   }
   if (subcommand === "remote") {
-    const allowedFirstArgs = new Set(["show", "get-url"]);
-    const hasMutator = args.some((a) => ["add", "remove", "rm", "set-url", "rename", "prune", "update", "set-branches"].includes(a));
-    if (hasMutator) {
-      fail("git remote restricted to read-only forms");
-    }
-    if (nonFlagArgs.length > 0 && !allowedFirstArgs.has(nonFlagArgs[0])) {
-      fail("git remote restricted to read-only forms");
+    const isLocalList = args.length === 0 || args.every((arg) => arg === "-v" || arg === "--verbose");
+    const isLocalGetUrl =
+      nonFlagArgs.length === 2 &&
+      nonFlagArgs[0] === "get-url" &&
+      args.every((arg) => !arg.startsWith("-") || arg === "--push" || arg === "--all");
+    if (!isLocalList && !isLocalGetUrl) {
+      fail("git remote restricted to local read-only forms (list / get-url)");
     }
   }
   if (subcommand === "tag") {
@@ -295,7 +353,41 @@ function main() {
     }
   }
 
-  const result = spawnSync("git", [subcommand, ...rest], {
+  // Start from trusted system/global configuration and override the
+  // execution-capable settings that can also be present in an untrusted
+  // repository's .git/config. Local config remains readable for benign
+  // metadata (for example `git config --get remote.origin.url`), while the
+  // command-scope values below take precedence over it.
+  env.GIT_CONFIG_NOSYSTEM = "1";
+  env.GIT_CONFIG_GLOBAL = process.platform === "win32" ? "NUL" : "/dev/null";
+  env.GIT_ATTR_NOSYSTEM = "1";
+  env.GIT_OPTIONAL_LOCKS = "0";
+  env.GIT_PAGER = "cat";
+  env.PAGER = "cat";
+
+  const safeConfigArgs = [
+    "-c", "core.fsmonitor=false",
+    "-c", "core.pager=cat",
+    "-c", `pager.${subcommand}=false`,
+    "-c", "diff.external=",
+    "-c", "interactive.diffFilter=",
+    "-c", "log.showSignature=false",
+    "-c", "gpg.program=false",
+    "-c", "gpg.openpgp.program=false",
+    "-c", "gpg.ssh.program=false",
+    "-c", "gpg.x509.program=false",
+    "-c", "core.sshCommand=false",
+    "-c", "protocol.allow=never"
+  ];
+  const safeSubcommandArgs = [];
+  if (DIFF_CAPABLE_SUBCOMMANDS.has(subcommand)) {
+    safeSubcommandArgs.push("--no-ext-diff", "--no-textconv");
+  }
+  if (subcommand === "config") {
+    safeSubcommandArgs.push("--no-includes");
+  }
+
+  const result = spawnSync("git", [...safeConfigArgs, subcommand, ...safeSubcommandArgs, ...rest], {
     cwd,
     env,
     stdio: ["ignore", "inherit", "inherit"],

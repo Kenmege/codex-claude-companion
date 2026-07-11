@@ -9,12 +9,55 @@
 
 ## Threat Model
 
-Claude Review runs Claude Code from a Codex session to inspect untrusted diffs. The primary risks are command execution escape, path traversal, prompt injection from review material, accidental MCP/tool expansion, secret leakage in logs, and long-running background jobs leaving stale state.
+Claude Workspace & Review has two deliberately different trust surfaces. The
+workspace command dispatches Claude Code as a writable coding worker supervised
+by the active Codex task. The review commands inspect untrusted diffs through
+separate read-only fences. The primary risks are unintended workspace mutation,
+command execution escape, path traversal, prompt injection from review material,
+accidental MCP/tool expansion, secret leakage through prompts or process
+observability, and long-running background workers leaving stale state.
+
+### Writable workspace lane
+
+`codex-claude workspace` is a full coding lane, not a sandbox or read-only
+review. It starts Claude with its native `default` permission mode so Claude can
+request approval to edit files and run tools. `--plan` selects Claude's
+analysis-only plan mode. The plugin does not pass `--dangerously-skip-permissions`
+or start a nested Codex process.
+
+- Run it only in a workspace you trust Claude to inspect and potentially modify.
+- The coding request is passed to the local Claude CLI and may be visible to
+  same-user process inspection while the dispatch command is starting. Do not
+  place secrets, credentials, patient data, or proprietary payloads in it.
+- Lifecycle events contain model selector, mode, directory, session ID, terminal
+  backend, duration, and exit status; they intentionally omit prompt and tool
+  contents.
+- The separate terminal is a view over Claude's native background-agent
+  supervisor. Closing the panel does not prove the worker stopped. Use
+  `workspace-status`, `workspace-logs`, and `workspace-stop` to inspect or stop
+  the recorded session.
+- The panel launcher is stored in the user's temporary directory with mode 0700
+  and contains the workspace path and control-panel command, but not the coding
+  request.
+- Persistent review jobs use the workspace or per-user `.claude-review/jobs/`
+  directory and never silently fall back to a shared OS temporary path.
+- Directory snapshots default to the private per-user
+  `~/.claude-review/snapshots/` ownership namespace; custom roots are accepted
+  only through the explicit `--snapshot-temp-root` option.
+
+The active Codex task remains the GPT-side orchestrator and reviewer. The plugin
+does not select or persist a second GPT model; model identity and authorization
+come from the active Codex task.
+
+### Read-only review lanes
 
 The default review lanes are read-only:
 
 - `Edit`, `Write`, and `NotebookEdit` are denied.
-- Bash is limited to `scripts/bin/git-safe.mjs` plus node/npm verification commands.
+- Bash is absent from the safe review tool catalog and permission rules.
+- Persistent user, project, and local Claude settings are excluded in safe
+  mode, so repository-controlled settings cannot restore shell permissions or
+  hooks.
 - Review text is wrapped as untrusted data.
 - Project/local MCPs are not inherited unless `--inherit-mcp` is explicit.
 - Extra directories and MCP config files are validated before Claude starts.
@@ -42,6 +85,12 @@ Please include:
 ## Secrets And Logs
 
 Do not paste API keys, OAuth tokens, private MCP credentials, patient data, or proprietary customer data into prompts, review focus text, MCP JSON, issue reports, or job logs. Job records under `.claude-review/jobs/` are local workspace artifacts and should not be committed.
+
+Review job identifiers are restricted to 1–128 ASCII letters, digits,
+underscores, and hyphens before any artifact path is resolved. Use
+`--job-dir <path>` or `CODEX_CLAUDE_REVIEW_JOB_DIR` when job artifacts must be
+kept outside the workspace; the selected directory applies to foreground and
+detached execution as well as status, result, and cancel commands.
 
 `codex-claude-review setup --json` redacts local auth identity before printing
 machine-readable readiness output. Still review setup output before sharing it

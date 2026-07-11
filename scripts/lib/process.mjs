@@ -1,8 +1,10 @@
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 export const DEFAULT_TERMINATION_GRACE_MS = 7_500;
+export const DEFAULT_EARLY_TERMINATION_GRACE_MS = 100;
 export const DEFAULT_CAPTURE_TAIL_BYTES = 64 * 1024;
 
 function isPathCommand(command) {
@@ -41,6 +43,7 @@ export function runCommand(command, args, options = {}) {
     encoding: "utf8",
     maxBuffer: options.maxBuffer ?? 16 * 1024 * 1024,
     timeout: options.timeout,
+    input: options.inputData,
     // Hard-kill on timeout so a child that ignores SIGTERM (e.g. a stalled
     // `claude` binary waiting on a first-run prompt) cannot wedge the caller.
     killSignal: options.killSignal ?? "SIGKILL"
@@ -122,6 +125,10 @@ export function runCommandCapture(command, args, options = {}) {
     }
     const stdoutChunks = [];
     const stderrChunks = [];
+    const stdoutDecoder = new StringDecoder(options.encoding ?? "utf8");
+    const stderrDecoder = new StringDecoder(options.encoding ?? "utf8");
+    let stdoutText = "";
+    let stderrText = "";
     const maxBuffer = options.maxBuffer ?? 16 * 1024 * 1024;
     const tailBytes = options.tailBytes ?? DEFAULT_CAPTURE_TAIL_BYTES;
 
@@ -189,6 +196,10 @@ export function runCommandCapture(command, args, options = {}) {
 
     let stdoutBytes = 0;
     let stderrBytes = 0;
+    let stdoutRetainedBytes = 0;
+    let stderrRetainedBytes = 0;
+    let stdoutCaptureClosed = false;
+    let stderrCaptureClosed = false;
     let stdoutTail = Buffer.alloc(0);
     let stderrTail = Buffer.alloc(0);
     let finished = false;
@@ -241,35 +252,8 @@ export function runCommandCapture(command, args, options = {}) {
       if (terminationStarted) return;
       terminationStarted = true;
       terminateChildProcessTree(child);
-      if (earlyCompleted) {
-        killEscalated = killChildProcessTree(child) || killEscalated;
-        const stdout = Buffer.concat(stdoutChunks).toString(options.encoding ?? "utf8");
-        const stderr = Buffer.concat(stderrChunks).toString(options.encoding ?? "utf8");
-        const payload = {
-          pid: child.pid,
-          command,
-          args,
-          cwd: options.cwd,
-          status: null,
-          signal: null,
-          stdout,
-          stderr,
-          stdoutTail: stdoutTail.toString(options.encoding ?? "utf8"),
-          stderrTail: stderrTail.toString(options.encoding ?? "utf8"),
-          stdoutBytes,
-          stderrBytes,
-          reason,
-          timeoutMs: options.timeout ?? null,
-          noOutputTimeoutMs: options.noOutputTimeout ?? null,
-          killEscalated,
-          completedEarly: true,
-          error: null
-        };
-        safeCallback(options.onClose, payload);
-        finish(payload);
-        return;
-      }
-      const terminationGraceMs = options.terminationGraceMs ?? DEFAULT_TERMINATION_GRACE_MS;
+      const terminationGraceMs = options.terminationGraceMs
+        ?? (earlyCompleted ? DEFAULT_EARLY_TERMINATION_GRACE_MS : DEFAULT_TERMINATION_GRACE_MS);
       killTimer = setTimeout(() => {
         killEscalated = killChildProcessTree(child);
       }, terminationGraceMs);
@@ -295,11 +279,18 @@ export function runCommandCapture(command, args, options = {}) {
       if (noOutputTimeout) clearTimeout(noOutputTimeout);
       stdoutBytes += chunk.length;
       stdoutTail = appendTail(stdoutTail, chunk, tailBytes);
-      stdoutChunks.push(chunk);
-      const stdout = Buffer.concat(stdoutChunks).toString(options.encoding ?? "utf8");
-      const stderr = Buffer.concat(stderrChunks).toString(options.encoding ?? "utf8");
-      safeCallback(options.onStdout, { pid: child.pid, chunk, text: chunk.toString(options.encoding ?? "utf8"), stdoutBytes, stdout, stderr });
+      if (stdoutCaptureClosed) return;
+      const remaining = Math.max(0, maxBuffer - stdoutRetainedBytes);
+      const retained = chunk.subarray(0, remaining);
+      if (retained.length > 0) {
+        stdoutRetainedBytes += retained.length;
+        stdoutChunks.push(retained);
+      }
+      const text = stdoutDecoder.write(retained);
+      stdoutText += text;
+      safeCallback(options.onStdout, { pid: child.pid, chunk: retained, text, stdoutBytes, stdout: stdoutText, stderr: stderrText });
       if (stdoutBytes > maxBuffer) {
+        stdoutCaptureClosed = true;
         stopChild("buffer");
         return;
       }
@@ -308,8 +299,8 @@ export function runCommandCapture(command, args, options = {}) {
         try {
           shouldStop = Boolean(options.shouldStopEarly({
             pid: child.pid,
-            stdout,
-            stderr,
+            stdout: stdoutText,
+            stderr: stderrText,
             stdoutTail: stdoutTail.toString(options.encoding ?? "utf8"),
             stderrTail: stderrTail.toString(options.encoding ?? "utf8"),
             stdoutBytes,
@@ -327,12 +318,21 @@ export function runCommandCapture(command, args, options = {}) {
       if (noOutputTimeout) clearTimeout(noOutputTimeout);
       stderrBytes += chunk.length;
       stderrTail = appendTail(stderrTail, chunk, tailBytes);
-      safeCallback(options.onStderr, { pid: child.pid, chunk, text: chunk.toString(options.encoding ?? "utf8"), stderrBytes });
+      if (stderrCaptureClosed) return;
+      const remaining = Math.max(0, maxBuffer - stderrRetainedBytes);
+      const retained = chunk.subarray(0, remaining);
+      if (retained.length > 0) {
+        stderrRetainedBytes += retained.length;
+        stderrChunks.push(retained);
+      }
+      const text = stderrDecoder.write(retained);
+      stderrText += text;
+      safeCallback(options.onStderr, { pid: child.pid, chunk: retained, text, stderrBytes });
       if (stderrBytes > maxBuffer) {
+        stderrCaptureClosed = true;
         stopChild("buffer");
         return;
       }
-      stderrChunks.push(chunk);
     });
 
     child.on("error", (error) => {
@@ -390,6 +390,7 @@ export function runCommandCapture(command, args, options = {}) {
         timeoutMs: options.timeout ?? null,
         noOutputTimeoutMs: options.noOutputTimeout ?? null,
         killEscalated,
+        completedEarly: earlyCompleted,
         error
       };
       safeCallback(options.onClose, payload);
@@ -428,26 +429,24 @@ export function spawnDetached(command, args, options = {}) {
   const openFds = [];
   let stdinFd = "ignore";
   const executable = resolveExecutable(command);
-
-  // Pipe a file's contents to the detached child's stdin (avoid putting large
-  // prompts into argv, which hits the Windows command-line length limit).
-  if (options.inputPath) {
-    const fd = fs.openSync(options.inputPath, "r");
-    openFds.push(fd);
-    stdinFd = fd;
-  }
-
-  let stdio = stdinFd === "ignore" ? "ignore" : [stdinFd, "ignore", "ignore"];
-
-  if (options.logFile) {
-    fs.mkdirSync(path.dirname(options.logFile), { recursive: true });
-    const logFd = fs.openSync(options.logFile, "a", 0o600);
-    openFds.push(logFd);
-    stdio = [stdinFd === "ignore" ? "ignore" : stdinFd, logFd, logFd];
-  }
-
   let child;
   try {
+    // Pipe a file's contents to the detached child's stdin (avoid putting large
+    // prompts into argv, which hits the Windows command-line length limit).
+    if (options.inputPath) {
+      const fd = fs.openSync(options.inputPath, "r");
+      openFds.push(fd);
+      stdinFd = fd;
+    }
+
+    let stdio = stdinFd === "ignore" ? "ignore" : [stdinFd, "ignore", "ignore"];
+    if (options.logFile) {
+      fs.mkdirSync(path.dirname(options.logFile), { recursive: true });
+      const logFd = fs.openSync(options.logFile, "a", 0o600);
+      openFds.push(logFd);
+      stdio = [stdinFd === "ignore" ? "ignore" : stdinFd, logFd, logFd];
+    }
+
     child = spawn(executable, args, {
       cwd: options.cwd,
       env: options.env,

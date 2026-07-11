@@ -6,7 +6,7 @@ description: Run an agentic Claude review (Opus alias by default) against the cu
 
 ## Preflight
 
-1. Prefer the helper binary `codex-claude-review` if it is available on PATH.
+1. Prefer the helper binary `codex-claude` if it is available on PATH.
 2. If it is not available, tell the user to install the helper with
    `npm install -g codex-plugin-cc` after npmjs publish, or from a cloned
    checkout with `npm install -g .`.
@@ -27,7 +27,7 @@ exceeds the inline envelope.
 Use the exact argument tail the user supplied after `/claude-review:review`.
 
 - Preferred:
-  `codex-claude-review review <user-arguments>`
+  `codex-claude review <user-arguments>`
 
 Useful flags:
 

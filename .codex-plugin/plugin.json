@@ -1,7 +1,7 @@
 {
   "name": "claude-review",
-  "version": "1.0.14",
-  "description": "Run agentic Claude Opus-alias review passes, including Opus 1M long-context mode, from inside Codex CLI sessions with full read-only tool access (Read/Glob/Grep/Bash/Task/WebFetch/WebSearch) and parallel sub-agent dispatch.",
+  "version": "1.1.0",
+  "description": "Open a full Claude coding workspace supervised by Codex, or run agentic Claude Opus-alias review passes with isolated read-only tool access.",
   "author": {
     "name": "Kennedy Umege"
   },
@@ -22,18 +22,19 @@
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Claude Review",
-    "shortDescription": "Agentic Claude Opus-alias review of Codex changes, with 1M long-context mode, read-only tool access, and sub-agent dispatch",
-    "longDescription": "Use Claude Review to run agentic high-scrutiny code review, adversarial design review, exhaustive deep multi-agent review, security-focused review, setup checks, and background review jobs from inside Codex CLI sessions using the local Claude CLI runtime. Reviewers operate in read-only mode with Read, Glob, Grep, Task (sub-agents), WebFetch, WebSearch, and Bash limited to a git-safe wrapper plus node/npm verification commands. Edits, writes, and shell mutations are blocked unless the user explicitly opts into --unrestricted.",
+    "displayName": "Claude Workspace & Review",
+    "shortDescription": "Full Claude coding workspace with inherited Codex supervision plus isolated review lanes",
+    "longDescription": "Use Claude Workspace & Review to open Claude Code as a full interactive coding worker while the active Codex model supervises, verifies, and reviews the result. The workspace can edit files, run commands, and execute tests under Claude's native permission prompts. Separate high-scrutiny, adversarial, deep multi-agent, and security review commands retain their read-only tool fences.",
     "developerName": "Kennedy Umege",
     "category": "Coding",
     "capabilities": [
       "Interactive",
-      "Read"
+      "Read",
+      "Write"
     ],
     "websiteURL": "https://github.com/Kenmege/codex-plugin-cc",
     "defaultPrompt": [
-      "Review the current Codex-generated changes with Claude and flag anything unsafe, brittle, or under-tested.",
+      "Open a full Claude coding workspace and supervise the implementation with the active Codex model.",
       "Run an exhaustive deep adversarial review with sub-agent dispatch on the current diff.",
       "Run a security-focused Claude review on the current diff and map findings to OWASP/CWE."
     ],

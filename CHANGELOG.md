@@ -6,6 +6,85 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-07-11
+
+### Added
+
+- Added a split-terminal `workspace` lane that dispatches full Claude coding
+  workers in the background, opens Claude's native agent panel separately, and
+  returns Claude Code's authoritative short session ID to the still-active
+  Codex task.
+- Added `workspace-status`, `workspace-logs`, and `workspace-stop` controls for
+  Codex-led monitoring and repair loops.
+- Added `--no-panel`, `--panel-only`, `--plan`, `--model`, and privacy-safe
+  `--json-events` workspace controls.
+- Added Windows Node 18.18 CI and packed-tarball install smoke coverage for the
+  primary `codex-claude` executable and the compatibility alias.
+
+### Changed
+
+- The active Codex task now exclusively owns GPT-side orchestration and review;
+  the workspace lane no longer blocks the invoking terminal or starts nested
+  Codex processes.
+- `codex-claude` is now the primary executable in help and launch guidance;
+  `codex-claude-review` remains a supported compatibility alias.
+- Workspace request examples use an explicit `--` option terminator so coding
+  text cannot be reinterpreted as privileged CLI options.
+- Workspace requests are transported to Claude over stdin so coding text is not
+  exposed through the helper's process argument list.
+- MCP configuration inputs are consumed from bounded opened descriptors and
+  staged in private exclusive files before Claude starts.
+- Directory snapshots now default to the private per-user
+  `~/.claude-review/snapshots/` namespace, while `--snapshot-temp-root` remains
+  available for an explicitly isolated override.
+- Test discovery now uses Node's shell-independent `node --test` entry point.
+
+### Fixed
+
+- Workspace dispatch now parses the native Claude background receipt and fails
+  closed when no controllable session ID is returned instead of manufacturing
+  an unrelated identifier.
+- Workspace dispatch now has a 30-second startup bound and terminates the
+  process tree if Claude's native background handoff stalls.
+- One-shot terminal launchers are created in private directories with exclusive
+  permissions and remove themselves before opening the Claude agent panel.
+- Snapshot secret matching is case-insensitive, repository paths are parsed as
+  NUL-delimited data, and repository validation supports spaces and Unicode.
+- Directory snapshots now fail closed if Git ignore discovery fails, rather
+  than risking a copy that omits repository ignore rules.
+- The read-only Git wrapper rejects external config, include, contents,
+  exclude, and pathspec-file inputs, including attached short-option forms.
+- Job-state locking now uses an immutable per-contender ticket queue, recovers
+  abandoned or aged malformed contenders, and has no shared owner pathname for
+  a third process to replace during stale-owner recovery.
+- Value-taking CLI options fail closed on missing or option-like separate
+  values; leading-hyphen values remain available through `--name=<value>`.
+- Tokens following the workspace `--` terminator are preserved as coding data,
+  including requests that begin with a hyphen.
+- Review focus text beginning with option-like strings remains untrusted prompt
+  data and cannot activate unrestricted mode, MCP inheritance, extra
+  directories, or a permission-mode change.
+- Safe review sessions are now shell-free and load no persistent
+  user/project/local Claude settings, preventing repository configuration from
+  restoring Bash permissions or hooks.
+- Snapshot cleanup is confined to a versioned private ownership namespace,
+  validates snapshot identity, preserves live worker PIDs, and atomically
+  claims dead snapshots before removal.
+- Version bumps now use fsynced staged replacements and a durable recovery
+  journal. Canonical manifests are never renamed away, abrupt exits recover on
+  the next invocation, and concurrent user edits are preserved.
+- Process capture now stops retaining bytes at its configured ceiling while a
+  noisy child is terminating, preventing post-limit memory growth.
+- Job identifiers use a strict portable grammar at every artifact boundary,
+  blocking absolute, relative, and separator-based path traversal.
+- Explicit `--job-dir` storage is propagated through foreground reviews,
+  detached workers, diagnostics, status, result, and cancel operations.
+- Persistent job state fails closed when both the project and per-user paths
+  are unwritable instead of silently falling back to a shared OS temp path.
+- Security-sensitive file readers open descriptors before validating path
+  identity, eliminating check-then-open races while retaining symlink and
+  source-root containment checks.
+
 ## [1.0.14] — 2026-06-08
 
 ### Added

@@ -1,21 +1,26 @@
-# Claude Review Plugin For Codex
+# Claude Workspace & Review Plugin For Codex
 
 [![CI](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/pull-request-ci.yml/badge.svg)](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/pull-request-ci.yml)
 [![CodeQL](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/codeql.yml/badge.svg)](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/codeql.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18.18-brightgreen.svg)](#requirements)
 
-> Claude reviews your Codex diffs. Read-only, evidence-cited, and agentic.
+> Codex orchestrates Claude coding workers, then verifies and reviews their work.
 
-The primary product surface is Codex -> Claude review: from inside a Codex CLI
-session, you can unleash Claude Code's current Opus alias, including the Opus
-1M long-context alias, for a high-scrutiny adversarial review of any diff. The
-reviewer gets read-only workspace access through `Read`, `Glob`, `Grep`, Task
-sub-agents, a domain-fenced `WebFetch`, and a narrow git wrapper. It does not
-get `Edit`, `Write`, raw shell, or arbitrary git by default. Every elite-tier
-finding must cite tool-call evidence, and the cited tool is cross-checked
-against the live tool-use stream so a fabricated citation surfaces in the
-rendered output. Malformed structured output fails closed.
+The writable workspace lane keeps the originating Codex task active while
+Claude runs as a background coding worker. Claude's native `agents` control
+panel opens in a separate terminal, so the user can watch or interact without
+blocking Codex. The active Codex model is inherited automatically as the
+planner, supervisor, verifier, and reviewer; the plugin never launches a nested
+Codex process or hardcodes a GPT model.
+
+The plugin has two explicit surfaces: a writable Codex-supervised Claude coding
+workspace and isolated read-only review lanes. Reviews can use Claude Code's
+current Opus alias, including the Opus 1M long-context alias, with `Read`,
+`Glob`, `Grep`, Task sub-agents, and domain-fenced web access. They do not get
+`Edit`, `Write`, Bash, raw shell, or repository-controlled Claude settings by
+default. Every elite-tier finding must cite tool-call evidence, and malformed
+structured output fails closed.
 
 ## 60-Second Quickstart
 
@@ -23,8 +28,8 @@ Public npm is the frictionless install lane:
 
 ```bash
 npm install -g codex-plugin-cc
-codex-claude-review enable
-codex-claude-review doctor
+codex-claude enable
+codex-claude doctor
 ```
 
 For local development on the plugin itself, install from source:
@@ -33,8 +38,8 @@ For local development on the plugin itself, install from source:
 git clone https://github.com/Kenmege/codex-plugin-cc.git
 cd codex-plugin-cc
 npm install -g .
-codex-claude-review enable
-codex-claude-review doctor
+codex-claude enable
+codex-claude doctor
 ```
 
 `enable` registers the plugin with Codex. On current Codex CLI versions it
@@ -46,16 +51,38 @@ Codex CLI after running it. `doctor` checks Node, Git, Claude Code CLI/version
 auth, Codex registration, job storage, non-Git folder support, and optional live
 Claude runtime access with `--probe-runtime`.
 
-Then run a review from any git workspace:
+Dispatch a coding job from a Codex task:
 
 ```bash
-codex-claude-review review
-codex-claude-review review --preset ship --base main
-codex-claude-review review --preset security --add-dir ../shared-libs
+codex-claude workspace --path . -- "implement the requested change and run tests"
+codex-claude workspace-status --path . --all --json
+codex-claude workspace-logs <session-id>
+codex-claude workspace-stop <session-id>
+```
+
+The dispatch returns Claude Code's authoritative short session ID immediately;
+it fails closed if Claude does not provide one, and a 30-second startup guard
+terminates a stalled dispatch process tree. Use
+`--no-panel` for focused follow-up workers and `--panel-only` to reopen the
+control panel. Claude defaults to its rolling `opus` selector; pass `--model`
+when a different Claude selector is required. Normal mode has native coding
+capabilities and permission prompts; `--plan` is analysis-only. Coding requests
+are delivered to Claude over stdin instead of the process argument list, and
+privacy-safe lifecycle events exclude prompts and tool arguments.
+
+`codex-claude-review` remains a fully supported compatibility alias for every
+command, including the isolated read-only review lanes.
+
+Or run a read-only review from any git workspace:
+
+```bash
+codex-claude review
+codex-claude review --preset ship --base main
+codex-claude review --preset security --add-dir ../shared-libs
 ```
 
 Codex slash commands are available once the plugin marketplace is loaded:
-`/claude-review:review`, `/claude-review:elite-review`,
+`/claude-review:workspace`, `/claude-review:review`, `/claude-review:elite-review`,
 `/claude-review:deep-review`, `/claude-review:security-review`, and
 `/claude-review:doctor`.
 
@@ -66,10 +93,11 @@ Codex slash commands are available once the plugin marketplace is loaded:
 - Claude Code CLI authenticated locally for direct helper usage.
 - Codex CLI with local plugin marketplace support for slash-command usage.
 
-## Five Review Lanes
+## Workspace And Review Lanes
 
 | Lane | Purpose |
 |---|---|
+| `workspace` | Writable Claude background worker with a separate control panel and active-session Codex supervision. |
 | `review` | Quick agentic Claude review for everyday diffs. |
 | `adversarial-review` | Skeptical challenge pass for risky changes. |
 | `elite-review` | Exhaustive ship/no-ship review with systemic risks and blind spots. |
@@ -82,11 +110,11 @@ Use presets when you want one command that chooses the right lane:
 
 | Preset | Command | Use when |
 |---|---|---|
-| `quick` | `codex-claude-review review --preset quick` | Everyday review with high-signal findings. |
-| `ship` | `codex-claude-review review --preset ship --base main` | Pre-merge ship/no-ship gate. Routes to the elite lane. |
-| `security` | `codex-claude-review review --preset security` | Security review without remembering the dedicated command. |
-| `research` | `codex-claude-review folder ./paper --preset research --long-context` | Evidence-heavy code, papers, notes, or research folders. |
-| `deep` | `codex-claude-review review --preset deep --background` | Large or ambiguous tasks that need sub-agent investigation. |
+| `quick` | `codex-claude review --preset quick` | Everyday review with high-signal findings. |
+| `ship` | `codex-claude review --preset ship --base main` | Pre-merge ship/no-ship gate. Routes to the elite lane. |
+| `security` | `codex-claude review --preset security` | Security review without remembering the dedicated command. |
+| `research` | `codex-claude folder ./paper --preset research --long-context` | Evidence-heavy code, papers, notes, or research folders. |
+| `deep` | `codex-claude review --preset deep --background` | Large or ambiguous tasks that need sub-agent investigation. |
 
 ## Why Trust The Boundary?
 
@@ -96,6 +124,9 @@ Use presets when you want one command that chooses the right lane:
   are wrapped as untrusted data before Claude sees them.
 - Fenced external access: `WebFetch` starts with a domain allowlist and expands
   only through explicit `--web-domain` flags.
+- Fail-closed local inputs: snapshots require successful Git ignore discovery,
+  run inside a private per-user namespace, preserve live sessions during
+  cleanup, and exclude secret-bearing files by default.
 - Strict release controls: pinned GitHub Actions, Node 18/20/22 CI, package
   content checks, tag/package version matching, and npmjs publishing with
   provenance attestation once the human publish gate is enabled.
@@ -138,6 +169,10 @@ convergent control-plane issues.
 
 Five review lanes, all agentic by default:
 
+- `/claude-review:workspace` — dispatch a writable Claude worker, open its
+  native agent panel in another terminal, and keep the active Codex task in
+  control for status polling, verification, review, and focused repairs.
+
 - `/claude-review:review` — quick agentic Claude review (Opus alias, xhigh effort).
 - `/claude-review:adversarial-review` — agentic skeptical challenge pass.
 - `/claude-review:elite-review` — exhaustive single-agent ship/no-ship review
@@ -155,20 +190,20 @@ Plus the operational surface:
 - `/claude-review:setup` — verify local Claude CLI readiness and report
   whether subscription auth is detected (which suppresses budget caps).
   Use `--json` for machine-parseable hook output.
-- `codex-claude-review doctor` — first-run diagnostic for Node, Git, Claude,
+- `codex-claude doctor` — first-run diagnostic for Node, Git, Claude,
   Codex registration, writable job storage, and optional live runtime probing.
 - `/claude-review:status`, `/claude-review:result`, `/claude-review:cancel` —
   manage background review jobs.
-- `codex-claude-review` — direct CLI fallback outside slash commands.
+- `codex-claude` — direct CLI fallback outside slash commands.
 - Bundled Codex skill metadata (`skills/claude-review/SKILL.md`) lets current
   Codex plugin runtimes discover when to route natural-language review requests
   to the helper, not just explicit slash-command invocations.
 
 ## Agent Capabilities (safe-mode default)
 
-Each review lane spawns a Claude session with a fenced tool catalog. The
-agent gets *more* investigative capability than v0.2.0 (native tools beat
-shell duplicates) while losing the file-exfil channels that v0.2.0 had.
+Each review lane spawns a Claude session with a shell-free, fenced tool
+catalog. Native workspace tools provide structured investigation without
+exposing repository-defined shell permissions.
 
 | Tool                          | Notes                                                                  |
 |-------------------------------|------------------------------------------------------------------------|
@@ -179,20 +214,13 @@ shell duplicates) while losing the file-exfil channels that v0.2.0 had.
 | `WebSearch`                   | Web search (broad).                                                    |
 | `WebFetch`                    | Default domain allowlist (vendor docs, NIST/CWE/OWASP, package         |
 |                               | registries, NICE/BNF/BMJ/Lancet/NHS); extend with `--web-domain`.      |
-| `Bash(node scripts/bin/git-safe.mjs:*)` | Single git wrapper. Subcommand allowlist:                       |
-|                               | `diff`, `log`, `show`, `blame`, `status`, `branch`, `rev-parse`,       |
-|                               | `diff-tree`, `ls-files`, `ls-tree`, `shortlog`, `describe`,            |
-|                               | `config --get/--list`, `remote` (read-only), `tag` (listing only).     |
-|                               | Rejects `--no-index`, absolute paths outside cwd, `..` traversal,      |
-|                               | shell metacharacters, `-c`/`-C`, `--exec-path`, `--git-dir`,           |
-|                               | `--upload-pack`, `--receive-pack`.                                     |
-| `Bash(node --check:*)` / `Bash(node --test:*)` | Read-only syntax/test runners.                        |
-| `Bash(npm test:*)` / `Bash(npm run lint/check/typecheck:*)` | Project-defined verification.            |
 
-`Edit`, `Write`, and `NotebookEdit` are explicitly disallowed. Raw `cat`,
-`head`, `tail`, `find`, `ls`, `grep`, `rg`, `wc`, and arbitrary `git` are
-**not** in the allowlist — the native tools (Read/Glob/Grep) are strictly
-more capable, structured, and workspace-fenced.
+`Edit`, `Write`, and `NotebookEdit` are explicitly disallowed, and `Bash` is
+absent from both the safe tool catalog and permission rules. Persistent
+user/project/local Claude settings are not loaded in safe mode. The bundled
+`git-safe.mjs` remains a hardened standalone compatibility helper, but is not
+exposed to safe review sessions. Runtime test execution remains the outer
+Codex orchestrator's verification responsibility.
 
 `--permission-mode` is whitelisted to `default` and `plan` only. Passing
 anything else (`bypassPermissions`, `acceptEdits`, etc.) causes the helper
@@ -210,7 +238,7 @@ For workflows where the diff is fully trusted (your own branch on a private
 repo) and you want raw shell access:
 
 ```bash
-codex-claude-review review --unrestricted
+codex-claude review --unrestricted
 ```
 
 `--unrestricted` switches the agent to the full default tool catalog
@@ -253,8 +281,8 @@ Install from npmjs:
 
 ```bash
 npm install -g codex-plugin-cc
-codex-claude-review enable
-codex-claude-review doctor --probe-runtime
+codex-claude enable
+codex-claude doctor --probe-runtime
 ```
 
 If you previously installed the historical scoped package or a source checkout
@@ -264,8 +292,8 @@ package first:
 ```bash
 npm uninstall -g @kenmege/codex-plugin-cc codex-plugin-cc
 npm install -g codex-plugin-cc
-codex-claude-review enable
-codex-claude-review doctor
+codex-claude enable
+codex-claude doctor
 ```
 
 ### Source install
@@ -314,25 +342,25 @@ Do not commit a token-bearing `.npmrc`.
 ## Direct CLI Usage
 
 ```bash
-codex-claude-review doctor
-codex-claude-review doctor --probe-runtime
-codex-claude-review setup
-codex-claude-review setup --json
-codex-claude-review review
-codex-claude-review review --preset ship --base main
-codex-claude-review review --preset security
-codex-claude-review folder ./paper --preset research --long-context
-codex-claude-review review --preset deep --background
-codex-claude-review review --base main
-codex-claude-review adversarial-review --background look for migration risk
-codex-claude-review elite-review focus on architecture and rollback
-codex-claude-review deep-review --background --timeout-ms 1800000
-codex-claude-review security-review --add-dir ../shared-libs --web-domain 'https://snyk.io/*'
-codex-claude-review review --inherit-mcp --mcp-config /tmp/linear.mcp.json
-codex-claude-review review --unrestricted   # trust boundary off, raw shell
-codex-claude-review status
-codex-claude-review result <job-id>
-codex-claude-review cancel <job-id>
+codex-claude doctor
+codex-claude doctor --probe-runtime
+codex-claude setup
+codex-claude setup --json
+codex-claude review
+codex-claude review --preset ship --base main
+codex-claude review --preset security
+codex-claude folder ./paper --preset research --long-context
+codex-claude review --preset deep --background
+codex-claude review --base main
+codex-claude adversarial-review --background look for migration risk
+codex-claude elite-review focus on architecture and rollback
+codex-claude deep-review --background --timeout-ms 1800000
+codex-claude security-review --add-dir ../shared-libs --web-domain 'https://snyk.io/*'
+codex-claude review --inherit-mcp --mcp-config /tmp/linear.mcp.json
+codex-claude review --unrestricted   # trust boundary off, raw shell
+codex-claude status
+codex-claude result <job-id>
+codex-claude cancel <job-id>
 ```
 
 `setup --json` redacts local auth identity by default. It may still report
@@ -343,7 +371,7 @@ subscription auth from API-key auth without exposing the account address.
 
 Once the plugin marketplace is loaded, these `/claude-review:*` commands are
 available from inside a Codex CLI session. They are thin wrappers that invoke
-the bundled `codex-claude-review` helper and return its output directly.
+the bundled `codex-claude` helper and return its output directly.
 
 ### Review commands
 
@@ -406,8 +434,10 @@ Setup accepts `--json` for machine-parseable readiness checks. Doctor accepts
 
 ## Runtime Hardening
 
-- `--setting-sources project,local` keeps user-level Claude plugins/hooks
-  from hijacking or stalling the review flow.
+- `--setting-sources=` excludes persistent user, project, and local Claude
+  settings from safe reviews, preventing repository settings from restoring
+  shell permissions or hooks. Unrestricted and setup flows retain their
+  documented settings behavior.
 - `--strict-mcp-config` is **on by default** so the agent's MCP tool surface
   is exactly the set the user passed via `--mcp-config`. Opt out with
   `--inherit-mcp`.
@@ -466,6 +496,18 @@ Background jobs survive across Codex turns without polluting global state.
 The `.claude-review/` directory is excluded from review snapshots so review
 artefacts do not feed back into themselves.
 
+Pass `--job-dir <path>` (or set `CODEX_CLAUDE_REVIEW_JOB_DIR`) to keep every
+job record, immutable input, prompt, and log in an alternate directory. Reuse
+the same option with `status`, `result`, and `cancel`. Job IDs accept only
+1–128 ASCII letters, digits, underscores, and hyphens.
+
+Directory snapshots live under the versioned, privately owned
+`~/.claude-review/snapshots/` namespace by default. Pass
+`--snapshot-temp-root <path>` to select another isolated root.
+Stale cleanup validates the namespace and snapshot metadata, preserves workers
+whose owner PID is still live, atomically claims dead snapshots, and never
+scans or deletes similarly named directories outside that namespace.
+
 Job records are versioned with `schemaVersion: 1`, created with exclusive file
 creation, and updated with atomic writes. `status` marks long-running jobs as
 `stalled` when their timeout window has elapsed.
@@ -480,7 +522,7 @@ creation, and updated with atomic writes. `status` marks long-running jobs as
 | `3` | Review completed and found ship-blocking findings |
 
 The same gating contract applies when a review is run in the background:
-`codex-claude-review result <job-id>` re-validates the persisted result and
+`codex-claude result <job-id>` re-validates the persisted result and
 exits `3` when the completed job contains ship-blocking findings.
 
 ## Supported Platforms
@@ -488,7 +530,7 @@ exits `3` when the completed job contains ship-blocking findings.
 Supported and tested development platforms are macOS and Linux with Node.js
 18.18 or newer. Windows is not a supported v1 platform because process-tree
 termination and shell/tool semantics have not been verified there. Run
-`codex-claude-review doctor --probe-runtime` on a new machine before trusting a
+`codex-claude doctor --probe-runtime` on a new machine before trusting a
 release gate there, because Claude Code runtime behavior and local auth state
 still depend on the host environment.
 

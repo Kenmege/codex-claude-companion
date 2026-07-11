@@ -6,8 +6,8 @@ Use this script for a terminal recording after npmjs publish is live.
 
 ```bash
 npm install -g codex-plugin-cc
-codex-claude-review enable
-codex-claude-review doctor --probe-runtime
+codex-claude enable
+codex-claude doctor --probe-runtime
 ```
 
 Show that `doctor` reports Node, Git, Claude CLI, Claude auth, Codex
@@ -38,7 +38,7 @@ export function payout(total, users) {
   return divide(total, users.length);
 }
 JS
-codex-claude-review review --preset ship --base HEAD
+codex-claude review --preset ship --base HEAD
 ```
 
 Expected story: Claude flags the unguarded empty-user divide path, cites the
@@ -47,9 +47,9 @@ file, and recommends a concrete fix.
 ## Scene 3: Research Folder
 
 ```bash
-codex-claude-review folder ./notes --preset research --long-context --background
-codex-claude-review status
-codex-claude-review result <job-id>
+codex-claude folder ./notes --preset research --long-context --background
+codex-claude status
+codex-claude result <job-id>
 ```
 
 Expected story: the same tool works outside git, scales to evidence-heavy

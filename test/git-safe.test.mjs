@@ -4,8 +4,9 @@ import os from "node:os";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WRAPPER = path.join(ROOT, "scripts", "bin", "git-safe.mjs");
 
 function runWrapper(args, options = {}) {
@@ -31,6 +32,17 @@ function makeRepo() {
   }
   fs.writeFileSync(path.join(cwd, "file.txt"), "two\n", "utf8");
   return cwd;
+}
+
+function readFileSnapshot(filePath) {
+  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try {
+    const contents = fs.readFileSync(fd);
+    const stat = fs.fstatSync(fd, { bigint: true });
+    return { contents, stat };
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 test("git-safe rejects unknown subcommand", () => {
@@ -94,10 +106,89 @@ test("git-safe rejects mutating git config forms", () => {
   assert.match(result.stderr, /git config restricted to --get \/ --list/);
 });
 
+test("git-safe rejects inline path-valued options outside the workspace", () => {
+  const cwd = makeRepo();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "git-safe-outside-"));
+  const outsideConfig = path.join(outside, "outside.cfg");
+  fs.writeFileSync(outsideConfig, "[leak]\nsecret = TOP_SECRET\n", "utf8");
+
+  for (const args of [
+    ["config", `--file=${outsideConfig}`, "--list"],
+    ["config", "--file", outsideConfig, "--list"],
+    ["config", `-f${outsideConfig}`, "--list"],
+    ["blame", `--contents=${outsideConfig}`, "file.txt"],
+    ["ls-files", `--exclude-from=${outsideConfig}`],
+    ["ls-files", `-X${outsideConfig}`],
+    ["diff", `--pathspec-from-file=${outsideConfig}`],
+    ["log", `--ignore-revs-file=${outsideConfig}`],
+    ["log", "--ignore-revs-file", outsideConfig]
+  ]) {
+    const result = runWrapper(args, { cwd });
+    assert.notEqual(result.status, 0, args.join(" "));
+    assert.match(result.stderr, /forbidden path-valued flag/i, args.join(" "));
+    assert.doesNotMatch(result.stdout, /TOP_SECRET/, args.join(" "));
+  }
+});
+
+test("git-safe rejects signature display that can invoke repository-configured verifiers", () => {
+  const result = runWrapper(["log", "--show-signature", "-1"], { cwd: makeRepo() });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /forbidden execution-capable flag/i);
+});
+
+test("git-safe prevents repository config includes from reading outside files", () => {
+  const cwd = makeRepo();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "git-safe-include-"));
+  const outsideConfig = path.join(outside, "outside.cfg");
+  fs.writeFileSync(outsideConfig, "[leak]\nsecret = TOP_SECRET\n", "utf8");
+  const configured = spawnSync("git", ["config", "--local", "include.path", outsideConfig], {
+    cwd,
+    encoding: "utf8"
+  });
+  assert.equal(configured.status, 0, configured.stderr || configured.stdout);
+
+  const explicit = runWrapper(["config", "--includes", "--list"], { cwd });
+  assert.notEqual(explicit.status, 0);
+  assert.match(explicit.stderr, /forbidden config source flag/i);
+  assert.doesNotMatch(explicit.stdout, /TOP_SECRET/);
+
+  const defaultList = runWrapper(["config", "--list"], { cwd });
+  assert.equal(defaultList.status, 0, defaultList.stderr);
+  assert.doesNotMatch(defaultList.stdout, /TOP_SECRET/);
+});
+
 test("git-safe rejects mutating git remote forms", () => {
   const result = runWrapper(["remote", "add", "evil", "https://evil.example.com"]);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /git remote restricted to read-only forms/);
+  assert.match(result.stderr, /git remote restricted to .*read-only forms/);
+});
+
+test("git-safe rejects network-capable remote inspection with hostile transport config", () => {
+  if (process.platform === "win32") return;
+
+  const cwd = makeRepo();
+  const marker = path.join(cwd, "ssh-command-pwned.txt");
+  const sshCommand = path.join(cwd, "hostile-ssh.sh");
+  fs.writeFileSync(sshCommand, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nexit 1\n`, "utf8");
+  fs.chmodSync(sshCommand, 0o755);
+
+  for (const args of [
+    ["remote", "add", "origin", "ssh://attacker.invalid/repo.git"],
+    ["config", "--local", "core.sshCommand", sshCommand]
+  ]) {
+    const configured = spawnSync("git", args, { cwd, encoding: "utf8" });
+    assert.equal(configured.status, 0, configured.stderr || configured.stdout);
+  }
+
+  const show = runWrapper(["remote", "show", "origin"], { cwd });
+  assert.notEqual(show.status, 0);
+  assert.match(show.stderr, /git remote restricted to local read-only forms/);
+  assert.equal(fs.existsSync(marker), false, "repository-local core.sshCommand executed");
+
+  const getUrl = runWrapper(["remote", "get-url", "origin"], { cwd });
+  assert.equal(getUrl.status, 0, getUrl.stderr || getUrl.stdout);
+  assert.match(getUrl.stdout, /ssh:\/\/attacker\.invalid\/repo\.git/);
+  assert.equal(fs.existsSync(marker), false, "remote get-url unexpectedly contacted the remote");
 });
 
 test("git-safe rejects mutating git tag forms", () => {
@@ -125,7 +216,7 @@ test("git-safe rejects tag creation and remote ref updates", () => {
 
   const remote = runWrapper(["remote", "update"], { cwd });
   assert.notEqual(remote.status, 0);
-  assert.match(remote.stderr, /git remote restricted to read-only forms/);
+  assert.match(remote.stderr, /git remote restricted to .*read-only forms/);
 });
 
 test("git-safe rejects diff output writes", () => {
@@ -140,6 +231,24 @@ test("git-safe rejects diff output writes", () => {
 test("git-safe accepts a benign git status", () => {
   const result = runWrapper(["status", "--short"]);
   assert.equal(result.status, 0);
+});
+
+test("git-safe status does not refresh or rewrite the index", () => {
+  const cwd = makeRepo();
+  const trackedFile = path.join(cwd, "file.txt");
+  fs.writeFileSync(trackedFile, "one\n", "utf8");
+  const future = new Date(Date.now() + 5_000);
+  fs.utimesSync(trackedFile, future, future);
+
+  const indexPath = path.join(cwd, ".git", "index");
+  const before = readFileSnapshot(indexPath);
+  const result = runWrapper(["status", "--short"], { cwd });
+  const after = readFileSnapshot(indexPath);
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.deepEqual(after.contents, before.contents);
+  assert.equal(after.stat.mtimeNs, before.stat.mtimeNs);
+  assert.equal(after.stat.ctimeNs, before.stat.ctimeNs);
 });
 
 test("git-safe accepts git rev-parse --show-toplevel", () => {
@@ -218,6 +327,36 @@ test("git-safe scrubs GIT_CONFIG_COUNT config-injection triplets", () => {
     false,
     "GIT_CONFIG_* triplet was not scrubbed: injected core.pager executed"
   );
+});
+
+test("git-safe neutralizes executable repository-local diff and fsmonitor config", () => {
+  if (process.platform === "win32") return;
+
+  const cwd = makeRepo();
+  const diffMarker = path.join(cwd, "local-diff-pwned.txt");
+  const fsmonitorMarker = path.join(cwd, "local-fsmonitor-pwned.txt");
+  const diffHook = path.join(cwd, "local-diff.sh");
+  const fsmonitorHook = path.join(cwd, "local-fsmonitor.sh");
+  fs.writeFileSync(diffHook, `#!/bin/sh\ntouch ${JSON.stringify(diffMarker)}\n`, "utf8");
+  fs.writeFileSync(fsmonitorHook, `#!/bin/sh\ntouch ${JSON.stringify(fsmonitorMarker)}\nexit 0\n`, "utf8");
+  fs.chmodSync(diffHook, 0o755);
+  fs.chmodSync(fsmonitorHook, 0o755);
+
+  for (const [key, value] of [
+    ["diff.external", diffHook],
+    ["core.fsmonitor", fsmonitorHook]
+  ]) {
+    const configured = spawnSync("git", ["config", "--local", key, value], { cwd, encoding: "utf8" });
+    assert.equal(configured.status, 0, configured.stderr || configured.stdout);
+  }
+
+  const diff = runWrapper(["diff"], { cwd });
+  const status = runWrapper(["status", "--short"], { cwd });
+
+  assert.equal(diff.status, 0, diff.stderr || diff.stdout);
+  assert.equal(status.status, 0, status.stderr || status.stdout);
+  assert.equal(fs.existsSync(diffMarker), false, "repository-local diff.external executed");
+  assert.equal(fs.existsSync(fsmonitorMarker), false, "repository-local core.fsmonitor executed");
 });
 
 test("git-safe rejects oversized arguments", () => {

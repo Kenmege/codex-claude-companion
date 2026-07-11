@@ -3,9 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { bumpVersion, recoverInterruptedTransaction } from "../scripts/bump-version.mjs";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function read(relativePath) {
   return fs.readFileSync(path.join(root, relativePath), "utf8");
@@ -34,8 +36,66 @@ test("pull request workflow cancels superseded matrix runs", () => {
   assert.match(source, /cancel-in-progress: true/);
 });
 
+test("pull request workflow proves the platform-neutral surface on minimum Node for Windows", () => {
+  const source = read(".github/workflows/pull-request-ci.yml");
+  assert.match(source, /windows-test:/);
+  assert.match(source, /runs-on: windows-latest/);
+  assert.match(source, /node-version: 18\.18\.0/);
+  assert.match(source, /run: npm run lint/);
+  assert.match(source, /run: npm run test:windows/);
+  assert.match(source, /run: npm run pack:check/);
+});
+
+const packageJson = JSON.parse(read("package.json"));
+
+test("package test command uses shell-independent Node discovery", () => {
+  assert.equal(packageJson.scripts.test, "node --test");
+  assert.match(packageJson.scripts["test:windows"], /^node --test /);
+});
+
+test("packed package installs working primary and compatibility command aliases", { timeout: 60_000 }, () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-claude-packed-bin-"));
+  const packDirectory = path.join(tempRoot, "pack");
+  const installPrefix = path.join(tempRoot, "install");
+  fs.mkdirSync(packDirectory, { recursive: true });
+  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+
+  try {
+    const packed = JSON.parse(execFileSync(
+      npm,
+      ["pack", "--json", "--ignore-scripts", "--pack-destination", packDirectory],
+      { cwd: root, encoding: "utf8" }
+    ));
+    assert.equal(packed.length, 1);
+    const tarball = path.join(packDirectory, packed[0].filename);
+    execFileSync(
+      npm,
+      ["install", "--prefix", installPrefix, "--ignore-scripts", "--no-audit", "--no-fund", tarball],
+      { cwd: tempRoot, encoding: "utf8" }
+    );
+
+    for (const alias of ["codex-claude", "codex-claude-review"]) {
+      const executable = path.join(
+        installPrefix,
+        "node_modules",
+        ".bin",
+        `${alias}${process.platform === "win32" ? ".cmd" : ""}`
+      );
+      const result = spawnSync(executable, ["--help"], {
+        cwd: tempRoot,
+        encoding: "utf8",
+        shell: process.platform === "win32"
+      });
+      assert.equal(result.status, 0, `${alias}: ${result.stderr || result.stdout}`);
+      assert.match(result.stdout, /codex-claude workspace/);
+      assert.match(result.stdout, /Compatibility alias:\s+codex-claude-review/);
+    }
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("package files list excludes bump-version from the shipped tarball surface", () => {
-  const packageJson = JSON.parse(read("package.json"));
   assert.ok(packageJson.files.includes("scripts/claude-review-companion.mjs"));
   assert.ok(packageJson.files.includes("scripts/validate-repo.mjs"));
   assert.ok(packageJson.files.includes("scripts/bin/"));
@@ -50,6 +110,35 @@ test("bump-version checks the current release manifests", () => {
       encoding: "utf8"
     });
   });
+});
+
+test("bump-version enforces Semantic Versioning identifier rules", () => {
+  const invalidVersions = [
+    "1.2.3-01",
+    "1.2.3-alpha..1",
+    "1.2.3-alpha.",
+    "1.2.3+build..1",
+    "1.2.3+build."
+  ];
+
+  for (const version of invalidVersions) {
+    const result = spawnSync(
+      process.execPath,
+      [path.join(root, "scripts", "bump-version.mjs"), "--check", version, "--root", root],
+      { cwd: root, encoding: "utf8" }
+    );
+    assert.notEqual(result.status, 0, `${version} must be rejected`);
+    assert.match(result.stderr, /Expected a valid Semantic Version/);
+  }
+
+  for (const version of ["1.2.3-alpha.1", "1.2.3+001"]) {
+    const result = spawnSync(
+      process.execPath,
+      [path.join(root, "scripts", "bump-version.mjs"), "--check", version, "--root", root],
+      { cwd: root, encoding: "utf8" }
+    );
+    assert.doesNotMatch(result.stderr, /Expected a valid Semantic Version/, `${version} must be accepted`);
+  }
 });
 
 test("bump-version updates the package and Codex plugin manifests", () => {
@@ -71,6 +160,185 @@ test("bump-version updates the package and Codex plugin manifests", () => {
   assert.equal(packageLock.version, "9.9.9");
   assert.equal(packageLock.packages[""].version, "9.9.9");
   assert.equal(pluginJson.version, "9.9.9");
+});
+
+test("bump-version validates every manifest before changing any file", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bump-version-atomic-"));
+  fs.mkdirSync(path.join(tempRoot, ".codex-plugin"), { recursive: true });
+  for (const relative of ["package.json", "package-lock.json"]) {
+    fs.copyFileSync(path.join(root, relative), path.join(tempRoot, relative));
+  }
+  fs.writeFileSync(path.join(tempRoot, ".codex-plugin", "plugin.json"), "{ malformed\n", "utf8");
+
+  const packageBefore = fs.readFileSync(path.join(tempRoot, "package.json"));
+  const lockBefore = fs.readFileSync(path.join(tempRoot, "package-lock.json"));
+  const result = spawnSync(
+    process.execPath,
+    [path.join(root, "scripts", "bump-version.mjs"), "9.9.9", "--root", tempRoot],
+    { cwd: tempRoot, encoding: "utf8" }
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(fs.readFileSync(path.join(tempRoot, "package.json")), packageBefore);
+  assert.deepEqual(fs.readFileSync(path.join(tempRoot, "package-lock.json")), lockBefore);
+});
+
+test("bump-version preserves a concurrent manifest edit made after staging", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bump-version-concurrent-"));
+  fs.mkdirSync(path.join(tempRoot, ".codex-plugin"), { recursive: true });
+  for (const relative of ["package.json", "package-lock.json", ".codex-plugin/plugin.json"]) {
+    fs.copyFileSync(path.join(root, relative), path.join(tempRoot, relative));
+  }
+
+  const packagePath = path.join(tempRoot, "package.json");
+  const lockBefore = fs.readFileSync(path.join(tempRoot, "package-lock.json"));
+  const pluginBefore = fs.readFileSync(path.join(tempRoot, ".codex-plugin", "plugin.json"));
+  const concurrent = `${fs.readFileSync(packagePath, "utf8").trimEnd()}\n `;
+
+  assert.throws(
+    () => bumpVersion(tempRoot, "9.9.9", {
+      beforeCommit() {
+        fs.writeFileSync(packagePath, concurrent, "utf8");
+      }
+    }),
+    /Manifest changed during version preparation: package\.json/
+  );
+  assert.equal(fs.readFileSync(packagePath, "utf8"), concurrent);
+  assert.deepEqual(fs.readFileSync(path.join(tempRoot, "package-lock.json")), lockBefore);
+  assert.deepEqual(fs.readFileSync(path.join(tempRoot, ".codex-plugin", "plugin.json")), pluginBefore);
+});
+
+test("bump-version never overwrites a manifest changed at the replacement boundary", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bump-version-replace-race-"));
+  fs.mkdirSync(path.join(tempRoot, ".codex-plugin"), { recursive: true });
+  const originals = new Map();
+  for (const relative of ["package.json", "package-lock.json", ".codex-plugin/plugin.json"]) {
+    fs.copyFileSync(path.join(root, relative), path.join(tempRoot, relative));
+    originals.set(relative, fs.readFileSync(path.join(tempRoot, relative)));
+  }
+
+  const packagePath = path.join(tempRoot, "package.json");
+  const concurrent = `${fs.readFileSync(packagePath, "utf8").trimEnd()}\n `;
+
+  assert.throws(
+    () => bumpVersion(tempRoot, "9.9.9", {
+      beforeReplace({ index }) {
+        if (index === 0) fs.writeFileSync(packagePath, concurrent, "utf8");
+      }
+    }),
+    /Manifest changed at version replacement boundary: package\.json/
+  );
+
+  assert.equal(fs.readFileSync(packagePath, "utf8"), concurrent);
+  assert.deepEqual(fs.readFileSync(path.join(tempRoot, "package-lock.json")), originals.get("package-lock.json"));
+  assert.deepEqual(fs.readFileSync(path.join(tempRoot, ".codex-plugin", "plugin.json")), originals.get(".codex-plugin/plugin.json"));
+  assert.ok(!fs.existsSync(path.join(tempRoot, ".codex-version-bump.transaction")));
+});
+
+test("bump-version rolls back every replacement when an in-process commit fails", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bump-version-rollback-"));
+  fs.mkdirSync(path.join(tempRoot, ".codex-plugin"), { recursive: true });
+  const originals = new Map();
+  for (const relative of ["package.json", "package-lock.json", ".codex-plugin/plugin.json"]) {
+    fs.copyFileSync(path.join(root, relative), path.join(tempRoot, relative));
+    originals.set(relative, fs.readFileSync(path.join(tempRoot, relative)));
+  }
+
+  assert.throws(
+    () => bumpVersion(tempRoot, "9.9.9", {
+      afterReplace({ index }) {
+        if (index === 0) throw new Error("injected replacement failure");
+      }
+    }),
+    /injected replacement failure/
+  );
+
+  for (const [relative, original] of originals) {
+    assert.deepEqual(fs.readFileSync(path.join(tempRoot, relative)), original, relative);
+  }
+  assert.ok(!fs.existsSync(path.join(tempRoot, ".codex-version-bump.transaction")));
+});
+
+test("bump-version recovers an abrupt process exit without leaving a canonical manifest absent", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bump-version-crash-"));
+  fs.mkdirSync(path.join(tempRoot, ".codex-plugin"), { recursive: true });
+  for (const relative of ["package.json", "package-lock.json", ".codex-plugin/plugin.json"]) {
+    fs.copyFileSync(path.join(root, relative), path.join(tempRoot, relative));
+  }
+
+  const moduleUrl = new URL("../scripts/bump-version.mjs", import.meta.url).href;
+  const childScript = [
+    `import { bumpVersion } from ${JSON.stringify(moduleUrl)};`,
+    `bumpVersion(${JSON.stringify(tempRoot)}, "9.9.9", {`,
+    "  afterReplace({ index }) { if (index === 0) process.exit(91); }",
+    "});"
+  ].join("\n");
+  const crashed = spawnSync(process.execPath, ["--input-type=module", "-e", childScript], {
+    cwd: tempRoot,
+    encoding: "utf8"
+  });
+
+  assert.equal(crashed.status, 91, crashed.stderr || crashed.stdout);
+  for (const relative of ["package.json", "package-lock.json", ".codex-plugin/plugin.json"]) {
+    assert.ok(fs.statSync(path.join(tempRoot, relative)).isFile(), `${relative} must remain present`);
+  }
+  assert.ok(fs.existsSync(path.join(tempRoot, ".codex-version-bump.transaction")));
+
+  execFileSync(process.execPath, [path.join(root, "scripts", "bump-version.mjs"), "9.9.9", "--root", tempRoot], {
+    cwd: tempRoot,
+    encoding: "utf8"
+  });
+
+  const packageJson = JSON.parse(fs.readFileSync(path.join(tempRoot, "package.json"), "utf8"));
+  const packageLock = JSON.parse(fs.readFileSync(path.join(tempRoot, "package-lock.json"), "utf8"));
+  const pluginJson = JSON.parse(fs.readFileSync(path.join(tempRoot, ".codex-plugin", "plugin.json"), "utf8"));
+  assert.equal(packageJson.version, "9.9.9");
+  assert.equal(packageLock.version, "9.9.9");
+  assert.equal(packageLock.packages[""].version, "9.9.9");
+  assert.equal(pluginJson.version, "9.9.9");
+  assert.ok(!fs.existsSync(path.join(tempRoot, ".codex-version-bump.transaction")));
+});
+
+test("bump-version recovery distinguishes a stale reused PID from the original process", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bump-version-pid-reuse-"));
+  fs.mkdirSync(path.join(tempRoot, ".codex-plugin"), { recursive: true });
+  for (const relative of ["package.json", "package-lock.json", ".codex-plugin/plugin.json"]) {
+    fs.copyFileSync(path.join(root, relative), path.join(tempRoot, relative));
+  }
+
+  const moduleUrl = new URL("../scripts/bump-version.mjs", import.meta.url).href;
+  const childScript = [
+    `import { bumpVersion } from ${JSON.stringify(moduleUrl)};`,
+    `bumpVersion(${JSON.stringify(tempRoot)}, "9.9.9", {`,
+    "  afterReplace({ index }) { if (index === 0) process.exit(92); }",
+    "});"
+  ].join("\n");
+  const crashed = spawnSync(process.execPath, ["--input-type=module", "-e", childScript], {
+    cwd: tempRoot,
+    encoding: "utf8"
+  });
+  assert.equal(crashed.status, 92, crashed.stderr || crashed.stdout);
+
+  const ownerPath = path.join(tempRoot, ".codex-version-bump.transaction", "owner.json");
+  const owner = JSON.parse(fs.readFileSync(ownerPath, "utf8"));
+  owner.pid = process.pid;
+  owner.processIdentity = "original-process-instance";
+  fs.writeFileSync(ownerPath, `${JSON.stringify(owner, null, 2)}\n`, { mode: 0o600 });
+
+  assert.throws(
+    () => recoverInterruptedTransaction(tempRoot, {
+      isProcessAlive: () => true,
+      processIdentityLookup: () => "original-process-instance"
+    }),
+    /transaction is active/
+  );
+
+  const conflicts = recoverInterruptedTransaction(tempRoot, {
+    isProcessAlive: () => true,
+    processIdentityLookup: () => "reused-process-instance"
+  });
+  assert.deepEqual(conflicts, []);
+  assert.equal(fs.existsSync(path.dirname(ownerPath)), false);
 });
 
 test("package.json shape supports public npm publish", () => {
@@ -150,6 +418,7 @@ test("public-facing docs do not contain private local machine paths", () => {
     "commands/elite-review.md",
     "commands/deep-review.md",
     "commands/security-review.md",
+    "commands/workspace.md",
     "commands/doctor.md",
     "commands/setup.md",
     "commands/status.md",
@@ -162,6 +431,7 @@ test("public-facing docs do not contain private local machine paths", () => {
 
 test("public trust metadata is attribution-safe and precise", () => {
   const notice = read("NOTICE");
+  const packageJson = JSON.parse(read("package.json"));
   const plugin = JSON.parse(read(".codex-plugin/plugin.json"));
   const claudeMarketplace = JSON.parse(read(".claude-plugin/marketplace.json"));
   const readme = read("README.md");
@@ -172,11 +442,12 @@ test("public trust metadata is attribution-safe and precise", () => {
     "RELEASE_NOTES_v1.0.3.md",
     "RELEASE_NOTES_v1.0.9.md"
   ].map(read).join("\n");
-  const currentReleaseNotes = read("RELEASE_NOTES_v1.0.14.md");
+  const currentReleaseNotes = read(`RELEASE_NOTES_v${packageJson.version}.md`);
 
   assert.match(notice, /Copyright 2026 Kennedy Umege/);
   assert.match(notice, /Copyright 2026 OpenAI/);
-  assert.deepEqual(plugin.interface.capabilities, ["Interactive", "Read"]);
+  assert.deepEqual(plugin.interface.capabilities, ["Interactive", "Read", "Write"]);
+  assert.equal(packageJson.bin["codex-claude"], "scripts/claude-review-companion.mjs");
   assert.equal(claudeMarketplace.owner.name, "Kennedy Umege");
   assert.doesNotMatch(claudeMarketplace.owner.name, /OpenAI/);
   assert.match(readme, /Windows is not a supported v1 platform/);
@@ -195,9 +466,9 @@ test("public trust metadata is attribution-safe and precise", () => {
   );
   assert.doesNotMatch(bug, /@kenmege\/codex-plugin-cc/);
   assert.doesNotMatch(historicalLaunchNotes, /GPT-5\.5|gpt-5\.5/);
-  assert.match(readme, /`gpt-5\.5` for complex coding\/research work/);
-  assert.match(currentReleaseNotes, /Codex -> Claude review as the primary/);
-  assert.match(currentReleaseNotes, /gpt-5\.5/);
+  assert.match(readme, /active Codex model is inherited automatically/i);
+  assert.match(currentReleaseNotes, /Codex-supervised Claude coding workspace/);
+  assert.match(currentReleaseNotes, /never launches a nested\s+Codex process/);
 });
 
 test("internal prompt artifacts are not tracked for public release", () => {
@@ -232,7 +503,7 @@ test("Claude Code workflow is pinned, current, and auth-gated", () => {
   const interactiveOauthStep = workflowStep(workflow, "Run Claude interactive response with OAuth");
   const interactiveApiKeyStep = workflowStep(workflow, "Run Claude interactive response with API key");
 
-  assert.match(workflow, /pull_request:\n\s+types: \[opened, synchronize, ready_for_review, reopened\]/);
+  assert.match(workflow, /pull_request:\r?\n\s+types: \[opened, synchronize, ready_for_review, reopened\]/);
   assert.match(workflow, /anthropics\/claude-code-action@[a-f0-9]{40}/);
   assert.doesNotMatch(workflow, /anthropics\/claude-code-action@v1/);
   assert.doesNotMatch(workflow, /^\s+mode:/m);
@@ -310,6 +581,17 @@ test("public docs document the add-dir boundary override", () => {
   }
 });
 
+test("workspace documentation promises stdin prompt transport", () => {
+  const readme = read("README.md");
+  const architecture = read("docs/architecture.md");
+  const changelog = read("CHANGELOG.md");
+
+  assert.match(readme, /delivered to Claude over stdin instead of the process argument list/);
+  assert.match(architecture, /coding request is piped over stdin rather than included in process arguments/);
+  assert.match(changelog, /transported to Claude over stdin/);
+  assert.doesNotMatch(architecture, /--bg \"coding request\"/);
+});
+
 test("release checklist documents npmjs publish switch and v-tag trigger", () => {
   const source = read("CONTRIBUTING.md");
   assert.match(source, /NPMJS_PUBLISH_ENABLED=true/);
@@ -354,5 +636,32 @@ test("repository validation accepts fork-renamed local marketplace names", () =>
     assert.match(output, /Repository validation passed/);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("repository validation works from paths containing spaces and Unicode", () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "codex-plugin-path-"));
+  const tempRoot = path.join(parent, "plugin review 雪");
+  try {
+    fs.cpSync(root, tempRoot, {
+      recursive: true,
+      filter(source) {
+        const relative = path.relative(root, source);
+        return (
+          relative !== ".git" &&
+          !relative.startsWith(".git/") &&
+          relative !== ".claude-review" &&
+          !relative.startsWith(".claude-review/")
+        );
+      }
+    });
+
+    const output = execFileSync(process.execPath, ["scripts/validate-repo.mjs"], {
+      cwd: tempRoot,
+      encoding: "utf8"
+    });
+    assert.match(output, /Repository validation passed/);
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true });
   }
 });

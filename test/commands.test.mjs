@@ -4,9 +4,10 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { buildJobRecord, createJob, readJob, writeJobInput } from "../scripts/lib/state.mjs";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const helper = path.join(root, "scripts", "claude-review-companion.mjs");
 
 function read(relativePath) {
@@ -116,7 +117,7 @@ function completedEliteJob(cwd, jobId, result) {
 
 test("review command prefers the helper binary and public install guidance", () => {
   const source = read("commands/review.md");
-  assert.match(source, /codex-claude-review review/);
+  assert.match(source, /codex-claude review/);
   assert.match(source, /npm install -g \./);
   assert.doesNotMatch(source, /\/Users\/kenmege/);
   assert.match(source, /Return the helper stdout verbatim/i);
@@ -130,7 +131,8 @@ test("helper help exits successfully while unknown commands remain usage errors"
     });
     assert.equal(result.status, 0, `${arg}: ${result.stderr}`);
     assert.match(result.stdout, /Usage:/);
-    assert.match(result.stdout, /codex-claude-review setup/);
+    assert.match(result.stdout, /codex-claude setup/);
+    assert.match(result.stdout, /Compatibility alias:\s+codex-claude-review\b/);
   }
 
   const unknown = spawnSync(process.execPath, [helper, "not-a-command"], {
@@ -147,11 +149,27 @@ test("helper usage advertises folder subcommand and --path flag", () => {
     encoding: "utf8"
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /codex-claude-review folder <path>/);
+  assert.match(result.stdout, /codex-claude folder <path>/);
   assert.match(result.stdout, /--path <dir>\s+target directory/);
   assert.match(result.stdout, /--preset quick\|ship\|security\|research\|deep/);
   assert.match(result.stdout, /--exclude <basename>/);
   assert.match(result.stdout, /--scope auto\|working-tree\|branch\|directory/);
+});
+
+test("helper usage advertises split-terminal Claude workspaces and Codex supervision controls", () => {
+  const result = spawnSync(process.execPath, [helper, "--help"], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /codex-claude workspace \[flags\] -- <coding request>/);
+  assert.match(result.stdout, /workspace-status/);
+  assert.match(result.stdout, /workspace-logs/);
+  assert.match(result.stdout, /workspace-stop/);
+  assert.match(result.stdout, /--panel-only/);
+  assert.match(result.stdout, /--no-panel/);
+  assert.doesNotMatch(result.stdout, /--codex-model/);
+  assert.match(result.stdout, /--json-events/);
 });
 
 test("folder subcommand requires a positional path argument", () => {
@@ -242,7 +260,8 @@ test("doctor reports PLUGIN_NOT_CONFIGURED when config is empty", () => {
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.plugin_configured, false);
   assert.ok(payload.problems.some((p) => p.code === "PLUGIN_NOT_CONFIGURED"));
-  assert.match(payload.recommended_action, /enable/);
+  assert.equal(payload.recommended_action, "Run `codex-claude enable` to register the plugin.");
+  assert.doesNotMatch(JSON.stringify(payload.problems), /codex-claude-review/);
 });
 
 test("doctor recognizes quoted marketplace config when plugin is enabled", () => {
@@ -442,15 +461,83 @@ test("--job-dir flag overrides everything else", () => {
   assert.equal(payload.job_dir, path.resolve(customJobDir));
 });
 
+test("an unusable explicit --job-dir fails closed without creating workspace artifacts", () => {
+  const cwd = makeDirtyRepo();
+  const unusableJobDir = path.join(cwd, "not-a-directory");
+  const fakeConfig = path.join(cwd, "config.toml");
+  fs.writeFileSync(unusableJobDir, "regular file\n", "utf8");
+  fs.writeFileSync(fakeConfig, "", "utf8");
+
+  const result = spawnSync(
+    process.execPath,
+    [helper, "doctor", "--json", "--config", fakeConfig, "--job-dir", unusableJobDir],
+    { cwd, encoding: "utf8" }
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, /explicit job directory/i);
+  assert.equal(fs.existsSync(path.join(cwd, ".claude-review", "jobs")), false);
+});
+
+test("review and control commands keep every artifact in an explicit --job-dir", () => {
+  const cwd = makeDirtyRepo();
+  const customJobDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-jobdir-e2e-"));
+  const fake = withFakeClaudeForReview(validBasicStructuredStream());
+  const run = spawnSync(
+    process.execPath,
+    [helper, "review", "--legacy", "--cwd", cwd, "--job-dir", customJobDir],
+    { cwd, encoding: "utf8", env: fake.env }
+  );
+
+  assert.equal(run.status, 0, run.stderr || run.stdout);
+  const entries = fs.readdirSync(customJobDir);
+  for (const suffix of [".job.json", ".input.json", ".log", ".prompt.md"]) {
+    assert.ok(entries.some((entry) => entry.endsWith(suffix)), `missing ${suffix} in explicit job dir`);
+  }
+  assert.equal(fs.existsSync(path.join(cwd, ".claude-review", "jobs")), false);
+
+  const jobId = entries.find((entry) => entry.endsWith(".job.json")).replace(/\.job\.json$/, "");
+  const status = spawnSync(
+    process.execPath,
+    [helper, "status", jobId, "--cwd", cwd, "--job-dir", customJobDir],
+    { cwd, encoding: "utf8" }
+  );
+  assert.equal(status.status, 0, status.stderr || status.stdout);
+  assert.match(status.stdout, new RegExp(jobId));
+
+  const result = spawnSync(
+    process.execPath,
+    [helper, "result", jobId, "--cwd", cwd, "--job-dir", customJobDir],
+    { cwd, encoding: "utf8" }
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Verdict: OK/);
+});
+
+test("status, result, and cancel reject path-like job IDs before state lookup", () => {
+  const cwd = makeDirtyRepo();
+  const jobDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-jobid-reject-"));
+
+  for (const command of ["status", "result", "cancel"]) {
+    const result = spawnSync(
+      process.execPath,
+      [helper, command, "../escape", "--cwd", cwd, "--job-dir", jobDir],
+      { cwd, encoding: "utf8" }
+    );
+    assert.equal(result.status, 1, `${command}: ${result.stderr || result.stdout}`);
+    assert.match(result.stderr, /Invalid job id/);
+  }
+});
+
 test("adversarial command stays read-only", () => {
   const source = read("commands/adversarial-review.md");
   assert.match(source, /Keep this command read-only/i);
-  assert.match(source, /codex-claude-review adversarial-review/);
+  assert.match(source, /codex-claude adversarial-review/);
 });
 
 test("elite command exposes the exhaustive review lane", () => {
   const source = read("commands/elite-review.md");
-  assert.match(source, /codex-claude-review elite-review/);
+  assert.match(source, /codex-claude elite-review/);
   assert.match(source, /elite adversarial review pass/i);
   assert.match(source, /Keep this command read-only/i);
 });
@@ -459,15 +546,25 @@ test("plugin manifest has the expected plugin name", () => {
   const manifest = JSON.parse(read(".codex-plugin/plugin.json"));
   assert.equal(manifest.name, "claude-review");
   assert.equal(manifest.skills, "./skills/");
-  assert.equal(manifest.interface.displayName, "Claude Review");
+  assert.equal(manifest.interface.displayName, "Claude Workspace & Review");
   assert.ok(Array.isArray(manifest.interface.defaultPrompt));
   assert.ok(manifest.interface.defaultPrompt.length > 0);
   assert.ok(manifest.interface.defaultPrompt.length <= 3);
 });
 
+test("workspace command defines active-model Codex supervision and a writable Claude lane", () => {
+  const source = read("commands/workspace.md");
+  assert.match(source, /codex-claude(?:-review)? workspace/);
+  assert.match(source, /active Codex (?:session )?model/i);
+  assert.match(source, /write|edit files/i);
+  assert.match(source, /verify|verification/i);
+  assert.match(source, /review/i);
+  assert.doesNotMatch(source, /dangerously-skip-permissions/);
+});
+
 test("deep-review command advertises agentic multi-agent mode", () => {
   const source = read("commands/deep-review.md");
-  assert.match(source, /codex-claude-review deep-review/);
+  assert.match(source, /codex-claude deep-review/);
   assert.match(source, /max effort/i);
   assert.match(source, /sub-agents?/i);
   assert.match(source, /read-only/i);
@@ -475,14 +572,14 @@ test("deep-review command advertises agentic multi-agent mode", () => {
 
 test("security-review command advertises security-focused agentic mode", () => {
   const source = read("commands/security-review.md");
-  assert.match(source, /codex-claude-review security-review/);
+  assert.match(source, /codex-claude security-review/);
   assert.match(source, /OWASP|CWE/);
   assert.match(source, /read-only/i);
 });
 
 test("doctor command exposes first-run diagnostics", () => {
   const source = read("commands/doctor.md");
-  assert.match(source, /codex-claude-review doctor/);
+  assert.match(source, /codex-claude doctor/);
   assert.match(source, /--probe-runtime/);
   assert.match(source, /Node, Git, Claude Code CLI/);
 });
@@ -492,6 +589,12 @@ test("review command advertises agentic mode and read-only tools", () => {
   assert.match(source, /agentic/i);
   assert.match(source, /read-only/i);
   assert.match(source, /Read, Glob, Grep/);
+});
+
+test("safe-mode runtime note matches the tools actually exposed to Claude", () => {
+  const helperSource = read("scripts/claude-review-companion.mjs");
+  assert.match(helperSource, /read-only native tools \(Read\/Glob\/Grep\/Task\/WebSearch\)/);
+  assert.doesNotMatch(helperSource, /SAFE mode[^\n]*fenced git wrapper/i);
 });
 
 test("review command preserves positional focus text in the job snapshot", () => {
@@ -513,6 +616,46 @@ test("review command preserves positional focus text in the job snapshot", () =>
   assert.ok(inputFile);
   const snapshot = JSON.parse(fs.readFileSync(path.join(jobsDir, inputFile), "utf8"));
   assert.equal(snapshot.focusText, "focus on rollback safety");
+});
+
+test("review focus text is never reinterpreted as privileged review flags", () => {
+  for (const focusText of [
+    "--unrestricted audit permission handling",
+    "--mcp-config config must remain focus text",
+    "--add-dir linked path must remain focus text",
+    "--permission-mode plan must remain focus text"
+  ]) {
+    const cwd = makeDirtyRepo();
+    const fake = withFakeClaudeForReview(validBasicStructuredStream());
+    const result = spawnSync(
+      process.execPath,
+      [helper, "review", "--legacy", "--cwd", cwd, "--", focusText],
+      { cwd, encoding: "utf8", env: fake.env }
+    );
+
+    assert.equal(result.status, 0, `${focusText}: ${result.stderr}`);
+    const jobsDir = path.join(cwd, ".claude-review", "jobs");
+    const inputFile = fs.readdirSync(jobsDir).find((entry) => entry.endsWith(".input.json"));
+    assert.ok(inputFile);
+    const snapshot = JSON.parse(fs.readFileSync(path.join(jobsDir, inputFile), "utf8"));
+    assert.equal(snapshot.focusText, focusText);
+    assert.equal(snapshot.unrestricted, false);
+    assert.deepEqual(snapshot.mcpConfigs, []);
+    assert.deepEqual(snapshot.addDirs, []);
+    assert.equal(snapshot.permissionMode, "default");
+  }
+});
+
+test("review rejects misspelled inline safety booleans with usage exit code", () => {
+  const cwd = makeDirtyRepo();
+  const result = spawnSync(
+    process.execPath,
+    [helper, "review", "--cwd", cwd, "--unrestricted=flase"],
+    { cwd, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /Invalid --unrestricted boolean value/i);
 });
 
 test("helper rejects unsafe --add-dir before invoking Claude", () => {
@@ -565,6 +708,79 @@ test("helper validates --mcp-config JSON before invoking Claude", () => {
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Invalid --mcp-config/);
+});
+
+test("helper rejects MCP config files larger than the validated byte ceiling", () => {
+  const cwd = makeDirtyRepo();
+  const oversized = path.join(cwd, "oversized-mcp.json");
+  const prefix = '{"mcpServers":{"safe":{"command":"server"}},"padding":"';
+  const suffix = '"}';
+  fs.writeFileSync(oversized, `${prefix}${"x".repeat(1024 * 1024)}${suffix}`, "utf8");
+
+  const result = spawnSync(
+    process.execPath,
+    [helper, "review", "--legacy", "--cwd", cwd, "--mcp-config", "oversized-mcp.json"],
+    { cwd, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 2, result.stderr || result.stdout);
+  assert.match(result.stderr, /exceeds 1048576 bytes/);
+});
+
+test("helper binds validated MCP bytes to a private staged file and cleans it", () => {
+  const cwd = makeDirtyRepo();
+  const original = path.join(cwd, "mcp.json");
+  const capture = path.join(cwd, "mcp-capture.json");
+  const validConfig = JSON.stringify({ mcpServers: { safe: { command: "safe-server" } } });
+  const swappedConfig = JSON.stringify({ mcpServers: { swapped: { command: "attacker-server" } } });
+  fs.writeFileSync(original, validConfig, { encoding: "utf8", mode: 0o600 });
+
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-mcp-bin-"));
+  const claudePath = path.join(binDir, "claude");
+  fs.writeFileSync(
+    claudePath,
+    [
+      "#!/bin/sh",
+      "if [ \"$1\" = \"--help\" ]; then echo 'Usage: claude'; exit 0; fi",
+      "if [ \"$1\" = \"--version\" ]; then echo '2.1.183 (Claude Code)'; exit 0; fi",
+      "if [ \"$1\" = \"auth\" ]; then echo '{\"loggedIn\":true,\"authMethod\":\"api-key\"}'; exit 0; fi",
+      `printf '%s' '${swappedConfig}' > \"$ORIGINAL_MCP\"`,
+      "while [ \"$#\" -gt 0 ]; do",
+      "  if [ \"$1\" = \"--mcp-config\" ]; then",
+      "    shift",
+      "    node -e 'const fs=require(\"fs\"); fs.writeFileSync(process.env.MCP_CAPTURE, JSON.stringify({path:process.argv[1], source:fs.readFileSync(process.argv[1],\"utf8\")}))' \"$1\"",
+      "    break",
+      "  fi",
+      "  shift",
+      "done",
+      "cat <<'EOF'",
+      validBasicStructuredStream(),
+      "EOF"
+    ].join("\n"),
+    { mode: 0o755 }
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [helper, "review", "--legacy", "--cwd", cwd, "--mcp-config", "mcp.json"],
+    {
+      cwd,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+        ORIGINAL_MCP: original,
+        MCP_CAPTURE: capture
+      }
+    }
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const staged = JSON.parse(fs.readFileSync(capture, "utf8"));
+  assert.notEqual(staged.path, original);
+  assert.deepEqual(JSON.parse(staged.source), JSON.parse(validConfig));
+  assert.deepEqual(JSON.parse(fs.readFileSync(original, "utf8")), JSON.parse(swappedConfig));
+  assert.equal(fs.existsSync(staged.path), false, "staged MCP file must be removed after review");
 });
 
 test("helper rejects invalid numeric safety flags before invoking Claude", () => {

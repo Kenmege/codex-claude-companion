@@ -6,7 +6,7 @@ import process from "node:process";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
+import { parseArgs } from "./lib/args.mjs";
 import {
   ALLOWED_PERMISSION_MODES,
   AUTO_LONG_CONTEXT_BYTES,
@@ -28,11 +28,13 @@ import {
   validateStructuredReviewOutput
 } from "./lib/claude.mjs";
 import { chooseContextMode, collectReviewContext, resolveReviewTarget } from "./lib/git.mjs";
+import { stageMcpConfigs } from "./lib/mcp-config.mjs";
 import { createDirectorySnapshot, isGitRepository } from "./lib/snapshot.mjs";
 import { runCommand, spawnDetached, terminateProcessTree } from "./lib/process.mjs";
 import {
   JOB_DIR_ENV_VAR,
   appendLogLine,
+  assertValidJobId,
   buildJobRecord,
   createJob,
   generateJobId,
@@ -47,7 +49,16 @@ import {
   writeJobInput
 } from "./lib/state.mjs";
 import { renderCancelReport, renderFailureReport, renderReviewResult, renderSetupReport, renderStatusReport } from "./lib/render.mjs";
-import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
+import {
+  buildClaudeLogsArgs,
+  buildClaudeStatusArgs,
+  buildClaudeStopArgs,
+  createWorkspaceConfig,
+  formatShellCommand,
+  resolveWorkspaceRoot,
+  runWorkspace,
+  runWorkspaceControl
+} from "./lib/workspace.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const ROOT_DIR = path.resolve(path.dirname(SCRIPT_PATH), "..");
@@ -61,7 +72,6 @@ const CODEX_PLUGIN_KEY = `${CODEX_PLUGIN_NAME}@${CODEX_MARKETPLACE_KEY}`;
 const CODEX_MARKETPLACE_WRAPPER_DIR = "marketplaces";
 const CODEX_MARKETPLACE_PLUGIN_SUBDIR = `plugins/${CODEX_PLUGIN_NAME}`;
 const MINIMUM_CLAUDE_VERSION = "2.1.183";
-const MAX_MCP_CONFIG_BYTES = 1024 * 1024;
 const PACKAGE_JSON_PATH = path.join(ROOT_DIR, "package.json");
 
 function getPackageVersion() {
@@ -191,9 +201,6 @@ const REVIEW_LIKE_VALUE_OPTIONS = [
 const REVIEW_LIKE_REPEATABLE_VALUE_OPTIONS = ["add-dir", "exclude", "mcp-config", "web-domain"];
 
 function parseCommandInput(argv, config = {}) {
-  if (argv.length === 1 && argv[0]?.includes(" ")) {
-    return parseArgs(splitRawArgumentString(argv[0]), config);
-  }
   return parseArgs(argv, config);
 }
 
@@ -201,18 +208,31 @@ function printUsage() {
   console.log(
     [
       "Usage:",
-      "  codex-claude-review enable",
-      "  codex-claude-review setup",
-      "  codex-claude-review doctor [--json]",
-      "  codex-claude-review folder <path> [flags] [focus text]",
-      "  codex-claude-review review [flags] [focus text]",
-      "  codex-claude-review adversarial-review [flags] [focus text]",
-      "  codex-claude-review elite-review [flags] [focus text]",
-      "  codex-claude-review deep-review [flags] [focus text]",
-      "  codex-claude-review security-review [flags] [focus text]",
-      "  codex-claude-review status [job-id]",
-      "  codex-claude-review result <job-id>",
-      "  codex-claude-review cancel <job-id>",
+      "  codex-claude enable",
+      "  codex-claude setup",
+      "  codex-claude doctor [--json]",
+      "  codex-claude folder <path> [flags] [focus text]",
+      "  codex-claude review [flags] [focus text]",
+      "  codex-claude adversarial-review [flags] [focus text]",
+      "  codex-claude elite-review [flags] [focus text]",
+      "  codex-claude deep-review [flags] [focus text]",
+      "  codex-claude security-review [flags] [focus text]",
+      "  codex-claude workspace [flags] -- <coding request>",
+      "  codex-claude workspace-status [--path <dir>] [--all] [--json]",
+      "  codex-claude workspace-logs <session-id>",
+      "  codex-claude workspace-stop <session-id>",
+      "  codex-claude status [job-id]",
+      "  codex-claude result <job-id>",
+      "  codex-claude cancel <job-id>",
+      "  Compatibility alias: codex-claude-review",
+      "",
+      "Flags (workspace):",
+      "  --path <dir>                coding directory (default: cwd)",
+      "  --model <name>              Claude model selector (default: rolling opus alias)",
+      "  --plan                      start Claude in analysis-only plan mode",
+      "  --panel-only                open Claude's agents panel without dispatching work",
+      "  --no-panel                  dispatch without opening another panel",
+      "  --json-events               emit privacy-safe lifecycle events as JSON Lines to stderr",
       "",
       "Flags (review-like commands):",
       "  --path <dir>                target directory (default: cwd). Works for Git and non-Git dirs.",
@@ -221,7 +241,7 @@ function printUsage() {
       "  --scope auto|working-tree|branch|directory",
       "  --preset quick|ship|security|research|deep",
       "  --exclude <basename>        repeatable; extra dirs to exclude from non-Git snapshot",
-      "  --snapshot-temp-root <dir>  override temp root for the snapshot (default: os.tmpdir())",
+      "  --snapshot-temp-root <dir>  override private snapshot root (default: ~/.claude-review/snapshots)",
       "  --job-dir <path>            override job artifact directory (env: CODEX_CLAUDE_REVIEW_JOB_DIR)",
       "  --model <name>              override model (default: opus)",
       "  --effort low|medium|high|xhigh|max",
@@ -254,6 +274,78 @@ function printUsage() {
       "  --probe-runtime             run a live Claude non-interactive model probe"
     ].join("\n")
   );
+}
+
+async function handleWorkspace(argv) {
+  const { options, positionals, optionTerminatorIndex } = parseCommandInput(argv, {
+    booleanOptions: ["plan", "panel-only", "no-panel", "json-events"],
+    valueOptions: ["path", "model"]
+  });
+  const config = createWorkspaceConfig(
+    {
+      path: options.path,
+      model: options.model,
+      plan: options.plan,
+      panelOnly: options["panel-only"],
+      noPanel: options["no-panel"],
+      jsonEvents: options["json-events"],
+      positionals,
+      optionTerminatorIndex
+    },
+    process.cwd()
+  );
+  const result = await runWorkspace(config);
+  if (result.sessionId) console.log(`Claude workspace session: ${result.sessionId}`);
+  if (result.panelOpened) {
+    console.log(`Claude control panel opened via ${result.terminalBackend}.`);
+  } else if (result.manualPanelCommand) {
+    console.log(`Worker is still running. Open the panel manually: ${formatShellCommand(result.manualPanelCommand)}`);
+  }
+  if (result.status !== 0) process.exitCode = result.status;
+}
+
+function relayWorkspaceControlResult(result) {
+  if (result.stdout) process.stdout.write(String(result.stdout));
+  if (result.stderr) process.stderr.write(String(result.stderr));
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exitCode = result.status ?? 1;
+}
+
+function handleWorkspaceStatus(argv) {
+  const { options, positionals } = parseCommandInput(argv, {
+    booleanOptions: ["all", "json"],
+    valueOptions: ["path"]
+  });
+  if (positionals.length) throw new Error(`Unexpected workspace-status argument: ${positionals[0]}`);
+  const cwd = path.resolve(process.cwd(), options.path ?? ".");
+  relayWorkspaceControlResult(runWorkspaceControl(
+    "claude",
+    buildClaudeStatusArgs({ cwd, all: options.all, json: options.json }),
+    { cwd }
+  ));
+}
+
+function requireSessionId(positionals, command) {
+  if (positionals.length !== 1 || !positionals[0]) {
+    throw new Error(`${command} requires exactly one Claude session ID`);
+  }
+  return positionals[0];
+}
+
+function handleWorkspaceLogs(argv) {
+  const { positionals } = parseCommandInput(argv);
+  relayWorkspaceControlResult(runWorkspaceControl(
+    "claude",
+    buildClaudeLogsArgs(requireSessionId(positionals, "workspace-logs"))
+  ));
+}
+
+function handleWorkspaceStop(argv) {
+  const { positionals } = parseCommandInput(argv);
+  relayWorkspaceControlResult(runWorkspaceControl(
+    "claude",
+    buildClaudeStopArgs(requireSessionId(positionals, "workspace-stop"))
+  ));
 }
 
 function redactAuthDetail(auth) {
@@ -362,61 +454,6 @@ function validateAddDir(cwd, value) {
 
 function validateAddDirs(cwd, values) {
   return coerceMultiValue(values).map((value) => validateAddDir(cwd, value));
-}
-
-function parseMcpConfigJson(source, label) {
-  let parsed;
-  try {
-    parsed = JSON.parse(source);
-  } catch (error) {
-    throw new Error(`Invalid --mcp-config ${label}: JSON parse failed (${error.message})`);
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`Invalid --mcp-config ${label}: expected a JSON object`);
-  }
-  const serverContainer = parsed.mcpServers ?? parsed.servers;
-  if (serverContainer != null && (typeof serverContainer !== "object" || Array.isArray(serverContainer))) {
-    throw new Error(`Invalid --mcp-config ${label}: mcpServers/servers must be an object`);
-  }
-  if (serverContainer == null && !Object.values(parsed).some((value) => value && typeof value === "object" && !Array.isArray(value))) {
-    throw new Error(`Invalid --mcp-config ${label}: no server definitions found`);
-  }
-  return parsed;
-}
-
-function validateMcpConfig(cwd, value) {
-  const raw = String(value ?? "").trim();
-  if (!raw) {
-    throw new Error("--mcp-config requires a non-empty file path or JSON object");
-  }
-  if (raw.startsWith("{")) {
-    parseMcpConfigJson(raw, "inline JSON");
-    return raw;
-  }
-  if (raw.includes("\0") || hasParentTraversalSegment(raw)) {
-    throw new Error(`Invalid --mcp-config path: ${raw}`);
-  }
-  const resolved = path.resolve(cwd, raw);
-  const fd = fs.openSync(resolved, "r");
-  let source;
-  try {
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile()) {
-      throw new Error(`Invalid --mcp-config path: ${raw} is not a file`);
-    }
-    if (stat.size > MAX_MCP_CONFIG_BYTES) {
-      throw new Error(`Invalid --mcp-config path: ${raw} exceeds ${MAX_MCP_CONFIG_BYTES} bytes`);
-    }
-    source = fs.readFileSync(fd, "utf8");
-  } finally {
-    fs.closeSync(fd);
-  }
-  parseMcpConfigJson(source, raw);
-  return resolved;
-}
-
-function validateMcpConfigs(cwd, values) {
-  return coerceMultiValue(values).map((value) => validateMcpConfig(cwd, value));
 }
 
 function resolveAgenticPreference(reviewConfig, options) {
@@ -574,7 +611,7 @@ function prepareSnapshot(cwd, kind, options, focusText) {
     }
   }
   if (agentic && !unrestricted) {
-    notes.push("Running in agentic SAFE mode with read-only native tools (Read/Glob/Grep/Task/WebSearch), a fenced git wrapper, and a curated WebFetch domain allowlist.");
+    notes.push("Running in agentic SAFE mode with read-only native tools (Read/Glob/Grep/Task/WebSearch) and a curated WebFetch domain allowlist; no shell tool is exposed.");
   } else if (agentic && unrestricted) {
     notes.push("WARNING: --unrestricted set. Trust boundary disabled. Claude has full default tool catalog including raw Bash. Do not use against untrusted diffs.");
   } else {
@@ -599,6 +636,8 @@ function prepareSnapshot(cwd, kind, options, focusText) {
   const timeoutMs = resolveTimeout(options, reviewConfig);
   const permissionMode = resolvePermissionMode(options);
   const webDomains = coerceMultiValue(options["web-domain"]);
+  const addDirs = validateAddDirs(cwd, options["add-dir"]);
+  const stagedMcp = stageMcpConfigs(cwd, options["mcp-config"]);
 
   return {
     reviewKind: kind,
@@ -621,9 +660,10 @@ function prepareSnapshot(cwd, kind, options, focusText) {
     agentic,
     unrestricted,
     permissionMode,
-    mcpConfigs: validateMcpConfigs(cwd, options["mcp-config"]),
+    mcpConfigs: stagedMcp.configs,
+    mcpConfigTempRoots: stagedMcp.tempRoots,
     strictMcpConfig: strictMcp,
-    addDirs: validateAddDirs(cwd, options["add-dir"]),
+    addDirs,
     maxBudgetUsd: budget,
     systemPromptExtra: options["system-prompt-extra"] ?? null,
     timeoutMs,
@@ -635,7 +675,7 @@ function prepareSnapshot(cwd, kind, options, focusText) {
   };
 }
 
-function buildBackgroundJob(cwd, kind, snapshot) {
+function buildBackgroundJob(cwd, kind, snapshot, stateOptions = {}) {
   const reviewConfig = REVIEW_KIND_CONFIG[kind];
   const jobId = generateJobId(reviewConfig.jobPrefix);
   const title = reviewConfig.title;
@@ -649,13 +689,15 @@ function buildBackgroundJob(cwd, kind, snapshot) {
     agentic: snapshot.agentic,
     unrestricted: snapshot.unrestricted
   });
-  createJob(cwd, jobId, job);
-  writeJobInput(cwd, jobId, snapshot);
-  const pid = spawnDetached(process.execPath, [SCRIPT_PATH, "run-job", jobId, "--cwd", cwd], {
+  createJob(cwd, jobId, job, stateOptions);
+  writeJobInput(cwd, jobId, snapshot, stateOptions);
+  const childArgs = [SCRIPT_PATH, "run-job", jobId, "--cwd", cwd];
+  if (stateOptions.jobDir) childArgs.push("--job-dir", stateOptions.jobDir);
+  const pid = spawnDetached(process.execPath, childArgs, {
     cwd,
-    logFile: resolveJobLogFile(cwd, jobId)
+    logFile: resolveJobLogFile(cwd, jobId, stateOptions)
   });
-  writeJob(cwd, jobId, { ...job, pid, status: "running", updatedAt: new Date().toISOString() });
+  writeJob(cwd, jobId, { ...job, pid, status: "running", updatedAt: new Date().toISOString() }, stateOptions);
   return { ...job, pid, status: "running" };
 }
 
@@ -675,31 +717,36 @@ function mergeDiagnostics(base, patch) {
   };
 }
 
-function cleanupSnapshotRoot(snapshot) {
+function cleanupSnapshotArtifacts(snapshot) {
   const snapshotRoot = snapshot?.directorySnapshot?.snapshotRoot;
-  if (!snapshotRoot) return;
-  try {
-    fs.rmSync(snapshotRoot, { recursive: true, force: true });
-  } catch {}
+  if (snapshotRoot) {
+    try {
+      fs.rmSync(snapshotRoot, { recursive: true, force: true });
+    } catch {}
+  }
+  for (const tempRoot of snapshot?.mcpConfigTempRoots ?? []) {
+    try {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    } catch {}
+  }
 }
 
-function persistJobDiagnostics(cwd, jobId, patch) {
+function persistJobDiagnostics(cwd, jobId, patch, stateOptions = {}) {
   try {
-    const current = listJobs(cwd).find((job) => job.id === jobId) ?? {};
+    const current = listJobs(cwd, stateOptions).find((job) => job.id === jobId) ?? {};
     updateJob(cwd, jobId, {
       diagnostics: mergeDiagnostics(current.diagnostics, patch),
       currentPhase: patch?.currentPhase ?? current.currentPhase
-    });
+    }, stateOptions);
   } catch {}
 }
 
-async function runSnapshot(cwd, jobId, snapshot) {
-  appendLogLine(
-    cwd,
-    jobId,
+async function runSnapshot(cwd, jobId, snapshot, stateOptions = {}) {
+  const log = (line, level = "info") => appendLogLine(cwd, jobId, line, level, stateOptions);
+  log(
     `Starting ${snapshot.reviewKind} (${snapshot.unrestricted ? "UNRESTRICTED" : snapshot.agentic ? "agentic-safe" : "structured"}) with ${snapshot.model}/${snapshot.effort}`
   );
-  appendLogLine(cwd, jobId, `Context mode: ${snapshot.contextMode} (${snapshot.inputBytes} bytes)`);
+  log(`Context mode: ${snapshot.contextMode} (${snapshot.inputBytes} bytes)`);
   persistJobDiagnostics(cwd, jobId, {
     cwd,
     model: snapshot.model,
@@ -707,51 +754,51 @@ async function runSnapshot(cwd, jobId, snapshot) {
     permissionMode: snapshot.permissionMode,
     contextBytes: snapshot.inputBytes,
     currentPhase: "prompt_context_built"
-  });
-  appendLogLine(cwd, jobId, "Prompt/context built");
+  }, stateOptions);
+  log("Prompt/context built");
   if (snapshot.debug) {
-    appendLogLine(cwd, jobId, `Changed files: ${snapshot.changedFiles.join(", ") || "(none)"}`, "debug");
-    appendLogLine(cwd, jobId, `MCP scope: ${snapshot.strictMcpConfig ? "strict" : "inherited"}; add-dir count: ${snapshot.addDirs.length}`, "debug");
+    log(`Changed files: ${snapshot.changedFiles.join(", ") || "(none)"}`, "debug");
+    log(`MCP scope: ${snapshot.strictMcpConfig ? "strict" : "inherited"}; add-dir count: ${snapshot.addDirs.length}`, "debug");
   }
   if (snapshot.maxBudgetUsd && !snapshot.subscriptionAuth) {
-    appendLogLine(cwd, jobId, `Budget cap: $${snapshot.maxBudgetUsd.toFixed(2)}`);
+    log(`Budget cap: $${snapshot.maxBudgetUsd.toFixed(2)}`);
   } else if (snapshot.maxBudgetUsd && snapshot.subscriptionAuth) {
-    appendLogLine(cwd, jobId, `Budget cap requested ($${snapshot.maxBudgetUsd.toFixed(2)}) but suppressed under subscription auth`);
+    log(`Budget cap requested ($${snapshot.maxBudgetUsd.toFixed(2)}) but suppressed under subscription auth`);
   }
-  const promptPath = resolveJobPromptFile(cwd, jobId);
+  const promptPath = resolveJobPromptFile(cwd, jobId, stateOptions);
   let stdoutSeen = false;
   let stderrSeen = false;
   const hooks = {
     promptPath,
     onInvocation(meta) {
-      appendLogLine(cwd, jobId, `Claude invocation built; prompt saved to ${meta.promptPath}`);
-      persistJobDiagnostics(cwd, jobId, meta);
+      log(`Claude invocation built; prompt saved to ${meta.promptPath}`);
+      persistJobDiagnostics(cwd, jobId, meta, stateOptions);
     },
     onSpawn(meta) {
-      appendLogLine(cwd, jobId, `Claude process spawned pid=${meta.pid}`);
+      log(`Claude process spawned pid=${meta.pid}`);
       persistJobDiagnostics(cwd, jobId, {
         childPid: meta.pid,
         command: meta.command,
         currentPhase: meta.phase ?? "claude_spawned"
-      });
+      }, stateOptions);
     },
     onFirstStdout(meta) {
       if (stdoutSeen) return;
       stdoutSeen = true;
-      appendLogLine(cwd, jobId, "First stdout byte received");
-      persistJobDiagnostics(cwd, jobId, { stdoutTail: meta.text, currentPhase: meta.phase ?? "claude_stdout" });
+      log("First stdout byte received");
+      persistJobDiagnostics(cwd, jobId, { stdoutTail: meta.text, currentPhase: meta.phase ?? "claude_stdout" }, stateOptions);
     },
     onFirstStderr(meta) {
       if (stderrSeen) return;
       stderrSeen = true;
-      appendLogLine(cwd, jobId, "First stderr byte received");
-      persistJobDiagnostics(cwd, jobId, { stderrTail: meta.text, currentPhase: meta.phase ?? "claude_stderr" });
+      log("First stderr byte received");
+      persistJobDiagnostics(cwd, jobId, { stderrTail: meta.text, currentPhase: meta.phase ?? "claude_stderr" }, stateOptions);
     },
     onDiagnosticUpdate(patch) {
-      persistJobDiagnostics(cwd, jobId, patch);
+      persistJobDiagnostics(cwd, jobId, patch, stateOptions);
     },
     onExit(meta) {
-      appendLogLine(cwd, jobId, `Claude exited code=${meta.status ?? "null"} signal=${meta.signal ?? "null"}`);
+      log(`Claude exited code=${meta.status ?? "null"} signal=${meta.signal ?? "null"}`);
       persistJobDiagnostics(cwd, jobId, {
         childPid: meta.pid,
         command: meta.command,
@@ -760,43 +807,39 @@ async function runSnapshot(cwd, jobId, snapshot) {
         stdoutTail: meta.stdoutTail,
         stderrTail: meta.stderrTail,
         currentPhase: `${meta.phase ?? "claude"}_exited`
-      });
+      }, stateOptions);
     },
     onPhase(phase, meta = {}) {
-      appendLogLine(cwd, jobId, `Phase: ${phase}`);
-      persistJobDiagnostics(cwd, jobId, { currentPhase: phase, ...meta });
+      log(`Phase: ${phase}`);
+      persistJobDiagnostics(cwd, jobId, { currentPhase: phase, ...meta }, stateOptions);
     }
   };
 
   try {
     const result = await runClaudeStructuredReview(cwd, snapshot, snapshot.reviewKind, snapshot.schemaPath, hooks);
-    appendLogLine(
-      cwd,
-      jobId,
+    log(
       `Claude returned ${result.parsed.findings?.length ?? 0} finding(s) using ${result.activity?.toolUseCount ?? 0} tool call(s)`
     );
     if (result.invocationMeta?.fallbackUsed) {
-      appendLogLine(cwd, jobId, "Claude-only markdown fallback was used after structured path probe timeout", "warn");
+      log("Claude-only markdown fallback was used after structured path probe timeout", "warn");
     }
     if (result.invocationMeta?.earlyStructuredOutput) {
-      appendLogLine(cwd, jobId, "Claude structured output completed before process exit; stopped child early to avoid CLI stall");
+      log("Claude structured output completed before process exit; stopped child early to avoid CLI stall");
     }
     if (result.activity?.parseErrors > 0) {
-      appendLogLine(
-        cwd,
-        jobId,
+      log(
         `WARNING: stream parser saw ${result.activity.parseErrors} malformed JSON line(s); structured output recovered but some events may have been dropped`,
         "warn"
       );
     }
     return result;
   } catch (error) {
-    appendLogLine(cwd, jobId, `Failed: ${error.message}`, "error");
+    log(`Failed: ${error.message}`, "error");
     persistJobDiagnostics(cwd, jobId, {
       ...(error.diagnostics ?? {}),
       reason: reasonFromError(error),
       currentPhase: error.diagnostics?.currentPhase ?? "failed"
-    });
+    }, stateOptions);
     throw error;
   }
 }
@@ -1222,7 +1265,7 @@ function runCodexPluginCliEnable({ configPath, pluginRoot, dryRun, asJson }) {
 function handleEnable(argv) {
   // Pre-scan: detect `--config` passed with no value (parseArgs leaves it as undefined,
   // which is indistinguishable from `--config` not passed at all).
-  const normalizedArgv = argv.length === 1 && argv[0]?.includes(" ") ? splitRawArgumentString(argv[0]) : argv;
+  const normalizedArgv = argv;
   for (let i = 0; i < normalizedArgv.length; i += 1) {
     if (normalizedArgv[i] === "--config") {
       const next = normalizedArgv[i + 1];
@@ -1501,7 +1544,7 @@ function handleDoctor(argv) {
     problems.push({
       code: "NODE_VERSION_UNSUPPORTED",
       message: `Node ${nodeVersion} is below the required ${minimumNodeVersion}.`,
-      recovery: "Install Node.js 18.18 or newer, then re-run `codex-claude-review doctor`."
+      recovery: "Install Node.js 18.18 or newer, then re-run `codex-claude doctor`."
     });
   }
   if (!pluginConfigured) {
@@ -1510,7 +1553,7 @@ function handleDoctor(argv) {
       message: configPathExists
         ? `Codex config at ${codexConfigPath} does not contain the claude-review marketplace/plugin stanzas.`
         : `Codex config not found at ${codexConfigPath}.`,
-      recovery: "Run `codex-claude-review enable` to register the plugin."
+      recovery: "Run `codex-claude enable` to register the plugin."
     });
   }
   if (!claudeCliAvailable) {
@@ -1529,7 +1572,7 @@ function handleDoctor(argv) {
     problems.push({
       code: "CLAUDE_VERSION_TOO_OLD",
       message: `Claude Code CLI ${claudeVersion.version} is below the required ${MINIMUM_CLAUDE_VERSION} for this release's default ${DEFAULT_MODEL} / ${DEFAULT_EFFORT} review profile.`,
-      recovery: "Update Claude Code CLI, then re-run `codex-claude-review doctor --probe-runtime`."
+      recovery: "Update Claude Code CLI, then re-run `codex-claude doctor --probe-runtime`."
     });
   }
   if (!jobDirWritable) {
@@ -1550,20 +1593,20 @@ function handleDoctor(argv) {
     problems.push({
       code: "CLAUDE_RUNTIME_UNHEALTHY",
       message: runtimeProbe.detail || "Claude CLI non-interactive model probe failed.",
-      recovery: "Run `codex-claude-review setup` for the full auth/runtime report, then retry `codex-claude-review doctor --probe-runtime`."
+      recovery: "Run `codex-claude setup` for the full auth/runtime report, then retry `codex-claude doctor --probe-runtime`."
     });
   }
   if (pluginLoadedInCurrentSession === false && pluginConfigured) {
     problems.push({
       code: "PLUGIN_NOT_LOADED_IN_SESSION",
       message: "Plugin is registered in config but the current shell does not appear to be a Codex session.",
-      recovery: "Restart Codex CLI, or use the helper directly (`codex-claude-review folder <path>`)."
+      recovery: "Restart Codex CLI, or use the helper directly (`codex-claude folder <path>`)."
     });
   }
 
   const recommendedAction = problems.length > 0
     ? problems[0].recovery
-    : "All checks passed. Run `codex-claude-review folder <path>` to review a directory.";
+    : "All checks passed. Run `codex-claude folder <path>` to review a directory.";
 
   const payload = {
     ok: problems.length === 0,
@@ -1601,12 +1644,13 @@ function handleDoctor(argv) {
 
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    if (problems.length > 0) process.exitCode = 1;
     return;
   }
 
   const lines = [
-    "codex-claude-review doctor",
-    "==========================",
+    "codex-claude doctor",
+    "===================",
     "",
     `Node:                         ${payload.node_supported ? "YES" : "NO"} (${payload.node_version}; required ${payload.node_required})`,
     `Helper version:                 ${payload.helper_version}`,
@@ -1656,7 +1700,7 @@ async function handleFolder(argv) {
     rewritten.push(tok);
   }
   if (!folderPath) {
-    throw new Error("Expected a directory path: codex-claude-review folder <path> [flags]");
+    throw new Error("Expected a directory path: codex-claude folder <path> [flags]");
   }
   rewritten.unshift("--path", folderPath);
   await handleReviewLike("review", rewritten);
@@ -1676,17 +1720,14 @@ async function handleReviewLike(kind, argv) {
   const userCwd = path.resolve(effectiveOptions.path ?? effectiveOptions.cwd ?? process.cwd());
   const focusText = positionals.join(" ").trim();
 
-  // `--job-dir <path>` is the highest-priority job-storage override. We surface it as
-  // an env var so every state.mjs helper picks it up without threading the option
-  // through every call site.
-  if (effectiveOptions["job-dir"]) {
-    process.env.CODEX_CLAUDE_REVIEW_JOB_DIR = path.resolve(effectiveOptions["job-dir"]);
-  }
+  const stateOptions = effectiveOptions["job-dir"]
+    ? { jobDir: path.resolve(effectiveOptions["job-dir"]) }
+    : {};
 
   // Decide whether we need a directory snapshot:
   //   - explicit --scope directory
   //   - or the target directory is not a Git repo
-  // Either way, the snapshot creates an isolated, git-initialised temp workspace and
+  // Either way, the snapshot creates an isolated, git-initialised workspace and
   // becomes the effective cwd for the rest of the review flow. Source-relative paths
   // stay intact for the user; absolute snapshot paths in results are rewritten back.
   const scope = effectiveOptions.scope ?? "auto";
@@ -1696,7 +1737,6 @@ async function handleReviewLike(kind, argv) {
 
   let directorySnapshot = null;
   let cwd = userCwd;
-  let restoreJobDirEnv = null;
   let backgroundJobStarted = false;
   if (needsSnapshot) {
     directorySnapshot = createDirectorySnapshot(userCwd, {
@@ -1704,19 +1744,16 @@ async function handleReviewLike(kind, argv) {
       excludes: coerceMultiValue(effectiveOptions.exclude)
     });
     cwd = directorySnapshot.snapshotRoot;
-    if (!effectiveOptions["job-dir"] && !process.env[JOB_DIR_ENV_VAR]) {
-      const sourceJobDir = path.join(directorySnapshot.sourceRoot, ".claude-review", "jobs");
-      process.env[JOB_DIR_ENV_VAR] = sourceJobDir;
-      restoreJobDirEnv = () => {
-        delete process.env[JOB_DIR_ENV_VAR];
-      };
+    if (!stateOptions.jobDir && !process.env[JOB_DIR_ENV_VAR]) {
+      stateOptions.jobDir = path.join(directorySnapshot.sourceRoot, ".claude-review", "jobs");
     }
     // After snapshotting, resolveReviewTarget must scan the copied snapshot
     // contents directly — there is no meaningful branch diff to compute.
     effectiveOptions.scope = "directory";
   }
+  let snapshot = null;
   try {
-    const snapshot = prepareSnapshot(cwd, kind, effectiveOptions, focusText);
+    snapshot = prepareSnapshot(cwd, kind, effectiveOptions, focusText);
     if (directorySnapshot) {
       const skippedPreview = directorySnapshot.skipped
         .slice(0, 12)
@@ -1736,15 +1773,16 @@ async function handleReviewLike(kind, argv) {
         `Skipped ${directorySnapshot.skipped.length} path(s) by excludes, .gitignore, ` +
         `secret-pattern filters, symlinks, or caps` +
         `${skippedPreview ? `: ${skippedPreview}${directorySnapshot.skipped.length > 12 ? ", ..." : ""}` : ""}. ` +
-        `Source files are not edited; review job artifacts are stored under ${resolveJobsDir(cwd)}.`
+        `Source files are not edited; review job artifacts are stored under ${resolveJobsDir(cwd, stateOptions)}.`
       );
     }
 
     if (effectiveOptions.background) {
-      const job = buildBackgroundJob(cwd, kind, snapshot);
+      const job = buildBackgroundJob(cwd, kind, snapshot, stateOptions);
       backgroundJobStarted = true;
+      const jobDirArgs = stateOptions.jobDir ? ` --job-dir ${JSON.stringify(stateOptions.jobDir)}` : "";
       process.stdout.write(
-        `# Claude Review Started\n\nJob: ${job.id}\nStatus: running\nMode: ${snapshot.unrestricted ? "UNRESTRICTED" : snapshot.agentic ? "agentic-safe" : "structured"}\nModel: ${snapshot.model}\nUse \`codex-claude-review status ${job.id}\` to check progress.\n`
+        `# Claude Review Started\n\nJob: ${job.id}\nStatus: running\nMode: ${snapshot.unrestricted ? "UNRESTRICTED" : snapshot.agentic ? "agentic-safe" : "structured"}\nModel: ${snapshot.model}\nUse \`codex-claude status ${job.id}${jobDirArgs}\` to check progress.\n`
       );
       return;
     }
@@ -1761,10 +1799,10 @@ async function handleReviewLike(kind, argv) {
       unrestricted: snapshot.unrestricted,
       status: "running"
     });
-    createJob(cwd, jobId, job);
-    writeJobInput(cwd, jobId, snapshot);
+    createJob(cwd, jobId, job, stateOptions);
+    writeJobInput(cwd, jobId, snapshot, stateOptions);
     try {
-      const result = await runSnapshot(cwd, jobId, snapshot);
+      const result = await runSnapshot(cwd, jobId, snapshot, stateOptions);
       updateJob(cwd, jobId, {
         status: "completed",
         pid: null,
@@ -1776,13 +1814,13 @@ async function handleReviewLike(kind, argv) {
         // `result` reconstruction in handleResult render the same warnings as
         // foreground runs (Codex P2 finding on PR #11).
         evidenceVerification: result.evidenceVerification ?? null
-      });
+      }, stateOptions);
       process.stdout.write(renderReviewResult(snapshot, result, { id: jobId }));
       if (reviewHasShipBlockers(result.parsed)) {
         process.exitCode = 3;
       }
     } catch (error) {
-      const current = listJobs(cwd).find((item) => item.id === jobId) ?? {};
+      const current = listJobs(cwd, stateOptions).find((item) => item.id === jobId) ?? {};
       const failureReason = reasonFromError(error);
       updateJob(cwd, jobId, {
         status: error.code === "EINTERRUPTED" ? "cancelled" : "failed",
@@ -1791,28 +1829,31 @@ async function handleReviewLike(kind, argv) {
         failureReason,
         error: error.message,
         diagnostics: mergeDiagnostics(current.diagnostics, { ...(error.diagnostics ?? {}), reason: failureReason })
-      });
+      }, stateOptions);
       throw error;
     }
   } finally {
     if (directorySnapshot && (!effectiveOptions.background || !backgroundJobStarted)) {
       directorySnapshot.cleanup();
     }
-    restoreJobDirEnv?.();
+    if (!effectiveOptions.background || !backgroundJobStarted) {
+      cleanupSnapshotArtifacts(snapshot);
+    }
   }
 }
 
 async function handleRunJob(argv) {
-  const { options, positionals } = parseCommandInput(argv, { valueOptions: ["cwd"] });
+  const { options, positionals } = parseCommandInput(argv, { valueOptions: ["cwd", "job-dir"] });
   const jobId = positionals[0];
   if (!jobId) {
     throw new Error("run-job requires a job id");
   }
   const cwd = path.resolve(options.cwd ?? process.cwd());
-  const snapshot = readJobInput(cwd, jobId);
-  updateJob(cwd, jobId, { status: "running" });
+  const stateOptions = options["job-dir"] ? { jobDir: options["job-dir"] } : {};
+  const snapshot = readJobInput(cwd, jobId, stateOptions);
+  updateJob(cwd, jobId, { status: "running" }, stateOptions);
   try {
-    const result = await runSnapshot(cwd, jobId, snapshot);
+    const result = await runSnapshot(cwd, jobId, snapshot, stateOptions);
     updateJob(cwd, jobId, {
       status: "completed",
       pid: null,
@@ -1824,10 +1865,10 @@ async function handleRunJob(argv) {
       // in handleStatus/handleResult shows the same warnings as foreground
       // runs (Codex P2 finding on PR #11).
       evidenceVerification: result.evidenceVerification ?? null
-    });
+    }, stateOptions);
   } catch (error) {
-    appendLogLine(cwd, jobId, `Failed: ${error.message}`, "error");
-    const current = listJobs(cwd).find((item) => item.id === jobId) ?? {};
+    appendLogLine(cwd, jobId, `Failed: ${error.message}`, "error", stateOptions);
+    const current = listJobs(cwd, stateOptions).find((item) => item.id === jobId) ?? {};
     const failureReason = reasonFromError(error);
     updateJob(cwd, jobId, {
       status: error.code === "EINTERRUPTED" ? "cancelled" : "failed",
@@ -1836,35 +1877,39 @@ async function handleRunJob(argv) {
       failureReason,
       error: error.message,
       diagnostics: mergeDiagnostics(current.diagnostics, { ...(error.diagnostics ?? {}), reason: failureReason })
-    });
+    }, stateOptions);
   } finally {
-    cleanupSnapshotRoot(snapshot);
+    cleanupSnapshotArtifacts(snapshot);
   }
 }
 
 function handleStatus(argv) {
-  const { options, positionals } = parseCommandInput(argv, { valueOptions: ["cwd"] });
+  const { options, positionals } = parseCommandInput(argv, { valueOptions: ["cwd", "job-dir"] });
   const cwd = path.resolve(options.cwd ?? process.cwd());
+  const stateOptions = options["job-dir"] ? { jobDir: options["job-dir"] } : {};
+  if (positionals[0]) assertValidJobId(positionals[0]);
   const workspaceRoot = resolveWorkspaceRoot(cwd);
-  const allJobs = listJobs(cwd).map((job) => markStaleJob(cwd, job)).map((job) => ({ ...job, logTail: readLogTail(cwd, job.id) }));
+  const allJobs = listJobs(cwd, stateOptions)
+    .map((job) => markStaleJob(cwd, job, stateOptions))
+    .map((job) => ({ ...job, logTail: readLogTail(cwd, job.id, 6, stateOptions) }));
   const filteredJobs = positionals[0]
     ? allJobs.filter((job) => job.id.startsWith(positionals[0]))
     : allJobs;
   process.stdout.write(renderStatusReport(filteredJobs, workspaceRoot));
 }
 
-function jobTimeoutMs(cwd, job) {
+function jobTimeoutMs(cwd, job, stateOptions = {}) {
   try {
-    const snapshot = readJobInput(cwd, job.id);
+    const snapshot = readJobInput(cwd, job.id, stateOptions);
     return snapshot.timeoutMs ?? 30 * 60 * 1000;
   } catch {
     return 30 * 60 * 1000;
   }
 }
 
-function markStaleJob(cwd, job) {
+function markStaleJob(cwd, job, stateOptions = {}) {
   if (job.status === "stalled") {
-    appendLogLine(cwd, job.id, "Legacy stalled job finalized as failed", "error");
+    appendLogLine(cwd, job.id, "Legacy stalled job finalized as failed", "error", stateOptions);
     return updateJob(cwd, job.id, {
       status: "failed",
       pid: null,
@@ -1875,7 +1920,7 @@ function markStaleJob(cwd, job) {
         reason: job.failureReason ?? "stale_timeout",
         currentPhase: job.currentPhase ?? job.diagnostics?.currentPhase ?? "legacy_stalled_job"
       })
-    });
+    }, stateOptions);
   }
   if (job.status !== "running") {
     return job;
@@ -1884,11 +1929,11 @@ function markStaleJob(cwd, job) {
   if (!Number.isFinite(updatedAt)) {
     return job;
   }
-  const timeoutMs = jobTimeoutMs(cwd, job);
+  const timeoutMs = jobTimeoutMs(cwd, job, stateOptions);
   if (Date.now() - updatedAt <= timeoutMs) {
     return job;
   }
-  appendLogLine(cwd, job.id, `Stale job finalized: exceeded timeout window of ${timeoutMs}ms`, "error");
+  appendLogLine(cwd, job.id, `Stale job finalized: exceeded timeout window of ${timeoutMs}ms`, "error", stateOptions);
   return updateJob(cwd, job.id, {
     status: "failed",
     pid: null,
@@ -1900,28 +1945,30 @@ function markStaleJob(cwd, job) {
       timeoutMs,
       currentPhase: job.currentPhase ?? job.diagnostics?.currentPhase ?? "stale_running_job"
     })
-  });
+  }, stateOptions);
 }
 
 function handleResult(argv) {
-  const { options, positionals } = parseCommandInput(argv, { valueOptions: ["cwd"] });
+  const { options, positionals } = parseCommandInput(argv, { valueOptions: ["cwd", "job-dir"] });
   const cwd = path.resolve(options.cwd ?? process.cwd());
+  const stateOptions = options["job-dir"] ? { jobDir: options["job-dir"] } : {};
   const jobId = positionals[0];
   if (!jobId) {
     throw new Error("result requires a job id");
   }
-  const jobs = listJobs(cwd);
+  assertValidJobId(jobId);
+  const jobs = listJobs(cwd, stateOptions);
   const job = jobs.find((item) => item.id === jobId || item.id.startsWith(jobId));
   if (!job) {
     throw new Error(`Unknown job ${jobId}`);
   }
   if (job.status !== "completed") {
-    const withTail = { ...job, logTail: readLogTail(cwd, job.id) };
+    const withTail = { ...job, logTail: readLogTail(cwd, job.id, 6, stateOptions) };
     process.stdout.write(renderFailureReport(withTail));
     process.exitCode = job.status === "failed" || job.status === "stalled" ? 1 : 2;
     return;
   }
-  const snapshot = readJobInput(cwd, job.id);
+  const snapshot = readJobInput(cwd, job.id, stateOptions);
   try {
     validateStructuredReviewOutput(job.result, snapshot.reviewKind);
   } catch (error) {
@@ -1948,13 +1995,15 @@ function handleResult(argv) {
 }
 
 function handleCancel(argv) {
-  const { options, positionals } = parseCommandInput(argv, { valueOptions: ["cwd"] });
+  const { options, positionals } = parseCommandInput(argv, { valueOptions: ["cwd", "job-dir"] });
   const cwd = path.resolve(options.cwd ?? process.cwd());
+  const stateOptions = options["job-dir"] ? { jobDir: options["job-dir"] } : {};
   const jobId = positionals[0];
   if (!jobId) {
     throw new Error("cancel requires a job id");
   }
-  const jobs = listJobs(cwd);
+  assertValidJobId(jobId);
+  const jobs = listJobs(cwd, stateOptions);
   const job = jobs.find((item) => item.id === jobId || item.id.startsWith(jobId));
   if (!job) {
     throw new Error(`Unknown job ${jobId}`);
@@ -1968,7 +2017,7 @@ function handleCancel(argv) {
       status: "stalled",
       pid: null,
       error: "process is not running"
-    });
+    }, stateOptions);
     process.stdout.write(renderCancelReport(stalledJob, false));
     return;
   }
@@ -1977,7 +2026,7 @@ function handleCancel(argv) {
     status: cancelled ? "cancelled" : job.status,
     pid: cancelled ? null : job.pid,
     completedAt: cancelled ? new Date().toISOString() : job.completedAt
-  });
+  }, stateOptions);
   process.stdout.write(renderCancelReport(updatedJob, cancelled));
 }
 
@@ -2021,6 +2070,18 @@ async function main() {
         break;
       case "security-review":
         await handleReviewLike("security-review", argv);
+        break;
+      case "workspace":
+        await handleWorkspace(argv);
+        break;
+      case "workspace-status":
+        handleWorkspaceStatus(argv);
+        break;
+      case "workspace-logs":
+        handleWorkspaceLogs(argv);
+        break;
+      case "workspace-stop":
+        handleWorkspaceStop(argv);
         break;
       case "run-job":
         await handleRunJob(argv);
