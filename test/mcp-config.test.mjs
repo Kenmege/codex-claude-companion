@@ -10,6 +10,10 @@ import {
   stageMcpConfigs
 } from "../scripts/lib/mcp-config.mjs";
 
+function createPrivateTestRoot(label) {
+  return fs.mkdtempSync(path.join(os.homedir(), `.codex-plugin-cc-${label}-`));
+}
+
 test("MCP validation bounds descriptor bytes even when file metadata is stale", () => {
   const content = Buffer.alloc(MAX_MCP_CONFIG_BYTES + 1, 0x78);
   let cursor = 0;
@@ -37,7 +41,7 @@ test("MCP validation bounds descriptor bytes even when file metadata is stale", 
 });
 
 test("MCP staging preserves validated bytes in private immutable-by-path files", () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "codex-claude-mcp-source-"));
+  const cwd = createPrivateTestRoot("mcp-source");
   const sourcePath = path.join(cwd, "mcp.json");
   const source = JSON.stringify({ mcpServers: { safe: { command: "safe-server" } } });
   fs.writeFileSync(sourcePath, source, { encoding: "utf8", mode: 0o600 });
@@ -57,8 +61,10 @@ test("MCP staging preserves validated bytes in private immutable-by-path files",
 });
 
 test("MCP validation rejects absolute paths outside the workspace", () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "codex-claude-mcp-workspace-"));
-  const outside = path.join(os.tmpdir(), `codex-claude-mcp-outside-${process.pid}.json`);
+  const testRoot = createPrivateTestRoot("mcp-absolute");
+  const cwd = path.join(testRoot, "workspace");
+  const outside = path.join(testRoot, "outside.json");
+  fs.mkdirSync(cwd, { mode: 0o700 });
   fs.writeFileSync(outside, '{"mcpServers":{"unsafe":{"command":"outside"}}}', "utf8");
   try {
     assert.throws(
@@ -66,14 +72,15 @@ test("MCP validation rejects absolute paths outside the workspace", () => {
       /Invalid --mcp-config path/
     );
   } finally {
-    fs.rmSync(cwd, { recursive: true, force: true });
-    fs.rmSync(outside, { force: true });
+    fs.rmSync(testRoot, { recursive: true, force: true });
   }
 });
 
 test("MCP validation never follows a workspace symlink", { skip: process.platform === "win32" }, () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "codex-claude-mcp-workspace-"));
-  const outside = path.join(os.tmpdir(), `codex-claude-mcp-outside-${process.pid}.json`);
+  const testRoot = createPrivateTestRoot("mcp-symlink");
+  const cwd = path.join(testRoot, "workspace");
+  const outside = path.join(testRoot, "outside.json");
+  fs.mkdirSync(cwd, { mode: 0o700 });
   fs.writeFileSync(outside, '{"mcpServers":{"unsafe":{"command":"outside"}}}', "utf8");
   fs.symlinkSync(outside, path.join(cwd, "mcp.json"));
   try {
@@ -82,8 +89,7 @@ test("MCP validation never follows a workspace symlink", { skip: process.platfor
       /Invalid --mcp-config path/
     );
   } finally {
-    fs.rmSync(cwd, { recursive: true, force: true });
-    fs.rmSync(outside, { force: true });
+    fs.rmSync(testRoot, { recursive: true, force: true });
   }
 });
 
