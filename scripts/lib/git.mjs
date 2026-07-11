@@ -63,32 +63,6 @@ function readBoundedTextFile(cwd, relativePath, maxBytes) {
     return { kind: "skipped", reason: "outside workspace" };
   }
 
-  let before;
-  try {
-    before = fs.lstatSync(fullPath);
-  } catch (error) {
-    return { kind: "skipped", reason: `unreadable: ${error.code ?? error.message}` };
-  }
-  if (before.isSymbolicLink()) {
-    return { kind: "skipped", reason: "symlink" };
-  }
-  if (before.isDirectory()) {
-    return { kind: "skipped", reason: "directory" };
-  }
-  if (!before.isFile()) {
-    return { kind: "skipped", reason: "non-regular file" };
-  }
-
-  let resolvedBefore;
-  try {
-    resolvedBefore = fs.realpathSync.native(fullPath);
-  } catch (error) {
-    return { kind: "skipped", reason: `unreadable: ${error.code ?? error.message}` };
-  }
-  if (!isWithinRoot(resolvedBefore, canonicalRoot)) {
-    return { kind: "skipped", reason: "resolved outside workspace" };
-  }
-
   let fd;
   try {
     fd = fs.openSync(fullPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
@@ -99,11 +73,16 @@ function readBoundedTextFile(cwd, relativePath, maxBytes) {
     const opened = fs.fstatSync(fd);
     const current = fs.lstatSync(fullPath);
     const resolvedAfter = fs.realpathSync.native(fullPath);
+    if (current.isSymbolicLink()) {
+      return { kind: "skipped", reason: "symlink" };
+    }
+    if (opened.isDirectory() || current.isDirectory()) {
+      return { kind: "skipped", reason: "directory" };
+    }
+    if (!opened.isFile() || !current.isFile()) {
+      return { kind: "skipped", reason: "non-regular file" };
+    }
     if (
-      !opened.isFile() ||
-      current.isSymbolicLink() ||
-      !current.isFile() ||
-      !sameFileIdentity(before, opened) ||
       !sameFileIdentity(opened, current) ||
       !isWithinRoot(resolvedAfter, canonicalRoot)
     ) {

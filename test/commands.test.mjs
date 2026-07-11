@@ -4,9 +4,10 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { buildJobRecord, createJob, readJob, writeJobInput } from "../scripts/lib/state.mjs";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const helper = path.join(root, "scripts", "claude-review-companion.mjs");
 
 function read(relativePath) {
@@ -718,7 +719,7 @@ test("helper rejects MCP config files larger than the validated byte ceiling", (
 
   const result = spawnSync(
     process.execPath,
-    [helper, "review", "--legacy", "--cwd", cwd, "--mcp-config", oversized],
+    [helper, "review", "--legacy", "--cwd", cwd, "--mcp-config", "oversized-mcp.json"],
     { cwd, encoding: "utf8" }
   );
 
@@ -761,7 +762,7 @@ test("helper binds validated MCP bytes to a private staged file and cleans it", 
 
   const result = spawnSync(
     process.execPath,
-    [helper, "review", "--legacy", "--cwd", cwd, "--mcp-config", original],
+    [helper, "review", "--legacy", "--cwd", cwd, "--mcp-config", "mcp.json"],
     {
       cwd,
       encoding: "utf8",

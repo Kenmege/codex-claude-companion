@@ -125,7 +125,7 @@ Use presets when you want one command that chooses the right lane:
 - Fenced external access: `WebFetch` starts with a domain allowlist and expands
   only through explicit `--web-domain` flags.
 - Fail-closed local inputs: snapshots require successful Git ignore discovery,
-  run inside a private owned temp namespace, preserve live sessions during
+  run inside a private per-user namespace, preserve live sessions during
   cleanup, and exclude secret-bearing files by default.
 - Strict release controls: pinned GitHub Actions, Node 18/20/22 CI, package
   content checks, tag/package version matching, and npmjs publishing with
@@ -501,7 +501,9 @@ job record, immutable input, prompt, and log in an alternate directory. Reuse
 the same option with `status`, `result`, and `cancel`. Job IDs accept only
 1–128 ASCII letters, digits, underscores, and hyphens.
 
-Directory snapshots live under a versioned, privately owned temp namespace.
+Directory snapshots live under the versioned, privately owned
+`~/.claude-review/snapshots/` namespace by default. Pass
+`--snapshot-temp-root <path>` to select another isolated root.
 Stale cleanup validates the namespace and snapshot metadata, preserves workers
 whose owner PID is still live, atomically claims dead snapshots, and never
 scans or deletes similarly named directories outside that namespace.

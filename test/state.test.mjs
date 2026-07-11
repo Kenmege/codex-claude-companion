@@ -17,11 +17,37 @@ import {
   migrateJobRecord,
   readJob,
   readJobInput,
+  resolveJobsDir,
   resolveJobFile,
   updateJob,
   writeJob,
   writeJobInput
 } from "../scripts/lib/state.mjs";
+
+test("resolveJobsDir fails closed instead of using a shared temp fallback", {
+  skip: process.platform === "win32"
+}, () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-unwritable-project-"));
+  const privateHome = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-unwritable-home-"));
+  const previousHome = process.env.HOME;
+
+  fs.chmodSync(cwd, 0o500);
+  fs.chmodSync(privateHome, 0o500);
+  process.env.HOME = privateHome;
+  try {
+    assert.throws(
+      () => resolveJobsDir(cwd),
+      /Could not find a writable job directory/
+    );
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    fs.chmodSync(cwd, 0o700);
+    fs.chmodSync(privateHome, 0o700);
+    fs.rmSync(cwd, { recursive: true, force: true });
+    fs.rmSync(privateHome, { recursive: true, force: true });
+  }
+});
 
 test("job IDs use a path-safe portable grammar at every artifact boundary", () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-state-"));

@@ -36,12 +36,13 @@ test("pull request workflow cancels superseded matrix runs", () => {
   assert.match(source, /cancel-in-progress: true/);
 });
 
-test("pull request workflow proves the minimum Node release on Windows", () => {
+test("pull request workflow proves the platform-neutral surface on minimum Node for Windows", () => {
   const source = read(".github/workflows/pull-request-ci.yml");
   assert.match(source, /windows-test:/);
   assert.match(source, /runs-on: windows-latest/);
   assert.match(source, /node-version: 18\.18\.0/);
-  assert.match(source, /run: npm run check/);
+  assert.match(source, /run: npm run lint/);
+  assert.match(source, /run: npm run test:windows/);
   assert.match(source, /run: npm run pack:check/);
 });
 
@@ -49,6 +50,7 @@ const packageJson = JSON.parse(read("package.json"));
 
 test("package test command uses shell-independent Node discovery", () => {
   assert.equal(packageJson.scripts.test, "node --test");
+  assert.match(packageJson.scripts["test:windows"], /^node --test /);
 });
 
 test("packed package installs working primary and compatibility command aliases", { timeout: 60_000 }, () => {

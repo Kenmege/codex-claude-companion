@@ -15,6 +15,15 @@ function hasParentTraversalSegment(value) {
     .some((segment) => segment === "..");
 }
 
+function isWithin(root, target) {
+  const relative = path.relative(root, target);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
 export function parseMcpConfigJson(source, label) {
   let parsed;
   try {
@@ -61,24 +70,42 @@ export function readValidatedMcpConfig(cwd, value, { fileSystem = fs } = {}) {
     parseMcpConfigJson(raw, "inline JSON");
     return raw;
   }
-  if (raw.includes("\0") || hasParentTraversalSegment(raw)) {
+  if (raw.includes("\0") || path.isAbsolute(raw) || path.win32.isAbsolute(raw) || hasParentTraversalSegment(raw)) {
     throw new Error(`Invalid --mcp-config path: ${raw}`);
   }
 
-  const resolved = path.resolve(cwd, raw);
-  const fd = fileSystem.openSync(resolved, "r");
+  const workspaceRoot = path.resolve(cwd);
+  const resolved = path.resolve(workspaceRoot, raw);
+  if (!isWithin(workspaceRoot, resolved)) {
+    throw new Error(`Invalid --mcp-config path: ${raw}`);
+  }
+
+  let fd;
   let source;
   try {
+    fd = fileSystem.openSync(resolved, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
     const stat = fileSystem.fstatSync(fd);
     if (!stat.isFile()) {
       throw new Error(`Invalid --mcp-config path: ${raw} is not a file`);
+    }
+    const pathStat = fileSystem.lstatSync(resolved);
+    if (pathStat.isSymbolicLink() || !pathStat.isFile() || !sameFileIdentity(stat, pathStat)) {
+      throw new Error(`Invalid --mcp-config path: ${raw} must be a real workspace file`);
+    }
+    const canonicalRoot = fileSystem.realpathSync(workspaceRoot);
+    const canonicalPath = fileSystem.realpathSync(resolved);
+    if (!isWithin(canonicalRoot, canonicalPath)) {
+      throw new Error(`Invalid --mcp-config path: ${raw} escapes the workspace`);
     }
     if (stat.size > MAX_MCP_CONFIG_BYTES) {
       throw new Error(`Invalid --mcp-config path: ${raw} exceeds ${MAX_MCP_CONFIG_BYTES} bytes`);
     }
     source = readMcpConfigBytes(fd, raw, fileSystem);
+  } catch (error) {
+    if (error?.message?.startsWith("Invalid --mcp-config")) throw error;
+    throw new Error(`Invalid --mcp-config path: ${raw} (${error.message})`, { cause: error });
   } finally {
-    fileSystem.closeSync(fd);
+    if (fd !== undefined) fileSystem.closeSync(fd);
   }
   parseMcpConfigJson(source, raw);
   return source;

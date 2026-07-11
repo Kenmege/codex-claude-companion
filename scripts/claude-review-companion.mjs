@@ -241,7 +241,7 @@ function printUsage() {
       "  --scope auto|working-tree|branch|directory",
       "  --preset quick|ship|security|research|deep",
       "  --exclude <basename>        repeatable; extra dirs to exclude from non-Git snapshot",
-      "  --snapshot-temp-root <dir>  override temp root for the snapshot (default: os.tmpdir())",
+      "  --snapshot-temp-root <dir>  override private snapshot root (default: ~/.claude-review/snapshots)",
       "  --job-dir <path>            override job artifact directory (env: CODEX_CLAUDE_REVIEW_JOB_DIR)",
       "  --model <name>              override model (default: opus)",
       "  --effort low|medium|high|xhigh|max",
@@ -1727,7 +1727,7 @@ async function handleReviewLike(kind, argv) {
   // Decide whether we need a directory snapshot:
   //   - explicit --scope directory
   //   - or the target directory is not a Git repo
-  // Either way, the snapshot creates an isolated, git-initialised temp workspace and
+  // Either way, the snapshot creates an isolated, git-initialised workspace and
   // becomes the effective cwd for the rest of the review flow. Source-relative paths
   // stay intact for the user; absolute snapshot paths in results are rewritten back.
   const scope = effectiveOptions.scope ?? "auto";

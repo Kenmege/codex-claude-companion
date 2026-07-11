@@ -15,30 +15,33 @@ function nowIso() {
 
 function ensurePrivateDirectory(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const directoryStat = fs.lstatSync(dir);
-  if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
-    throw new Error(`Job directory must be a real directory: ${dir}`);
-  }
-  if (process.platform !== "win32") {
-    let fd;
-    try {
-      const flags = fs.constants.O_RDONLY |
-        (fs.constants.O_DIRECTORY ?? 0) |
-        (fs.constants.O_NOFOLLOW ?? 0);
-      fd = fs.openSync(dir, flags);
-      const openedStat = fs.fstatSync(fd);
-      const currentStat = fs.lstatSync(dir);
-      if (
-        !openedStat.isDirectory() ||
-        currentStat.isSymbolicLink() ||
-        !sameFileIdentity(openedStat, currentStat)
-      ) {
-        throw new Error(`Job directory changed while securing it: ${dir}`);
-      }
-      fs.fchmodSync(fd, 0o700);
-    } finally {
-      if (fd !== undefined) fs.closeSync(fd);
+  if (process.platform === "win32") {
+    const currentStat = fs.lstatSync(dir);
+    if (currentStat.isSymbolicLink() || !currentStat.isDirectory()) {
+      throw new Error(`Job directory must be a real directory: ${dir}`);
     }
+    return dir;
+  }
+
+  let fd;
+  try {
+    const flags = fs.constants.O_RDONLY |
+      (fs.constants.O_DIRECTORY ?? 0) |
+      (fs.constants.O_NOFOLLOW ?? 0);
+    fd = fs.openSync(dir, flags);
+    const openedStat = fs.fstatSync(fd);
+    const currentStat = fs.lstatSync(dir);
+    if (
+      !openedStat.isDirectory() ||
+      currentStat.isSymbolicLink() ||
+      !currentStat.isDirectory() ||
+      !sameFileIdentity(openedStat, currentStat)
+    ) {
+      throw new Error(`Job directory changed while securing it: ${dir}`);
+    }
+    fs.fchmodSync(fd, 0o700);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
   return dir;
 }
@@ -82,11 +85,10 @@ function canWriteDir(dir) {
  *   2. process.env[CODEX_CLAUDE_REVIEW_JOB_DIR]
  *   3. <project>/.claude-review/jobs (legacy default — preserves existing flows)
  *   4. <home>/.claude-review/jobs
- *   5. <os.tmpdir>/claude-review/jobs
  *
- * Returns the first candidate that can be created + written to. Returning a
- * tmpdir fallback never raises — sandboxed environments always get a writable
- * dir even when $HOME is read-only.
+ * Returns the first candidate that can be created + written to. Persistent job
+ * records never fall back to a shared OS temporary directory; callers can use
+ * the explicit option or environment variable when both defaults are read-only.
  */
 export function resolveJobsDir(cwd, options = {}) {
   const explicit = options.jobDir ? path.resolve(options.jobDir) : null;
@@ -117,13 +119,10 @@ export function resolveJobsDir(cwd, options = {}) {
   }
 
   const homeDefault = path.join(os.homedir(), ".claude-review", "jobs");
-  const tmpFallback = path.join(os.tmpdir(), "claude-review", "jobs");
-
-  const candidates = [projectDefault, homeDefault, tmpFallback].filter(Boolean);
+  const candidates = [projectDefault, homeDefault].filter(Boolean);
   for (const candidate of candidates) {
     if (canWriteDir(candidate)) return candidate;
   }
-  // tmpdir should always be writable; if not, throw with the full attempted list.
   throw new Error(
     `Could not find a writable job directory. Tried: ${candidates.join(", ")}. ` +
     `Set ${JOB_DIR_ENV_VAR}=<path> or pass --job-dir <path> to override.`

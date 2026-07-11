@@ -74,6 +74,38 @@ test("createDirectorySnapshot copies reviewable files and inits a git repo", () 
   }
 });
 
+test("createDirectorySnapshot defaults to a private home-owned namespace", {
+  skip: process.platform === "win32"
+}, () => {
+  const source = makeTempDir("snapshot-private-default-source-");
+  const privateHome = makeTempDir("snapshot-private-default-home-");
+  const previousHome = process.env.HOME;
+  writeFile(source, "index.js", "ok\n");
+
+  process.env.HOME = privateHome;
+  let snap;
+  try {
+    snap = createDirectorySnapshot(source);
+    const expectedRoot = path.join(
+      fs.realpathSync.native(privateHome),
+      ".claude-review",
+      "snapshots",
+      SNAPSHOT_NAMESPACE
+    );
+    assert.equal(
+      snap.snapshotRoot.startsWith(`${expectedRoot}${path.sep}`),
+      true,
+      `snapshot escaped private home namespace: ${snap.snapshotRoot}`
+    );
+    assert.equal(fs.statSync(expectedRoot).mode & 0o777, 0o700);
+  } finally {
+    snap?.cleanup();
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    fs.rmSync(privateHome, { recursive: true, force: true });
+  }
+});
+
 test("createDirectorySnapshot excludes node_modules by default", () => {
   const source = makeTempDir();
   writeFile(source, "src/index.js", "ok\n");

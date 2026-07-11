@@ -40,6 +40,7 @@
   "scripts": {
     "lint": "node scripts/validate-repo.mjs",
     "test": "node --test",
+    "test:windows": "node --test test/args.test.mjs test/mcp-config.test.mjs test/release-docs.test.mjs test/render.test.mjs",
     "check": "npm run lint && npm test",
     "pack:check": "npm pack --dry-run"
   },

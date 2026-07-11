@@ -34,6 +34,9 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
   exposed through the helper's process argument list.
 - MCP configuration inputs are consumed from bounded opened descriptors and
   staged in private exclusive files before Claude starts.
+- Directory snapshots now default to the private per-user
+  `~/.claude-review/snapshots/` namespace, while `--snapshot-temp-root` remains
+  available for an explicitly isolated override.
 - Test discovery now uses Node's shell-independent `node --test` entry point.
 
 ### Fixed
@@ -76,6 +79,11 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
   blocking absolute, relative, and separator-based path traversal.
 - Explicit `--job-dir` storage is propagated through foreground reviews,
   detached workers, diagnostics, status, result, and cancel operations.
+- Persistent job state fails closed when both the project and per-user paths
+  are unwritable instead of silently falling back to a shared OS temp path.
+- Security-sensitive file readers open descriptors before validating path
+  identity, eliminating check-then-open races while retaining symlink and
+  source-root containment checks.
 
 ## [1.0.14] — 2026-06-08
 

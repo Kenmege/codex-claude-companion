@@ -51,6 +51,7 @@ codex-claude workspace --path . -- "implement the feature and run the full test 
 
 6. The release adds lifecycle JSON events, native status/log/stop controls,
    fail-closed session receipts, private one-shot terminal launchers, bounded
-   MCP snapshots, packed-install tests, and minimum-Node Windows CI.
+   MCP snapshots, packed-install tests, and a minimum-Node Windows portability
+   smoke lane. Full runtime support remains macOS and Linux for v1.
 
    https://github.com/Kenmege/codex-plugin-cc

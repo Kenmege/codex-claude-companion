@@ -4,8 +4,9 @@ import os from "node:os";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WRAPPER = path.join(ROOT, "scripts", "bin", "git-safe.mjs");
 
 function runWrapper(args, options = {}) {
@@ -31,6 +32,17 @@ function makeRepo() {
   }
   fs.writeFileSync(path.join(cwd, "file.txt"), "two\n", "utf8");
   return cwd;
+}
+
+function readFileSnapshot(filePath) {
+  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try {
+    const contents = fs.readFileSync(fd);
+    const stat = fs.fstatSync(fd, { bigint: true });
+    return { contents, stat };
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 test("git-safe rejects unknown subcommand", () => {
@@ -229,15 +241,14 @@ test("git-safe status does not refresh or rewrite the index", () => {
   fs.utimesSync(trackedFile, future, future);
 
   const indexPath = path.join(cwd, ".git", "index");
-  const beforeContents = fs.readFileSync(indexPath);
-  const beforeStat = fs.statSync(indexPath, { bigint: true });
+  const before = readFileSnapshot(indexPath);
   const result = runWrapper(["status", "--short"], { cwd });
-  const afterStat = fs.statSync(indexPath, { bigint: true });
+  const after = readFileSnapshot(indexPath);
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.deepEqual(fs.readFileSync(indexPath), beforeContents);
-  assert.equal(afterStat.mtimeNs, beforeStat.mtimeNs);
-  assert.equal(afterStat.ctimeNs, beforeStat.ctimeNs);
+  assert.deepEqual(after.contents, before.contents);
+  assert.equal(after.stat.mtimeNs, before.stat.mtimeNs);
+  assert.equal(after.stat.ctimeNs, before.stat.ctimeNs);
 });
 
 test("git-safe accepts git rev-parse --show-toplevel", () => {

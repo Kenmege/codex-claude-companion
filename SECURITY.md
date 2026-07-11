@@ -39,6 +39,11 @@ or start a nested Codex process.
 - The panel launcher is stored in the user's temporary directory with mode 0700
   and contains the workspace path and control-panel command, but not the coding
   request.
+- Persistent review jobs use the workspace or per-user `.claude-review/jobs/`
+  directory and never silently fall back to a shared OS temporary path.
+- Directory snapshots default to the private per-user
+  `~/.claude-review/snapshots/` ownership namespace; custom roots are accepted
+  only through the explicit `--snapshot-temp-root` option.
 
 The active Codex task remains the GPT-side orchestrator and reviewer. The plugin
 does not select or persist a second GPT model; model identity and authorization

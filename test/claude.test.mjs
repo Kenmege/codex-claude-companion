@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 
 import {
   AGENTIC_ALLOWED_TOOLS,
@@ -43,7 +44,7 @@ import {
   validateStructuredReviewOutput
 } from "../scripts/lib/claude.mjs";
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REVIEW_SCHEMA_PATH = path.join(ROOT, "schemas", "review-output.schema.json");
 const AGENTIC_SCHEMA_PATH = path.join(ROOT, "schemas", "agentic-review-output.schema.json");
 

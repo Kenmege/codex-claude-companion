@@ -16,7 +16,9 @@ test("MCP validation bounds descriptor bytes even when file metadata is stale", 
   let closed = false;
   const fileSystem = {
     openSync: () => 42,
-    fstatSync: () => ({ isFile: () => true, size: 64 }),
+    fstatSync: () => ({ isFile: () => true, isSymbolicLink: () => false, size: 64, dev: 1, ino: 1 }),
+    lstatSync: () => ({ isFile: () => true, isSymbolicLink: () => false, dev: 1, ino: 1 }),
+    realpathSync: (target) => target,
     readSync: (_fd, target, offset, length) => {
       const count = Math.min(length, content.length - cursor);
       if (count <= 0) return 0;
@@ -40,15 +42,48 @@ test("MCP staging preserves validated bytes in private immutable-by-path files",
   const source = JSON.stringify({ mcpServers: { safe: { command: "safe-server" } } });
   fs.writeFileSync(sourcePath, source, { encoding: "utf8", mode: 0o600 });
 
-  const staged = stageMcpConfigs(cwd, [sourcePath]);
+  const staged = stageMcpConfigs(cwd, ["mcp.json"]);
   try {
     assert.equal(staged.configs.length, 1);
     assert.equal(fs.readFileSync(staged.configs[0], "utf8"), source);
-    assert.equal(fs.statSync(staged.tempRoots[0]).mode & 0o777, 0o700);
-    assert.equal(fs.statSync(staged.configs[0]).mode & 0o777, 0o600);
+    if (process.platform !== "win32") {
+      assert.equal(fs.statSync(staged.tempRoots[0]).mode & 0o777, 0o700);
+      assert.equal(fs.statSync(staged.configs[0]).mode & 0o777, 0o600);
+    }
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });
     for (const tempRoot of staged.tempRoots) fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("MCP validation rejects absolute paths outside the workspace", () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "codex-claude-mcp-workspace-"));
+  const outside = path.join(os.tmpdir(), `codex-claude-mcp-outside-${process.pid}.json`);
+  fs.writeFileSync(outside, '{"mcpServers":{"unsafe":{"command":"outside"}}}', "utf8");
+  try {
+    assert.throws(
+      () => readValidatedMcpConfig(cwd, outside),
+      /Invalid --mcp-config path/
+    );
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+    fs.rmSync(outside, { force: true });
+  }
+});
+
+test("MCP validation never follows a workspace symlink", { skip: process.platform === "win32" }, () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "codex-claude-mcp-workspace-"));
+  const outside = path.join(os.tmpdir(), `codex-claude-mcp-outside-${process.pid}.json`);
+  fs.writeFileSync(outside, '{"mcpServers":{"unsafe":{"command":"outside"}}}', "utf8");
+  fs.symlinkSync(outside, path.join(cwd, "mcp.json"));
+  try {
+    assert.throws(
+      () => readValidatedMcpConfig(cwd, "mcp.json"),
+      /Invalid --mcp-config path/
+    );
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+    fs.rmSync(outside, { force: true });
   }
 });
 

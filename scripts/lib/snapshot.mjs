@@ -126,15 +126,23 @@ function isSensitiveSnapshotPath(relativePath) {
 function readJsonNoFollow(filePath) {
   let fd;
   try {
-    const before = fs.lstatSync(filePath);
-    if (before.isSymbolicLink() || !before.isFile()) {
-      throw new Error(`Refusing non-regular metadata file: ${filePath}`);
-    }
     fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
     const opened = fs.fstatSync(fd);
+    if (!opened.isFile()) {
+      throw new Error(`Refusing non-regular metadata file: ${filePath}`);
+    }
     const contents = fs.readFileSync(fd, "utf8");
+    const afterRead = fs.fstatSync(fd);
     const after = fs.lstatSync(filePath);
-    if (!opened.isFile() || after.isSymbolicLink() || !sameFileIdentity(before, opened) || !sameFileIdentity(opened, after)) {
+    if (
+      after.isSymbolicLink() ||
+      !after.isFile() ||
+      !sameFileIdentity(opened, afterRead) ||
+      !sameFileIdentity(opened, after) ||
+      afterRead.size !== opened.size ||
+      afterRead.mtimeMs !== opened.mtimeMs ||
+      afterRead.ctimeMs !== opened.ctimeMs
+    ) {
       throw new Error(`Metadata changed during secure read: ${filePath}`);
     }
     return JSON.parse(contents);
@@ -371,15 +379,6 @@ function copyRegularFileNoFollow(srcPath, dstPath, canonicalSourceRoot, maxBytes
   let destinationCreated = false;
   let copyCompleted = false;
   try {
-    const before = fs.lstatSync(srcPath);
-    if (before.isSymbolicLink() || !before.isFile()) {
-      return { copied: false, reason: before.isSymbolicLink() ? "symlink" : "non-regular" };
-    }
-    const resolvedBefore = fs.realpathSync.native(srcPath);
-    if (!isWithinRoot(resolvedBefore, canonicalSourceRoot)) {
-      return { copied: false, reason: "resolved outside source root" };
-    }
-
     const noFollow = fs.constants.O_NOFOLLOW ?? 0;
     sourceFd = fs.openSync(srcPath, fs.constants.O_RDONLY | noFollow);
     const opened = fs.fstatSync(sourceFd);
@@ -533,7 +532,7 @@ function copyTree(sourceRoot, snapshotRoot, excludes, limits, ignoredPaths) {
  *
  * Returns:
  *   {
- *     snapshotRoot,     // path to the temp directory containing the snapshot
+ *     snapshotRoot,     // path to the isolated directory containing the snapshot
  *     sourceRoot,       // absolute source path (echo of input, normalised)
  *     copiedFiles,
  *     totalBytes,
@@ -547,8 +546,8 @@ function copyTree(sourceRoot, snapshotRoot, excludes, limits, ignoredPaths) {
  * the snapshot's own metadata so job artifacts never get accidentally committed.
  *
  * Cross-platform:
- *   - macOS / Linux temp root: /tmp via os.tmpdir()
- *   - Windows temp root: %TEMP% via os.tmpdir()
+ *   - default root: <home>/.claude-review/snapshots
+ *   - callers may provide an isolated root with options.tempRoot
  *   - All path joins via path.join() so separators are platform-correct
  *   - `git init` is invoked WITH explicit cwd so it cannot land in the user's home dir
  */
@@ -562,7 +561,9 @@ export function createDirectorySnapshot(sourceRoot, options = {}) {
     throw new Error(`source path is not a directory: ${absSourceRoot}`);
   }
 
-  const tempRoot = options.tempRoot ? path.resolve(options.tempRoot) : path.join(os.tmpdir(), "codex-claude-review");
+  const tempRoot = options.tempRoot
+    ? path.resolve(options.tempRoot)
+    : path.join(os.homedir(), ".claude-review", "snapshots");
   const namespace = ensureSnapshotNamespace(tempRoot);
   reapStaleDirectorySnapshots(tempRoot, { namespace });
 
@@ -602,7 +603,7 @@ export function createDirectorySnapshot(sourceRoot, options = {}) {
   // Initialise git INSIDE the snapshot dir only. The explicit cwd is the critical guard
   // that prevents the previously-reported failure where `git init` landed in the user's
   // home directory because the wrapper ignored cwd. We additionally assert that the cwd
-  // we pass is inside the temp root we just created.
+  // we pass is inside the owned namespace we just created.
   const expectedTemp = path.resolve(snapshotRoot);
   if (!isWithinRoot(expectedTemp, namespace.namespaceRoot)) {
     throw new Error(`snapshot root ${expectedTemp} is not inside the owned snapshot namespace — refusing git init`);
@@ -660,8 +661,8 @@ export function createDirectorySnapshot(sourceRoot, options = {}) {
       return normalised;
     },
     cleanup() {
-      // JUSTIFIED: best-effort cleanup; OS temp cleanup is the long-term safety net
-      try { fs.rmSync(snapshotRoot, { recursive: true, force: true }); } catch (_err) { /* OS will reap */ }
+      // Best-effort cleanup; stale owned snapshots are reaped on the next run.
+      try { fs.rmSync(snapshotRoot, { recursive: true, force: true }); } catch (_err) { /* stale reaper will retry */ }
     }
   };
   };
@@ -669,7 +670,7 @@ export function createDirectorySnapshot(sourceRoot, options = {}) {
   try {
     return populateSnapshot();
   } catch (error) {
-    try { fs.rmSync(snapshotRoot, { recursive: true, force: true }); } catch (_cleanupError) { /* OS temp reaper is the fallback */ }
+    try { fs.rmSync(snapshotRoot, { recursive: true, force: true }); } catch (_cleanupError) { /* stale reaper is the fallback */ }
     throw error;
   }
 }
