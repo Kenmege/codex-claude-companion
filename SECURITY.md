@@ -9,7 +9,42 @@
 
 ## Threat Model
 
-Claude Review runs Claude Code from a Codex session to inspect untrusted diffs. The primary risks are command execution escape, path traversal, prompt injection from review material, accidental MCP/tool expansion, secret leakage in logs, and long-running background jobs leaving stale state.
+Claude Workspace & Review has two deliberately different trust surfaces. The
+workspace command dispatches Claude Code as a writable coding worker supervised
+by the active Codex task. The review commands inspect untrusted diffs through
+separate read-only fences. The primary risks are unintended workspace mutation,
+command execution escape, path traversal, prompt injection from review material,
+accidental MCP/tool expansion, secret leakage through prompts or process
+observability, and long-running background workers leaving stale state.
+
+### Writable workspace lane
+
+`codex-claude workspace` is a full coding lane, not a sandbox or read-only
+review. It starts Claude with its native `default` permission mode so Claude can
+request approval to edit files and run tools. `--plan` selects Claude's
+analysis-only plan mode. The plugin does not pass `--dangerously-skip-permissions`
+or start a nested Codex process.
+
+- Run it only in a workspace you trust Claude to inspect and potentially modify.
+- The coding request is passed to the local Claude CLI and may be visible to
+  same-user process inspection while the dispatch command is starting. Do not
+  place secrets, credentials, patient data, or proprietary payloads in it.
+- Lifecycle events contain model selector, mode, directory, session ID, terminal
+  backend, duration, and exit status; they intentionally omit prompt and tool
+  contents.
+- The separate terminal is a view over Claude's native background-agent
+  supervisor. Closing the panel does not prove the worker stopped. Use
+  `workspace-status`, `workspace-logs`, and `workspace-stop` to inspect or stop
+  the recorded session.
+- The panel launcher is stored in the user's temporary directory with mode 0700
+  and contains the workspace path and control-panel command, but not the coding
+  request.
+
+The active Codex task remains the GPT-side orchestrator and reviewer. The plugin
+does not select or persist a second GPT model; model identity and authorization
+come from the active Codex task.
+
+### Read-only review lanes
 
 The default review lanes are read-only:
 

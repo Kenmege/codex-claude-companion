@@ -1,21 +1,26 @@
-# Claude Review Plugin For Codex
+# Claude Workspace & Review Plugin For Codex
 
 [![CI](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/pull-request-ci.yml/badge.svg)](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/pull-request-ci.yml)
 [![CodeQL](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/codeql.yml/badge.svg)](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/codeql.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18.18-brightgreen.svg)](#requirements)
 
-> Claude reviews your Codex diffs. Read-only, evidence-cited, and agentic.
+> Codex orchestrates Claude coding workers, then verifies and reviews their work.
 
-The primary product surface is Codex -> Claude review: from inside a Codex CLI
-session, you can unleash Claude Code's current Opus alias, including the Opus
-1M long-context alias, for a high-scrutiny adversarial review of any diff. The
-reviewer gets read-only workspace access through `Read`, `Glob`, `Grep`, Task
-sub-agents, a domain-fenced `WebFetch`, and a narrow git wrapper. It does not
-get `Edit`, `Write`, raw shell, or arbitrary git by default. Every elite-tier
-finding must cite tool-call evidence, and the cited tool is cross-checked
-against the live tool-use stream so a fabricated citation surfaces in the
-rendered output. Malformed structured output fails closed.
+The writable workspace lane keeps the originating Codex task active while
+Claude runs as a background coding worker. Claude's native `agents` control
+panel opens in a separate terminal, so the user can watch or interact without
+blocking Codex. The active Codex model is inherited automatically as the
+planner, supervisor, verifier, and reviewer; the plugin never launches a nested
+Codex process or hardcodes a GPT model.
+
+The plugin has two explicit surfaces: a writable Codex-supervised Claude coding
+workspace and isolated read-only review lanes. Reviews can use Claude Code's
+current Opus alias, including the Opus 1M long-context alias, with `Read`,
+`Glob`, `Grep`, Task sub-agents, domain-fenced web access, and a narrow git
+wrapper. They do not get `Edit`, `Write`, raw shell, or arbitrary git by
+default. Every elite-tier finding must cite tool-call evidence, and malformed
+structured output fails closed.
 
 ## 60-Second Quickstart
 
@@ -46,7 +51,22 @@ Codex CLI after running it. `doctor` checks Node, Git, Claude Code CLI/version
 auth, Codex registration, job storage, non-Git folder support, and optional live
 Claude runtime access with `--probe-runtime`.
 
-Then run a review from any git workspace:
+Dispatch a coding job from a Codex task:
+
+```bash
+codex-claude workspace --path . "implement the requested change and run tests"
+codex-claude workspace-status --path . --all --json
+codex-claude workspace-logs <session-id>
+codex-claude workspace-stop <session-id>
+```
+
+The dispatch returns a stable Claude session ID immediately. Use
+`--no-panel` for focused follow-up workers and `--panel-only` to reopen the
+control panel. Claude defaults to its rolling `opus` selector; pass `--model`
+when a different Claude selector is required. Normal mode has native coding
+capabilities and permission prompts; `--plan` is analysis-only.
+
+Or run a read-only review from any git workspace:
 
 ```bash
 codex-claude-review review
@@ -55,7 +75,7 @@ codex-claude-review review --preset security --add-dir ../shared-libs
 ```
 
 Codex slash commands are available once the plugin marketplace is loaded:
-`/claude-review:review`, `/claude-review:elite-review`,
+`/claude-review:workspace`, `/claude-review:review`, `/claude-review:elite-review`,
 `/claude-review:deep-review`, `/claude-review:security-review`, and
 `/claude-review:doctor`.
 
@@ -66,10 +86,11 @@ Codex slash commands are available once the plugin marketplace is loaded:
 - Claude Code CLI authenticated locally for direct helper usage.
 - Codex CLI with local plugin marketplace support for slash-command usage.
 
-## Five Review Lanes
+## Workspace And Review Lanes
 
 | Lane | Purpose |
 |---|---|
+| `workspace` | Writable Claude background worker with a separate control panel and active-session Codex supervision. |
 | `review` | Quick agentic Claude review for everyday diffs. |
 | `adversarial-review` | Skeptical challenge pass for risky changes. |
 | `elite-review` | Exhaustive ship/no-ship review with systemic risks and blind spots. |
@@ -137,6 +158,10 @@ convergent control-plane issues.
 ## Detailed Capabilities
 
 Five review lanes, all agentic by default:
+
+- `/claude-review:workspace` — dispatch a writable Claude worker, open its
+  native agent panel in another terminal, and keep the active Codex task in
+  control for status polling, verification, review, and focused repairs.
 
 - `/claude-review:review` — quick agentic Claude review (Opus alias, xhigh effort).
 - `/claude-review:adversarial-review` — agentic skeptical challenge pass.

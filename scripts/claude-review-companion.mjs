@@ -47,7 +47,15 @@ import {
   writeJobInput
 } from "./lib/state.mjs";
 import { renderCancelReport, renderFailureReport, renderReviewResult, renderSetupReport, renderStatusReport } from "./lib/render.mjs";
-import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
+import {
+  buildClaudeLogsArgs,
+  buildClaudeStatusArgs,
+  buildClaudeStopArgs,
+  createWorkspaceConfig,
+  resolveWorkspaceRoot,
+  runWorkspace,
+  runWorkspaceControl
+} from "./lib/workspace.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const ROOT_DIR = path.resolve(path.dirname(SCRIPT_PATH), "..");
@@ -210,9 +218,21 @@ function printUsage() {
       "  codex-claude-review elite-review [flags] [focus text]",
       "  codex-claude-review deep-review [flags] [focus text]",
       "  codex-claude-review security-review [flags] [focus text]",
+      "  codex-claude-review workspace [flags] [initial coding request]",
+      "  codex-claude-review workspace-status [--path <dir>] [--all] [--json]",
+      "  codex-claude-review workspace-logs <session-id>",
+      "  codex-claude-review workspace-stop <session-id>",
       "  codex-claude-review status [job-id]",
       "  codex-claude-review result <job-id>",
       "  codex-claude-review cancel <job-id>",
+      "",
+      "Flags (workspace):",
+      "  --path <dir>                coding directory (default: cwd)",
+      "  --model <name>              Claude model selector (default: rolling opus alias)",
+      "  --plan                      start Claude in analysis-only plan mode",
+      "  --panel-only                open Claude's agents panel without dispatching work",
+      "  --no-panel                  dispatch without opening another panel",
+      "  --json-events               emit privacy-safe lifecycle events as JSON Lines to stderr",
       "",
       "Flags (review-like commands):",
       "  --path <dir>                target directory (default: cwd). Works for Git and non-Git dirs.",
@@ -254,6 +274,77 @@ function printUsage() {
       "  --probe-runtime             run a live Claude non-interactive model probe"
     ].join("\n")
   );
+}
+
+async function handleWorkspace(argv) {
+  const { options, positionals } = parseCommandInput(argv, {
+    booleanOptions: ["plan", "panel-only", "no-panel", "json-events"],
+    valueOptions: ["path", "model"]
+  });
+  const config = createWorkspaceConfig(
+    {
+      path: options.path,
+      model: options.model,
+      plan: options.plan,
+      panelOnly: options["panel-only"],
+      noPanel: options["no-panel"],
+      jsonEvents: options["json-events"],
+      positionals
+    },
+    process.cwd()
+  );
+  const result = await runWorkspace(config);
+  if (result.sessionId) console.log(`Claude workspace session: ${result.sessionId}`);
+  if (result.panelOpened) {
+    console.log(`Claude control panel opened via ${result.terminalBackend}.`);
+  } else if (result.manualPanelCommand) {
+    console.log(`Worker is still running. Open the panel manually: ${result.manualPanelCommand.join(" ")}`);
+  }
+  if (result.status !== 0) process.exitCode = result.status;
+}
+
+function relayWorkspaceControlResult(result) {
+  if (result.stdout) process.stdout.write(String(result.stdout));
+  if (result.stderr) process.stderr.write(String(result.stderr));
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exitCode = result.status ?? 1;
+}
+
+function handleWorkspaceStatus(argv) {
+  const { options, positionals } = parseCommandInput(argv, {
+    booleanOptions: ["all", "json"],
+    valueOptions: ["path"]
+  });
+  if (positionals.length) throw new Error(`Unexpected workspace-status argument: ${positionals[0]}`);
+  const cwd = path.resolve(process.cwd(), options.path ?? ".");
+  relayWorkspaceControlResult(runWorkspaceControl(
+    "claude",
+    buildClaudeStatusArgs({ cwd, all: options.all, json: options.json }),
+    { cwd }
+  ));
+}
+
+function requireSessionId(positionals, command) {
+  if (positionals.length !== 1 || !positionals[0]) {
+    throw new Error(`${command} requires exactly one Claude session ID`);
+  }
+  return positionals[0];
+}
+
+function handleWorkspaceLogs(argv) {
+  const { positionals } = parseCommandInput(argv);
+  relayWorkspaceControlResult(runWorkspaceControl(
+    "claude",
+    buildClaudeLogsArgs(requireSessionId(positionals, "workspace-logs"))
+  ));
+}
+
+function handleWorkspaceStop(argv) {
+  const { positionals } = parseCommandInput(argv);
+  relayWorkspaceControlResult(runWorkspaceControl(
+    "claude",
+    buildClaudeStopArgs(requireSessionId(positionals, "workspace-stop"))
+  ));
 }
 
 function redactAuthDetail(auth) {
@@ -2021,6 +2112,18 @@ async function main() {
         break;
       case "security-review":
         await handleReviewLike("security-review", argv);
+        break;
+      case "workspace":
+        await handleWorkspace(argv);
+        break;
+      case "workspace-status":
+        handleWorkspaceStatus(argv);
+        break;
+      case "workspace-logs":
+        handleWorkspaceLogs(argv);
+        break;
+      case "workspace-stop":
+        handleWorkspaceStop(argv);
         break;
       case "run-job":
         await handleRunJob(argv);

@@ -4,15 +4,15 @@
 
 ## Goal
 
-Extend the plugin beyond read-only reviews by adding a terminal-native Claude coding workspace supervised by Codex. The workspace launches the installed Claude CLI in the selected project, defaults to the rolling `opus` model alias, and lets the user use Claude's native model picker during the session. Claude can edit files, run commands, execute tests, and iterate on failures under its normal permission prompts. The active Codex model plans, supervises, verifies, and reviews the resulting work.
+Extend the plugin beyond read-only reviews by adding a split-terminal Claude coding workspace supervised by Codex. The originating Codex session remains active while Claude runs as a background coding worker under Claude's native supervisor. A separate terminal opens Claude's `agents` control panel for live inspection, replies, attachment, model controls, and permission prompts. The active Codex model plans, dispatches, monitors, verifies, and reviews the resulting work.
 
 ## Product boundary
 
 The existing review commands remain read-only and retain their current tool fences. Coding is a separate command and policy boundary:
 
-- `workspace`: interactive coding in the current terminal.
-- `workspace --plan`: analysis-only interactive work.
-- `/claude-review:workspace`: Codex-supervised coding followed by verification and review in the same Codex session.
+- `workspace`: dispatch a Claude background worker and open its control panel in another terminal.
+- `workspace --plan`: dispatch analysis-only work with the same split-terminal control plane.
+- `/claude-review:workspace`: keep the active Codex session in control while it dispatches, polls, verifies, reviews, and requests repairs.
 - Existing `review`, `elite-review`, `deep-review`, and `security-review`: unchanged.
 
 The plugin does not claim access to every published model. It accepts a rolling alias or explicit model selector and lets the installed Claude CLI and the user's provider/account determine availability.
@@ -23,13 +23,15 @@ The plugin does not claim access to every published model. It accepts a rolling 
 codex-claude-review workspace
 codex-claude-review workspace --model sonnet
 codex-claude-review workspace --plan
-codex-claude-review workspace --continue
-codex-claude-review workspace --resume <session-id>
 codex-claude-review workspace --path <directory> "initial coding request"
-codex-claude workspace --codex-review
+codex-claude-review workspace --panel-only
+codex-claude-review workspace --no-panel "follow-up coding request"
+codex-claude-review workspace-status --path <directory> --json
+codex-claude-review workspace-logs <session-id>
+codex-claude-review workspace-stop <session-id>
 ```
 
-The default invocation is equivalent in intent to launching Claude interactively with the current rolling `opus` alias and standard permission prompts. The terminal is inherited directly so colors, keyboard input, permission prompts, slash commands, and the native `/model` control panel continue to work.
+The default invocation dispatches the supplied task with Claude's background-agent mode and opens `claude agents --cwd <directory>` in another terminal. The helper returns a session identifier immediately, leaving the originating Codex session free to orchestrate. With no task, it opens the control panel only. `--no-panel` supports repair dispatches without opening duplicate windows.
 
 ## Architecture
 
@@ -37,15 +39,17 @@ Add a small `scripts/lib/workspace.mjs` module rather than placing subprocess co
 
 1. strict option parsing and validation;
 2. resolution of the target directory inside the requested workspace;
-3. construction of a safe argument array without a shell;
-4. an injected spawn function for deterministic tests;
-5. propagation of signals and the child exit status.
+3. construction of Claude background-worker and agent-panel argument arrays;
+4. generation of a minimal, permission-restricted terminal launcher;
+5. macOS Terminal, existing-tmux, and Linux terminal adapters;
+6. injected process and terminal functions for deterministic tests;
+7. bounded dispatch, panel, status, logs, and stop receipts.
 
 The main CLI only parses `workspace` arguments, calls the module, and renders actionable errors. A second binary alias, `codex-claude`, points to the same entry point without removing `codex-claude-review`.
 
-The Codex slash command is the preferred orchestration surface. It runs inside the user's active Codex session, so the already-selected Codex model remains the supervisor. It records the pre-work tree state, launches the Claude workspace, inspects the post-work diff, runs the repository's verification entry point, reviews the changes, and can request or apply follow-up corrections when authorized.
+The Codex slash command is the preferred orchestration surface. It runs inside the user's active Codex session, so the already-selected Codex model remains the supervisor. It records the pre-work tree state, dispatches a Claude background worker, receives its session identifier, polls the machine-readable agent roster, inspects worker logs only when needed, and keeps the Codex conversation responsive. When Claude is ready, Codex inspects the diff, runs the repository's verification entry point, reviews the changes, and can dispatch focused repair workers with `--no-panel`.
 
-For standalone terminal use, `workspace --codex-review` invokes `codex review --uncommitted` after Claude exits successfully. By default it supplies no `--model` or model config override, allowing Codex to inherit the user's configured best/default model. `--codex-model <selector>` is an explicit opt-in override.
+The workspace lane never launches a nested Codex process. In a plugin command, orchestration inherently uses the active Codex session model. Standalone users can open Claude's control panel, but GPT-side orchestration requires starting the command from Codex.
 
 ## Model policy
 
@@ -53,8 +57,7 @@ For standalone terminal use, `workspace --codex-review` invokes `codex review --
 - Claude override: `--model <selector>` passed as one argument to the native CLI.
 - Claude in-session switching: native `/model` picker.
 - Codex supervisor in a plugin command: inherit the active Codex session model.
-- Codex supervisor in standalone mode: omit a model override and inherit Codex configuration/provider routing.
-- Codex override: `--codex-model <selector>` passed only when explicitly supplied.
+- Nested Codex model invocation: none; the workspace deliberately stays in the active Codex task.
 - No pinned dated model identifier in source or configuration.
 - The plugin reports an unavailable selector as a Claude CLI error instead of silently falling back.
 
@@ -71,46 +74,48 @@ The plugin manifest advertises write capability because the workspace is a genui
 
 ## Data flow
 
-1. Codex invokes the plugin command.
-2. The plugin validates mutually exclusive flags and resolves the working directory.
-3. It checks that the Claude executable is available.
-4. It prints a short launch receipt containing mode, model selector, and directory.
-5. It spawns the Claude CLI with an argument array and inherited stdio.
-6. Claude owns the interactive session and permission prompts.
-7. Claude returns control to the plugin or active Codex session.
-8. When supervision is enabled, Codex reviews the uncommitted changes using the inherited model and repository verification evidence.
-9. The plugin returns the final relevant exit status.
+1. Codex invokes the plugin command and records the worktree baseline.
+2. The plugin validates flags, resolves the directory, and generates a session UUID.
+3. With a task, it dispatches `claude --bg` with the selected model and native permission mode.
+4. It opens `claude agents --cwd <directory>` in a separate terminal unless `--no-panel` was supplied.
+5. It emits the session identifier and returns control to Codex immediately.
+6. Codex polls `workspace-status`, optionally checks bounded logs, and remains available to the user.
+7. The user can use the separate control panel to inspect, reply, attach, switch models, and approve tools.
+8. When the worker is ready, Codex reviews the worktree and runs project verification.
+9. Codex fixes directly or dispatches a focused follow-up worker, then repeats the review gate.
 
-No prompt text, file contents, terminal stream, credentials, or session transcript is persisted by the launcher.
+No prompt text, file contents, credentials, or session transcript is copied into plugin event records or terminal launcher files. Claude retains its own native session data as documented by its CLI.
 
 ## Observability
 
-The first release emits privacy-safe launch, exit, and optional Codex-review receipts to stderr. Stable fields are command, phase, mode, model routing policy (`inherited` or `explicit`), Claude model selector, directory, start time, duration, signal, and exit code. Prompts and tool arguments are excluded. `--json-events` emits the same bounded event objects as JSON Lines to stderr for local collection. A future OTLP adapter can consume this schema, but remote exporting is outside this initial change.
+The first release emits privacy-safe dispatch, panel-open, status, and error receipts to stderr. Stable fields are command, phase, mode, Claude model selector, Codex routing policy (`active-session`), directory, session identifier, terminal backend, duration, and exit code. Prompts and tool arguments are excluded. `--json-events` emits the same bounded objects as JSON Lines for local collection. A future OTLP adapter can consume this schema, but remote exporting is outside this initial change.
 
 ## Error handling
 
 - Missing Claude executable: fail before launch with setup guidance.
 - Invalid or missing option value: exit with usage status.
 - Invalid directory: fail before launch.
-- Conflicting `--continue` and `--resume`: fail before launch.
-- Child signal or non-zero exit: propagate the resulting status.
-- Interactive terminal unavailable: fail with a message explaining that `workspace` requires a TTY.
+- Missing prompt with `--no-panel`: fail because neither worker nor control surface would be created.
+- `--panel-only` combined with a prompt: fail as ambiguous.
+- Background dispatch failure: do not open the panel; propagate the failure.
+- Unsupported terminal environment: keep the worker running, return its session identifier, and print the manual `claude agents --cwd` recovery command.
 
 ## Tests
 
-Unit tests cover argument construction, default model selection, explicit selectors, plan mode, resume/continue exclusivity, directory validation, and prompt preservation as one argument. CLI tests cover help text and usage failures. A fake Claude executable verifies inherited launch behavior without provider spend. The full repository check and package dry-run remain release gates.
+Unit tests cover argument construction, session identifiers, default model selection, explicit selectors, plan mode, panel-only/no-panel validation, directory validation, prompt preservation as one argument, terminal backend selection, nonblocking dispatch, and privacy-safe receipts. CLI tests cover help text and usage failures. Injected process adapters verify orchestration without provider spend or opening a real terminal. The full repository check and package dry-run remain release gates.
 
 ## Non-goals
 
 - Replacing Claude's terminal UI.
 - Discovering or ranking provider-specific model inventories.
 - Automatically bypassing permissions.
-- Background autonomous coding jobs in this first increment.
 - Recursively launching a second interactive Codex TUI from an active Codex session.
 - Changing the safety behavior of review commands.
 
 ## Current-source basis
 
-Anthropic's current CLI reference documents interactive launch, the rolling `opus` and `sonnet` model aliases, the native model selector, plan permission mode, and continue/resume controls: <https://docs.anthropic.com/en/docs/claude-code/cli-usage>.
+Anthropic's current CLI reference documents background dispatch, agent view, session attachment, model selection, and permission controls: <https://code.claude.com/docs/en/cli-usage>.
+
+Anthropic's agent-view guide documents the separate supervisor process, machine-readable roster, control panel, replies, attachment, logs, and stop operations used by this design: <https://code.claude.com/docs/en/agent-view>.
 
 OpenAI's current model reference documents GPT-5.6 Sol as the frontier GPT-5.6 model and says the `gpt-5.6` alias routes to Sol: <https://developers.openai.com/api/docs/models/gpt-5.6-sol>. OpenAI's release notes document GPT-5.6 availability in Codex and current `max`/`ultra` orchestration options: <https://openai.com/index/gpt-5-6/>.

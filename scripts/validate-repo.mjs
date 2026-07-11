@@ -14,6 +14,7 @@ const required = [
   "commands/elite-review.md",
   "commands/deep-review.md",
   "commands/security-review.md",
+  "commands/workspace.md",
   "commands/enable.md",
   "commands/doctor.md",
   "commands/setup.md",

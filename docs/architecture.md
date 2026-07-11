@@ -1,5 +1,26 @@
 # Architecture
 
+## Split-Terminal Coding Workspace
+
+```text
+active Codex task (planner/orchestrator/reviewer)
+  -> codex-claude workspace "coding request"
+  -> claude --session-id <uuid> --bg "coding request"
+  -> Claude background supervisor
+  -> separate terminal: claude agents --cwd <workspace>
+
+active Codex task
+  -> workspace-status / workspace-logs / workspace-stop
+  -> inspect diff -> run project checks -> review -> focused repair
+```
+
+The dispatch returns immediately with a known session ID. The current Codex
+task stays responsive and is the only GPT-side process; model routing therefore
+inherits the active Codex selection without a hardcoded ID or nested `codex`
+invocation. Claude's normal workspace lane uses native coding permissions and
+approval prompts. The separate review pipeline below retains its read-only
+tool fences.
+
 ## Data Flow
 
 ```text
@@ -40,6 +61,8 @@ The helper treats diff text, user focus text, and workspace guidance as untruste
 - `scripts/lib/process.mjs`: child-process capture with timeout and interrupt handling.
 - `scripts/lib/state.mjs`: versioned job records, atomic writes, exclusive job creation, logs.
 - `scripts/lib/render.mjs`: setup/status/review output rendering.
+- `scripts/lib/workspace.mjs`: Claude background dispatch, terminal adapter
+  selection, privacy-safe lifecycle events, and native agent controls.
 - `scripts/bin/git-safe.mjs`: read-only git wrapper used by the Claude Bash allowlist.
 
 ## Claude Invocation

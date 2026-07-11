@@ -150,6 +150,7 @@ test("public-facing docs do not contain private local machine paths", () => {
     "commands/elite-review.md",
     "commands/deep-review.md",
     "commands/security-review.md",
+    "commands/workspace.md",
     "commands/doctor.md",
     "commands/setup.md",
     "commands/status.md",
@@ -162,6 +163,7 @@ test("public-facing docs do not contain private local machine paths", () => {
 
 test("public trust metadata is attribution-safe and precise", () => {
   const notice = read("NOTICE");
+  const packageJson = JSON.parse(read("package.json"));
   const plugin = JSON.parse(read(".codex-plugin/plugin.json"));
   const claudeMarketplace = JSON.parse(read(".claude-plugin/marketplace.json"));
   const readme = read("README.md");
@@ -176,7 +178,8 @@ test("public trust metadata is attribution-safe and precise", () => {
 
   assert.match(notice, /Copyright 2026 Kennedy Umege/);
   assert.match(notice, /Copyright 2026 OpenAI/);
-  assert.deepEqual(plugin.interface.capabilities, ["Interactive", "Read"]);
+  assert.deepEqual(plugin.interface.capabilities, ["Interactive", "Read", "Write"]);
+  assert.equal(packageJson.bin["codex-claude"], "scripts/claude-review-companion.mjs");
   assert.equal(claudeMarketplace.owner.name, "Kennedy Umege");
   assert.doesNotMatch(claudeMarketplace.owner.name, /OpenAI/);
   assert.match(readme, /Windows is not a supported v1 platform/);

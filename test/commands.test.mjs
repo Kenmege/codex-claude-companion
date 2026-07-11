@@ -154,6 +154,22 @@ test("helper usage advertises folder subcommand and --path flag", () => {
   assert.match(result.stdout, /--scope auto\|working-tree\|branch\|directory/);
 });
 
+test("helper usage advertises split-terminal Claude workspaces and Codex supervision controls", () => {
+  const result = spawnSync(process.execPath, [helper, "--help"], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /codex-claude-review workspace/);
+  assert.match(result.stdout, /workspace-status/);
+  assert.match(result.stdout, /workspace-logs/);
+  assert.match(result.stdout, /workspace-stop/);
+  assert.match(result.stdout, /--panel-only/);
+  assert.match(result.stdout, /--no-panel/);
+  assert.doesNotMatch(result.stdout, /--codex-model/);
+  assert.match(result.stdout, /--json-events/);
+});
+
 test("folder subcommand requires a positional path argument", () => {
   const result = spawnSync(process.execPath, [helper, "folder"], {
     cwd: root,
@@ -459,10 +475,20 @@ test("plugin manifest has the expected plugin name", () => {
   const manifest = JSON.parse(read(".codex-plugin/plugin.json"));
   assert.equal(manifest.name, "claude-review");
   assert.equal(manifest.skills, "./skills/");
-  assert.equal(manifest.interface.displayName, "Claude Review");
+  assert.equal(manifest.interface.displayName, "Claude Workspace & Review");
   assert.ok(Array.isArray(manifest.interface.defaultPrompt));
   assert.ok(manifest.interface.defaultPrompt.length > 0);
   assert.ok(manifest.interface.defaultPrompt.length <= 3);
+});
+
+test("workspace command defines active-model Codex supervision and a writable Claude lane", () => {
+  const source = read("commands/workspace.md");
+  assert.match(source, /codex-claude(?:-review)? workspace/);
+  assert.match(source, /active Codex (?:session )?model/i);
+  assert.match(source, /write|edit files/i);
+  assert.match(source, /verify|verification/i);
+  assert.match(source, /review/i);
+  assert.doesNotMatch(source, /dangerously-skip-permissions/);
 });
 
 test("deep-review command advertises agentic multi-agent mode", () => {

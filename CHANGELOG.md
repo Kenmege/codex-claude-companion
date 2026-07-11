@@ -6,6 +6,20 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Added a split-terminal `workspace` lane that dispatches full Claude coding
+  workers in the background, opens Claude's native agent panel separately, and
+  returns a stable session ID to the still-active Codex task.
+- Added `workspace-status`, `workspace-logs`, and `workspace-stop` controls for
+  Codex-led monitoring and repair loops.
+
+### Changed
+
+- The active Codex task now exclusively owns GPT-side orchestration and review;
+  the workspace lane no longer blocks the invoking terminal or starts nested
+  Codex processes.
+
 ## [1.0.14] — 2026-06-08
 
 ### Added
