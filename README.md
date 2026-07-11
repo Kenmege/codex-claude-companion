@@ -545,8 +545,11 @@ npm run pack:check
 
 The npm package intentionally omits `package.json.private` so npmjs publishing
 can run when explicitly enabled. The release workflow validates tags and only
-publishes when repository variable `NPMJS_PUBLISH_ENABLED=true` and secret
-`NPM_TOKEN` are configured. Release tags must match the package version exactly:
+publishes when repository variable `NPMJS_PUBLISH_ENABLED=true` and the npm
+trusted publisher for the `Kenmege/codex-plugin-cc` `release.yml` workflow is
+configured. GitHub OIDC supplies short-lived publishing access; the workflow
+does not use a long-lived npm publishing secret. Release tags must match the
+package version exactly:
 `package.json` version `X.Y.Z` is published only from tag `vX.Y.Z`; a
 prerelease smoke must first commit matching `X.Y.Z-rc.1` metadata before
 pushing tag `vX.Y.Z-rc.1`.

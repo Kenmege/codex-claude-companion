@@ -424,13 +424,24 @@ test("release workflow fails closed when tag and package version differ", () => 
   assert.match(contributing, /1\.0\.3-rc\.1/);
 });
 
-test("contributor release docs require npm trusted publishing without long-lived tokens", () => {
-  const contributing = read("CONTRIBUTING.md");
+test("release runbooks require npm trusted publishing without long-lived tokens", () => {
+  for (const relativePath of [
+    "CONTRIBUTING.md",
+    "README.md",
+    "docs/NPM_PUBLISH_CHECKLIST.md"
+  ]) {
+    const source = read(relativePath);
 
-  assert.match(contributing, /npm trusted publish(?:er|ing)/i);
+    assert.match(source, /npm\s+trusted\s+publish(?:er|ing)/i, relativePath);
+    assert.doesNotMatch(source, /NPM_TOKEN/, relativePath);
+    assert.doesNotMatch(source, /NODE_AUTH_TOKEN/, relativePath);
+  }
+
+  const contributing = read("CONTRIBUTING.md");
+  const checklist = read("docs/NPM_PUBLISH_CHECKLIST.md");
   assert.match(contributing, /id-token: write/);
-  assert.doesNotMatch(contributing, /NPM_TOKEN/);
-  assert.doesNotMatch(contributing, /NODE_AUTH_TOKEN/);
+  assert.match(checklist, /release\.yml/);
+  assert.match(checklist, /allowed action[^\n]*npm publish/i);
 });
 
 test("README release docs do not pin stale package versions", () => {
