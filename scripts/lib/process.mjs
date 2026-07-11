@@ -275,15 +275,15 @@ export function runCommandCapture(command, args, options = {}) {
     process.once("SIGTERM", onTerminate);
 
     child.stdout.on("data", (chunk) => {
-      if (stdoutCaptureClosed) return;
       firstOutputSeen = true;
       if (noOutputTimeout) clearTimeout(noOutputTimeout);
       stdoutBytes += chunk.length;
+      stdoutTail = appendTail(stdoutTail, chunk, tailBytes);
+      if (stdoutCaptureClosed) return;
       const remaining = Math.max(0, maxBuffer - stdoutRetainedBytes);
       const retained = chunk.subarray(0, remaining);
       if (retained.length > 0) {
         stdoutRetainedBytes += retained.length;
-        stdoutTail = appendTail(stdoutTail, retained, tailBytes);
         stdoutChunks.push(retained);
       }
       const text = stdoutDecoder.write(retained);
@@ -314,15 +314,15 @@ export function runCommandCapture(command, args, options = {}) {
     });
 
     child.stderr.on("data", (chunk) => {
-      if (stderrCaptureClosed) return;
       firstOutputSeen = true;
       if (noOutputTimeout) clearTimeout(noOutputTimeout);
       stderrBytes += chunk.length;
+      stderrTail = appendTail(stderrTail, chunk, tailBytes);
+      if (stderrCaptureClosed) return;
       const remaining = Math.max(0, maxBuffer - stderrRetainedBytes);
       const retained = chunk.subarray(0, remaining);
       if (retained.length > 0) {
         stderrRetainedBytes += retained.length;
-        stderrTail = appendTail(stderrTail, retained, tailBytes);
         stderrChunks.push(retained);
       }
       const text = stderrDecoder.write(retained);

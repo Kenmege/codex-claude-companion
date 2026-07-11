@@ -46,12 +46,13 @@ test("createDirectorySnapshot copies reviewable files and inits a git repo", () 
   writeFile(source, "src/index.js", "console.log('hello');\n");
   writeFile(source, "src/util.js", "export const x = 1;\n");
   writeFile(source, "README.md", "# project\n");
+  writeFile(source, "..valid-source.txt", "dot-prefix\n");
 
   const snap = createDirectorySnapshot(source);
   try {
     assert.ok(snap.snapshotRoot, "snapshotRoot must be set");
     assert.equal(snap.sourceRoot, path.resolve(source));
-    assert.equal(snap.copiedFiles, 3);
+    assert.equal(snap.copiedFiles, 4);
 
     // Files exist at expected relative paths
     assert.equal(
@@ -61,6 +62,10 @@ test("createDirectorySnapshot copies reviewable files and inits a git repo", () 
     assert.equal(
       fs.readFileSync(path.join(snap.snapshotRoot, "README.md"), "utf8"),
       "# project\n"
+    );
+    assert.equal(
+      fs.readFileSync(path.join(snap.snapshotRoot, "..valid-source.txt"), "utf8"),
+      "dot-prefix\n"
     );
 
     // Git repo was initialised inside the snapshot dir

@@ -342,7 +342,11 @@ function isIgnoredPath(relativePath, ignoredPaths) {
 
 function isWithinRoot(candidate, root) {
   const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  return relative === "" || (
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
 }
 
 function sameFileIdentity(left, right) {

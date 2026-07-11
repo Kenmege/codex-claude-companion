@@ -54,6 +54,22 @@ test("working tree paths preserve control characters, quotes, slashes, and Unico
   }
 });
 
+test("working tree context reads in-workspace filenames beginning with two dots", () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-git-dot-prefix-"));
+  run(cwd, "init");
+  run(cwd, "config", "user.email", "test@example.com");
+  run(cwd, "config", "user.name", "Test User");
+  fs.writeFileSync(path.join(cwd, "baseline.txt"), "baseline\n", "utf8");
+  run(cwd, "add", "baseline.txt");
+  run(cwd, "commit", "-m", "baseline");
+  fs.writeFileSync(path.join(cwd, "..valid-source.txt"), "DOT_PREFIX_MARKER\n", "utf8");
+
+  const context = collectReviewContext(cwd, resolveReviewTarget(cwd, {}));
+
+  assert.ok(context.changedFiles.includes("..valid-source.txt"));
+  assert.match(context.fullContent, /DOT_PREFIX_MARKER/);
+});
+
 test("branch paths preserve control characters and Unicode", () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-branch-paths-"));
   run(cwd, "init");

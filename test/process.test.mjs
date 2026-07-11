@@ -22,9 +22,17 @@ test("runCommandCapture stops retaining output at maxBuffer while terminating a 
     process.execPath,
     [
       "-e",
-      "process.on('SIGTERM',()=>{});const chunk='x'.repeat(4096);setInterval(()=>process.stdout.write(chunk),0)"
+      [
+        "process.on('SIGTERM',()=>{",
+        "process.stdout.write('stdout-after-limit');",
+        "process.stderr.write('stderr-after-limit');",
+        "setTimeout(()=>process.exit(0),20);",
+        "});",
+        "process.stdout.write('x'.repeat(4096));",
+        "setInterval(()=>{},1000);"
+      ].join("")
     ],
-    { timeout: 5_000, terminationGraceMs: 50, maxBuffer, tailBytes: maxBuffer }
+    { timeout: 5_000, terminationGraceMs: 200, maxBuffer, tailBytes: maxBuffer }
   );
 
   assert.equal(result.error?.code, "EMAXBUFFER");
@@ -32,6 +40,10 @@ test("runCommandCapture stops retaining output at maxBuffer while terminating a 
   assert.ok(result.stdoutBytes > maxBuffer, `expected observed bytes > ${maxBuffer}, got ${result.stdoutBytes}`);
   assert.ok(Buffer.byteLength(result.stdout) <= maxBuffer);
   assert.ok(Buffer.byteLength(result.stdoutTail) <= maxBuffer);
+  assert.match(result.stdoutTail, /stdout-after-limit/);
+  assert.match(result.stderrTail, /stderr-after-limit/);
+  assert.ok(result.stdoutBytes >= 4096 + Buffer.byteLength("stdout-after-limit"));
+  assert.ok(result.stderrBytes >= Buffer.byteLength("stderr-after-limit"));
 });
 
 test("spawnDetached redirects early stdout and stderr to a log file", async () => {
