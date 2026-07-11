@@ -14,7 +14,7 @@ Do not publish until Kennedy explicitly approves the npmjs publish action.
 Checked on 2026-07-11:
 
 - `npm view codex-plugin-cc --registry=https://registry.npmjs.org` returned
-  `1.0.13` as the current version at check time.
+  `1.1.0` as the current version at check time.
 - The repo is configured for npmjs publishing through `publishConfig.registry`
   and `.github/workflows/release.yml`.
 
