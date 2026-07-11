@@ -377,6 +377,7 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /release_tag:/);
   assert.match(workflow, /ref: refs\/tags\/\$\{\{ env\.RELEASE_TAG \}\}/);
+  assert.match(workflow, /fetch-depth: 0/);
   assert.match(workflow, /NPMJS_PUBLISH_ENABLED/);
   assert.doesNotMatch(workflow, /npm pkg set private=false/);
   assert.match(workflow, /id: publish-package/);
@@ -419,6 +420,15 @@ test("release workflow fails closed when tag and package version differ", () => 
   assert.match(workflow, /printf 'version=%s\\n' "\$PACKAGE_VERSION" >> "\$GITHUB_OUTPUT"/);
   assert.match(contributing, /tag and package version differ/);
   assert.match(contributing, /1\.0\.3-rc\.1/);
+});
+
+test("contributor release docs require npm trusted publishing without long-lived tokens", () => {
+  const contributing = read("CONTRIBUTING.md");
+
+  assert.match(contributing, /npm trusted publish(?:er|ing)/i);
+  assert.match(contributing, /id-token: write/);
+  assert.doesNotMatch(contributing, /NPM_TOKEN/);
+  assert.doesNotMatch(contributing, /NODE_AUTH_TOKEN/);
 });
 
 test("README release docs do not pin stale package versions", () => {
@@ -614,8 +624,8 @@ test("workspace documentation promises stdin prompt transport", () => {
 test("release checklist documents npmjs publish switch and v-tag trigger", () => {
   const source = read("CONTRIBUTING.md");
   assert.match(source, /NPMJS_PUBLISH_ENABLED=true/);
-  assert.match(source, new RegExp("NPM" + "_TOKEN"));
-  assert.match(source, /NODE_AUTH_TOKEN/);
+  assert.match(source, /npm trusted publisher/);
+  assert.match(source, /GitHub OIDC identity/);
   assert.match(source, /v1\.0\.3/);
   assert.match(source, /matching the package version exactly/);
   assert.match(source, /RELEASE_NOTES_v\$\{VERSION\}\.md/);

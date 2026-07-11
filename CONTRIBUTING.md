@@ -78,7 +78,7 @@ Schemas are hand-maintained JSON Schema documents. When changing a schema:
 2. Update `CHANGELOG.md`.
 3. Run `npm run check`.
 4. Run `npm run pack:check` and verify `.claude-review/`, `test/`, `tests/`, and prompt/planning docs are not shipped.
-5. Configure npmjs publishing before tagging: set repository variable `NPMJS_PUBLISH_ENABLED=true` and repository secret `NPM_TOKEN`. The release workflow uses `NODE_AUTH_TOKEN` only for the publish step.
+5. Configure npmjs publishing before tagging: set repository variable `NPMJS_PUBLISH_ENABLED=true`, then configure an npm trusted publisher for the `Kenmege/codex-plugin-cc` GitHub repository and `release.yml` workflow. The workflow requests `id-token: write` and exchanges GitHub OIDC identity for short-lived npm publishing access; do not add a long-lived npm publishing credential.
 6. Push a semver release tag matching the package version exactly, e.g. `package.json` version `1.0.3` must be tagged as `v1.0.3`. The workflow fails closed if the tag and package version differ, so a prerelease smoke requires committing matching `1.0.3-rc.1` version metadata before pushing `v1.0.3-rc.1`.
 7. Verify the package landed at https://www.npmjs.com/package/codex-plugin-cc and that `npm view codex-plugin-cc version` returns the tagged version.
 
