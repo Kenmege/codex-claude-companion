@@ -99,7 +99,11 @@ function writeJsonAtomic(filePath, payload) {
     });
     fs.renameSync(temporaryFile, filePath);
   } finally {
-    removeFileIfExists(temporaryFile);
+    try {
+      removeFileIfExists(temporaryFile);
+    } catch {
+      // Cleanup is best-effort so it cannot mask the original write or rename error.
+    }
   }
 }
 

@@ -40,7 +40,7 @@ test("resolveStateDir uses CLAUDE_PLUGIN_DATA when it is provided", () => {
   }
 });
 
-test("saveState atomically replaces the state snapshot", () => {
+test("saveState atomically replaces the state snapshot", { skip: process.platform === "win32" }, () => {
   const workspace = makeTempDir();
   const stateFile = resolveStateFile(workspace);
   const firstJob = {
@@ -66,6 +66,33 @@ test("saveState atomically replaces the state snapshot", () => {
     assert.equal(newState.jobs[0].id, secondJob.id);
   } finally {
     fs.closeSync(previousSnapshot);
+  }
+});
+
+test("saveState preserves an atomic rename error when temporary cleanup also fails", () => {
+  const workspace = makeTempDir();
+  const originalRenameSync = fs.renameSync;
+  const originalUnlinkSync = fs.unlinkSync;
+  let temporaryFile;
+
+  fs.renameSync = function patchedRenameSync(source) {
+    temporaryFile = String(source);
+    const error = new Error("rename failed");
+    error.code = "EACCES";
+    throw error;
+  };
+  fs.unlinkSync = function patchedUnlinkSync() {
+    const error = new Error("cleanup failed");
+    error.code = "EPERM";
+    throw error;
+  };
+
+  try {
+    assert.throws(() => saveState(workspace, { jobs: [] }), /rename failed/);
+  } finally {
+    fs.renameSync = originalRenameSync;
+    fs.unlinkSync = originalUnlinkSync;
+    if (temporaryFile && fs.existsSync(temporaryFile)) fs.unlinkSync(temporaryFile);
   }
 });
 

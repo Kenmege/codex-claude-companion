@@ -371,9 +371,11 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.match(workflow, /id-token: write/);
   assert.doesNotMatch(workflow, /packages: write/);
   assert.match(workflow, /registry-url: https:\/\/registry\.npmjs\.org/);
+  assert.match(workflow, /package-manager-cache: false/);
+  assert.doesNotMatch(workflow, /^\s+cache: npm$/m);
   assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN/);
   assert.doesNotMatch(workflow, /secrets\.NPM_TOKEN/);
-  assert.match(workflow, /npm install --global npm@11\.5\.1/);
+  assert.match(workflow, /npm install --global --ignore-scripts --no-audit --no-fund npm@11\.5\.1/);
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /release_tag:/);
   assert.match(workflow, /ref: refs\/tags\/\$\{\{ env\.RELEASE_TAG \}\}/);
