@@ -40,6 +40,35 @@ test("resolveStateDir uses CLAUDE_PLUGIN_DATA when it is provided", () => {
   }
 });
 
+test("saveState atomically replaces the state snapshot", () => {
+  const workspace = makeTempDir();
+  const stateFile = resolveStateFile(workspace);
+  const firstJob = {
+    id: "job-first",
+    status: "completed",
+    updatedAt: "2026-07-11T15:00:00.000Z"
+  };
+  const secondJob = {
+    id: "job-second",
+    status: "completed",
+    updatedAt: "2026-07-11T15:01:00.000Z"
+  };
+
+  saveState(workspace, { jobs: [firstJob] });
+  const previousSnapshot = fs.openSync(stateFile, "r");
+
+  try {
+    saveState(workspace, { jobs: [secondJob] });
+
+    const oldState = JSON.parse(fs.readFileSync(previousSnapshot, "utf8"));
+    const newState = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    assert.equal(oldState.jobs[0].id, firstJob.id);
+    assert.equal(newState.jobs[0].id, secondJob.id);
+  } finally {
+    fs.closeSync(previousSnapshot);
+  }
+});
+
 test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", () => {
   const workspace = makeTempDir();
   const stateFile = resolveStateFile(workspace);
