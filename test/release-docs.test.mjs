@@ -376,7 +376,7 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.match(workflow, /npm install --global npm@11\.5\.1/);
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /release_tag:/);
-  assert.match(workflow, /ref: \$\{\{ env\.RELEASE_TAG \}\}/);
+  assert.match(workflow, /ref: refs\/tags\/\$\{\{ env\.RELEASE_TAG \}\}/);
   assert.match(workflow, /NPMJS_PUBLISH_ENABLED/);
   assert.doesNotMatch(workflow, /npm pkg set private=false/);
   assert.match(workflow, /id: publish-package/);
@@ -402,6 +402,9 @@ test("release workflow fails closed when tag and package version differ", () => 
   assert.match(workflow, /read -r PACKAGE_VERSION < \.release-package-version/);
   assert.match(workflow, /RELEASE_TAG: \$\{\{ github\.event_name == 'workflow_dispatch'/);
   assert.match(workflow, /Release tag '\$RELEASE_TAG' is not a supported semantic-version tag/);
+  assert.match(workflow, /git rev-parse HEAD/);
+  assert.match(workflow, /git rev-parse --verify "refs\/tags\/\$\{RELEASE_TAG\}\^\{commit\}"/);
+  assert.match(workflow, /Checked-out commit \$\{CHECKED_OUT_COMMIT\} does not match tag \$\{RELEASE_TAG\} commit \$\{TAG_COMMIT\}/);
   assert.match(workflow, /TAG_VERSION="\$\{RELEASE_TAG#v\}"/);
   assert.match(workflow, /Release tag v\$\{TAG_VERSION\} does not match package\.json version \$\{PACKAGE_VERSION\}/);
   assert.match(workflow, /printf 'version=%s\\n' "\$PACKAGE_VERSION" >> "\$GITHUB_OUTPUT"/);
