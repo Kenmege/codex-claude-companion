@@ -82,6 +82,18 @@ Expected before publishing a new version:
    gh run watch <run-id>
    ```
 
+If the tag-triggered run must be recovered manually, dispatch the workflow from
+the tag itself and pass the same tag as the input:
+
+```bash
+gh workflow run release.yml --ref "v${VERSION}" -f release_tag="v${VERSION}"
+```
+
+Do not dispatch a release recovery from `main`. GitHub's OIDC identity records
+the ref that triggered the workflow; checking out a different ref later does not
+change that identity. The workflow rejects any dispatch whose triggering ref is
+not the requested release tag.
+
 ## Post-Publish Smoke
 
 Use a throwaway workspace:

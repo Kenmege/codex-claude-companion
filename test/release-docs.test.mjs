@@ -46,6 +46,17 @@ test("pull request workflow proves the platform-neutral surface on minimum Node 
   assert.match(source, /run: npm run pack:check/);
 });
 
+test("release workflow binds manual recovery to the triggering tag for accurate OIDC provenance", () => {
+  const source = read(".github/workflows/release.yml");
+  const refGate = workflowStep(source, "Verify release workflow ref");
+  const checkout = workflowStep(source, "Check out repository");
+
+  assert.match(refGate, /GITHUB_REF/);
+  assert.match(refGate, /refs\/tags\/\$\{RELEASE_TAG\}/);
+  assert.match(checkout, /ref: \$\{\{ github\.ref \}\}/);
+  assert.doesNotMatch(checkout, /refs\/tags\/\$\{\{ env\.RELEASE_TAG \}\}/);
+});
+
 const packageJson = JSON.parse(read("package.json"));
 
 test("package test command uses shell-independent Node discovery", () => {
@@ -378,11 +389,9 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.match(workflow, /npm install --global --ignore-scripts --no-audit --no-fund npm@11\.5\.1/);
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /release_tag:/);
-  assert.match(
-    workflow,
-    /if: \$\{\{ github\.event_name != 'workflow_dispatch' \|\| github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\) \}\}/
-  );
-  assert.match(workflow, /ref: refs\/tags\/\$\{\{ env\.RELEASE_TAG \}\}/);
+  assert.match(workflow, /name: Verify release workflow ref/);
+  assert.doesNotMatch(workflow, /github\.event\.repository\.default_branch/);
+  assert.match(workflow, /ref: \$\{\{ github\.ref \}\}/);
   assert.match(workflow, /fetch-depth: 0/);
   assert.match(workflow, /NPMJS_PUBLISH_ENABLED/);
   assert.doesNotMatch(workflow, /npm pkg set private=false/);

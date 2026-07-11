@@ -17,7 +17,6 @@ permissions:
 jobs:
   release:
     name: Validate release tag
-    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -28,10 +27,19 @@ jobs:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
 
     steps:
+      - name: Verify release workflow ref
+        run: |
+          EXPECTED_REF="refs/tags/${RELEASE_TAG}"
+          if [ "$GITHUB_REF" != "$EXPECTED_REF" ]; then
+            echo "Release recovery must be dispatched from tag ${RELEASE_TAG}; received ${GITHUB_REF}." >&2
+            echo "Run: gh workflow run release.yml --ref '${RELEASE_TAG}' -f release_tag='${RELEASE_TAG}'" >&2
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: refs/tags/${{ env.RELEASE_TAG }}
+          ref: ${{ github.ref }}
           fetch-depth: 0
 
       - name: Set up Node.js
