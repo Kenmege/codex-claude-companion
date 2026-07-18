@@ -68,6 +68,27 @@ test("repository checks execute bounded origin-supplied argv without a shell", (
   assert.ok(result.evidence.some((line) => line.includes(process.execPath)));
 });
 
+test("repository verification does not leak the broker auto-recovery guard", (t) => {
+  const { request } = fixture(t);
+  const guard = "CODEX_CLAUDE_BRIDGE_AUTO_RECOVERY";
+  const previous = process.env[guard];
+  process.env[guard] = "1";
+  t.after(() => {
+    if (previous === undefined) delete process.env[guard];
+    else process.env[guard] = previous;
+  });
+
+  const result = runProductionRepositoryChecks({ request }, {
+    verificationCommands: [[
+      process.execPath,
+      "-e",
+      `process.exit(Object.hasOwn(process.env, ${JSON.stringify(guard)}) ? 7 : 0)`
+    ]]
+  });
+
+  assert.equal(result.passed, true, result.findings.join("\n"));
+});
+
 test("repository checks fail closed on an invalid or failing origin command", (t) => {
   const { request } = fixture(t);
 
@@ -221,6 +242,13 @@ test("production verifier exposes only a paired durable repair lifecycle", () =>
 
 test("production Codex review uses the job timeout, scoped prompt, and live heartbeats", async (t) => {
   const { workspace } = fixture(t);
+  const guard = "CODEX_CLAUDE_BRIDGE_AUTO_RECOVERY";
+  const previous = process.env[guard];
+  process.env[guard] = "1";
+  t.after(() => {
+    if (previous === undefined) delete process.env[guard];
+    else process.env[guard] = previous;
+  });
   let observed;
   let heartbeatCount = 0;
   const dependencies = createProductionBridgeVerificationDependencies({
@@ -268,6 +296,7 @@ test("production Codex review uses the job timeout, scoped prompt, and live hear
 
   assert.equal(review.passed, false);
   assert.equal(observed.options.timeout, 42_000);
+  assert.equal(observed.options.env[guard], undefined);
   assert.match(observed.options.inputData, /return promptly/i);
   assert.match(observed.options.inputData, /scripts\/lib\/bridge-runtime\.mjs/);
   assert.doesNotMatch(observed.options.inputData, /Inspect the repository and changed files/);

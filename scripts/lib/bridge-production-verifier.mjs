@@ -5,6 +5,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { runCommandCapture } from "./process.mjs";
 
+const AUTO_RECOVERY_GUARD = "CODEX_CLAUDE_BRIDGE_AUTO_RECOVERY";
+
 function run(binary, args, options = {}) {
   return spawnSync(binary, args, {
     cwd: options.cwd,
@@ -19,7 +21,7 @@ function run(binary, args, options = {}) {
 function verifierEnvironment(environment = process.env) {
   const blocked = /(?:TOKEN|SECRET|PASSWORD|PASSWD|API[_-]?KEY|AUTH|COOKIE|CREDENTIAL|ANTHROPIC|OPENAI|AWS_|AZURE_|GITHUB_|GITLAB_)/i;
   return Object.fromEntries(Object.entries(environment)
-    .filter(([key]) => !blocked.test(key))
+    .filter(([key]) => key !== AUTO_RECOVERY_GUARD && !blocked.test(key))
     .concat([["CI", "1"], ["CODEX_CLAUDE_BRIDGE_VERIFIER", "1"]]));
 }
 
