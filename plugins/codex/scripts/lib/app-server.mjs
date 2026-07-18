@@ -337,7 +337,7 @@ export class CodexAppServerClient {
         brokerEndpoint = loadBrokerSession(cwd)?.endpoint ?? null;
       }
       if (!brokerEndpoint && !options.reuseExistingBroker) {
-        const brokerSession = await ensureBrokerSession(cwd, { env: options.env });
+        const brokerSession = await ensureBrokerSession(cwd, { env: options.env, killProcess: terminateProcessTree });
         brokerEndpoint = brokerSession?.endpoint ?? null;
       }
     }
