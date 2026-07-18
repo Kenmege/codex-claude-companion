@@ -1,5 +1,7 @@
 # Architecture
 
+The frozen request, event, result, trust-profile, and delivery-state contracts for the next bridge generation are documented in [Codex-Claude Bridge contracts](bridge-capabilities.md), with naming and compatibility direction in [Bridge identity and migration](bridge-migration.md). Those target contracts do not change the current workspace or review execution paths described below.
+
 ## Split-Terminal Coding Workspace
 
 ```text

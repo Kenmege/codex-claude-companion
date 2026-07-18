@@ -32,7 +32,9 @@
     "CONTRIBUTING.md",
     "LICENSE",
     "NOTICE",
-    "docs/architecture.md"
+    "docs/architecture.md",
+    "docs/bridge-capabilities.md",
+    "docs/bridge-migration.md"
   ],
   "engines": {
     "node": ">=18.18.0"
@@ -58,5 +60,9 @@
     "adversarial-review",
     "deep-review",
     "security-review"
-  ]
+  ],
+  "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1"
+  }
 }

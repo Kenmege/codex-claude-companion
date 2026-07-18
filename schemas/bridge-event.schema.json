@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Kenmege/codex-plugin-cc/schemas/bridge-event.schema.json",
+  "title": "Codex-Claude Bridge ordered event",
+  "description": "One entry in a durable at-least-once event stream. Consumers deduplicate by deduplicationKey.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "jobId", "sequence", "timestamp", "type", "sender", "deduplicationKey", "payload"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "jobId": { "type": "string", "pattern": "^ccb_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "type": { "enum": ["accepted", "started", "progress", "question", "codex_message", "claude_message", "blocked", "completed", "failed", "cancelled", "verified"] },
+    "sender": { "enum": ["bridge", "codex", "claude", "verifier"] },
+    "deduplicationKey": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "payload": { "type": "object" }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/accepted" },
+    { "$ref": "#/$defs/started" },
+    { "$ref": "#/$defs/progress" },
+    { "$ref": "#/$defs/question" },
+    { "$ref": "#/$defs/codexMessage" },
+    { "$ref": "#/$defs/claudeMessage" },
+    { "$ref": "#/$defs/blocked" },
+    { "$ref": "#/$defs/completed" },
+    { "$ref": "#/$defs/failed" },
+    { "$ref": "#/$defs/cancelled" },
+    { "$ref": "#/$defs/verified" }
+  ],
+  "$defs": {
+    "messagePayload": {
+      "type": "object", "additionalProperties": false, "required": ["messageId", "text"],
+      "properties": { "messageId": { "type": "string", "minLength": 1 }, "text": { "type": "string", "minLength": 1 } }
+    },
+    "accepted": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "accepted" }, "sender": { "const": "bridge" },
+        "payload": { "type": "object", "additionalProperties": false, "required": ["acceptedAt"], "properties": { "acceptedAt": { "type": "string", "format": "date-time" } } }
+      }
+    },
+    "started": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "started" }, "sender": { "const": "bridge" },
+        "payload": { "type": "object", "additionalProperties": false, "required": ["executor"], "properties": { "executor": { "enum": ["tmux", "native-background"] } } }
+      }
+    },
+    "progress": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "progress" }, "sender": { "enum": ["bridge", "claude"] },
+        "payload": { "type": "object", "additionalProperties": false, "required": ["message"], "properties": { "message": { "type": "string", "minLength": 1 }, "percent": { "type": "integer", "minimum": 0, "maximum": 100 } } }
+      }
+    },
+    "question": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "question" }, "sender": { "const": "claude" },
+        "payload": { "type": "object", "additionalProperties": false, "required": ["questionId", "text"], "properties": { "questionId": { "type": "string", "minLength": 1 }, "text": { "type": "string", "minLength": 1 } } }
+      }
+    },
+    "codexMessage": { "type": "object", "properties": { "type": { "const": "codex_message" }, "sender": { "const": "codex" }, "payload": { "$ref": "#/$defs/messagePayload" } } },
+    "claudeMessage": { "type": "object", "properties": { "type": { "const": "claude_message" }, "sender": { "const": "claude" }, "payload": { "$ref": "#/$defs/messagePayload" } } },
+    "blocked": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "blocked" }, "sender": { "enum": ["bridge", "claude"] },
+        "payload": { "type": "object", "additionalProperties": false, "required": ["reason"], "properties": { "reason": { "type": "string", "minLength": 1 } } }
+      }
+    },
+    "completed": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "completed" }, "sender": { "const": "claude" },
+        "payload": { "type": "object", "additionalProperties": false, "required": ["resultPath"], "properties": { "resultPath": { "type": "string", "pattern": "^/" } } }
+      }
+    },
+    "failed": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "failed" }, "sender": { "enum": ["bridge", "claude"] },
+        "payload": { "type": "object", "additionalProperties": false, "required": ["error"], "properties": { "error": { "type": "string", "minLength": 1 } } }
+      }
+    },
+    "cancelled": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "cancelled" }, "sender": { "enum": ["bridge", "codex"] },
+        "payload": { "type": "object", "additionalProperties": false, "required": ["reason"], "properties": { "reason": { "type": "string", "minLength": 1 } } }
+      }
+    },
+    "verified": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "verified" }, "sender": { "const": "verifier" },
+        "payload": {
+          "type": "object", "additionalProperties": false, "required": ["verdict", "evidence"],
+          "properties": { "verdict": { "enum": ["passed", "failed"] }, "evidence": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } } }
+        }
+      }
+    }
+  }
+}

@@ -40,7 +40,13 @@ const required = [
   "scripts/bin/git-safe.mjs",
   "schemas/review-output.schema.json",
   "schemas/elite-review-output.schema.json",
-  "schemas/agentic-review-output.schema.json"
+  "schemas/agentic-review-output.schema.json",
+  "schemas/bridge-delegation-request.schema.json",
+  "schemas/bridge-event.schema.json",
+  "schemas/bridge-result.schema.json",
+  "schemas/bridge-receipt.schema.json",
+  "docs/bridge-capabilities.md",
+  "docs/bridge-migration.md"
 ];
 
 for (const relative of required) {
@@ -62,6 +68,21 @@ const claudeWorkflow = fs.readFileSync(path.join(root, ".github/workflows/claude
 JSON.parse(fs.readFileSync(path.join(root, "schemas/review-output.schema.json"), "utf8"));
 JSON.parse(fs.readFileSync(path.join(root, "schemas/elite-review-output.schema.json"), "utf8"));
 JSON.parse(fs.readFileSync(path.join(root, "schemas/agentic-review-output.schema.json"), "utf8"));
+JSON.parse(fs.readFileSync(path.join(root, "schemas/bridge-delegation-request.schema.json"), "utf8"));
+JSON.parse(fs.readFileSync(path.join(root, "schemas/bridge-event.schema.json"), "utf8"));
+JSON.parse(fs.readFileSync(path.join(root, "schemas/bridge-result.schema.json"), "utf8"));
+JSON.parse(fs.readFileSync(path.join(root, "schemas/bridge-receipt.schema.json"), "utf8"));
+
+const bridgeMigration = fs.readFileSync(path.join(root, "docs/bridge-migration.md"), "utf8");
+if (
+  !bridgeMigration.includes("Codex-Claude Bridge") ||
+  !bridgeMigration.includes("target repository name is `codex-claude-bridge`") ||
+  !bridgeMigration.includes("target package name is `@kenmege/codex-claude-bridge`") ||
+  !bridgeMigration.includes("otherwise the target package name is `codex-claude-bridge`") ||
+  !bridgeMigration.includes("public npm reservation was not performed")
+) {
+  throw new Error("Bridge migration documentation must preserve product identity and the approval-gated npm reservation boundary.");
+}
 
 if (pluginManifest.skills !== "./skills/") {
   throw new Error('plugin.json must expose bundled Codex skills through the "skills": "./skills/" field.');

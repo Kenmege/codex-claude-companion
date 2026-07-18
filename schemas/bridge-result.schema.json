@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Kenmege/codex-plugin-cc/schemas/bridge-result.schema.json",
+  "title": "Codex-Claude Bridge result",
+  "description": "Structured worker outcome. Completion here does not imply delivery, acknowledgement, or verification.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "jobId",
+    "status",
+    "summary",
+    "filesChanged",
+    "commandsRun",
+    "testsRun",
+    "findings",
+    "blockers",
+    "claudeSessionId",
+    "exitStatus",
+    "artifactPaths"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "jobId": { "type": "string", "pattern": "^ccb_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "status": { "enum": ["completed", "failed", "cancelled"] },
+    "summary": { "type": "string" },
+    "filesChanged": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "commandsRun": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/commandEvidence" }
+    },
+    "testsRun": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/testEvidence" }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reportItem" }
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reportItem" }
+    },
+    "claudeSessionId": { "type": ["string", "null"], "minLength": 1 },
+    "exitStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "signal"],
+      "properties": {
+        "code": { "type": ["integer", "null"] },
+        "signal": { "type": ["string", "null"] }
+      }
+    },
+    "artifactPaths": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^/" }
+    }
+  },
+  "$defs": {
+    "commandEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "status", "exitCode"],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["passed", "failed", "interrupted", "unknown"] },
+        "exitCode": { "type": ["integer", "null"] }
+      }
+    },
+    "testEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "status", "summary"],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["passed", "failed", "not-run"] },
+        "summary": { "type": "string" }
+      }
+    },
+    "reportItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "detail"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

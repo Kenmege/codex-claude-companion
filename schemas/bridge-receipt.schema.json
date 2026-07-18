@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Kenmege/codex-plugin-cc/schemas/bridge-receipt.schema.json",
+  "title": "Codex-Claude Bridge receipt and delivery state",
+  "description": "Auditable lifecycle receipt. Worker completion, delivery, acknowledgement, and verification are independent states.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "jobId", "createdAt", "workerState", "workerError", "delivery", "verification", "profile", "effectiveClaudePermissionArgs"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "jobId": { "type": "string", "pattern": "^ccb_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "workerState": { "enum": ["accepted", "running", "stalled", "completed", "failed", "cancelled"] },
+    "workerError": { "type": ["string", "null"], "minLength": 1 },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "attempts", "deliveredAt", "acknowledgedAt", "lastError"],
+      "properties": {
+        "state": { "enum": ["pending", "delivered", "acknowledged", "failed"] },
+        "attempts": { "type": "integer", "minimum": 0 },
+        "deliveredAt": { "type": ["string", "null"], "format": "date-time" },
+        "acknowledgedAt": { "type": ["string", "null"], "format": "date-time" },
+        "lastError": { "type": ["string", "null"], "minLength": 1 }
+      },
+      "allOf": [
+        { "if": { "properties": { "state": { "const": "pending" } }, "required": ["state"] }, "then": { "properties": { "deliveredAt": { "type": "null" }, "acknowledgedAt": { "type": "null" }, "lastError": { "type": "null" } } } },
+        { "if": { "properties": { "state": { "const": "delivered" } }, "required": ["state"] }, "then": { "properties": { "attempts": { "type": "integer", "minimum": 1 }, "deliveredAt": { "type": "string", "format": "date-time" }, "acknowledgedAt": { "type": "null" }, "lastError": { "type": "null" } } } },
+        { "if": { "properties": { "state": { "const": "acknowledged" } }, "required": ["state"] }, "then": { "properties": { "attempts": { "type": "integer", "minimum": 1 }, "deliveredAt": { "type": "string", "format": "date-time" }, "acknowledgedAt": { "type": "string", "format": "date-time" }, "lastError": { "type": "null" } } } },
+        { "if": { "properties": { "state": { "const": "failed" } }, "required": ["state"] }, "then": { "properties": { "attempts": { "type": "integer", "minimum": 1 }, "deliveredAt": { "type": "null" }, "acknowledgedAt": { "type": "null" }, "lastError": { "type": "string", "minLength": 1 } } } }
+      ]
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "verifiedAt", "evidence"],
+      "properties": {
+        "state": { "enum": ["pending", "passed", "failed", "skipped"] },
+        "verifiedAt": { "type": ["string", "null"], "format": "date-time" },
+        "evidence": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      },
+      "allOf": [
+        { "if": { "properties": { "state": { "const": "pending" } }, "required": ["state"] }, "then": { "properties": { "verifiedAt": { "type": "null" }, "evidence": { "type": "array", "maxItems": 0 } } } },
+        { "if": { "properties": { "state": { "enum": ["passed", "failed"] } }, "required": ["state"] }, "then": { "properties": { "verifiedAt": { "type": "string", "format": "date-time" }, "evidence": { "type": "array", "minItems": 1 } } } },
+        { "if": { "properties": { "state": { "const": "skipped" } }, "required": ["state"] }, "then": { "properties": { "verifiedAt": { "type": "string", "format": "date-time" }, "evidence": { "type": "array", "minItems": 1 } } } }
+      ]
+    },
+    "profile": { "enum": ["review-readonly", "standard", "trusted-autonomous", "sandbox-autonomous"] },
+    "effectiveClaudePermissionArgs": { "type": "array", "items": { "type": "string" } }
+  },
+  "allOf": [
+    { "if": { "properties": { "workerState": { "const": "failed" } }, "required": ["workerState"] }, "then": { "properties": { "workerError": { "type": "string", "minLength": 1 } } }, "else": { "properties": { "workerError": { "type": "null" } } } },
+    { "if": { "properties": { "workerState": { "enum": ["accepted", "running", "stalled", "failed", "cancelled"] } }, "required": ["workerState"] }, "then": { "properties": { "delivery": { "type": "object", "properties": { "state": { "enum": ["pending", "failed"] } } } } } },
+    { "if": { "properties": { "verification": { "type": "object", "properties": { "state": { "enum": ["passed", "failed"] } }, "required": ["state"] } }, "required": ["verification"] }, "then": { "properties": { "workerState": { "const": "completed" } } } },
+    { "if": { "properties": { "profile": { "const": "review-readonly" } }, "required": ["profile"] }, "then": { "properties": { "effectiveClaudePermissionArgs": { "$ref": "#/$defs/reviewReadonlyArgs" } } } },
+    { "if": { "properties": { "profile": { "const": "standard" } }, "required": ["profile"] }, "then": { "properties": { "effectiveClaudePermissionArgs": { "$ref": "#/$defs/standardArgs" } } } },
+    { "if": { "properties": { "profile": { "enum": ["trusted-autonomous", "sandbox-autonomous"] } }, "required": ["profile"] }, "then": { "properties": { "effectiveClaudePermissionArgs": { "$ref": "#/$defs/autonomousArgs" } } } }
+  ],
+  "$defs": {
+    "standardArgs": { "const": ["--permission-mode", "default"] },
+    "autonomousArgs": { "const": ["--permission-mode", "bypassPermissions"] },
+    "reviewReadonlyArgs": {
+      "const": [
+        "--setting-sources=", "--tools", "Read", "Glob", "Grep", "Task", "WebFetch", "WebSearch",
+        "--allowedTools", "Read", "Glob", "Grep", "Task", "WebSearch",
+        "WebFetch(https://docs.anthropic.com/*)", "WebFetch(https://nvd.nist.gov/*)",
+        "WebFetch(https://cve.mitre.org/*)", "WebFetch(https://github.com/*)",
+        "WebFetch(https://raw.githubusercontent.com/*)", "WebFetch(https://api.github.com/*)",
+        "WebFetch(https://gist.github.com/*)", "WebFetch(https://developer.mozilla.org/*)",
+        "WebFetch(https://nodejs.org/api/*)", "WebFetch(https://nodejs.org/dist/*)",
+        "WebFetch(https://registry.npmjs.org/*)", "WebFetch(https://www.npmjs.com/package/*)",
+        "WebFetch(https://pypi.org/project/*)", "WebFetch(https://crates.io/crates/*)",
+        "WebFetch(https://docs.python.org/*)", "WebFetch(https://owasp.org/*)",
+        "WebFetch(https://cwe.mitre.org/*)", "WebFetch(https://www.rfc-editor.org/*)",
+        "WebFetch(https://datatracker.ietf.org/*)", "WebFetch(https://www.w3.org/TR/*)",
+        "WebFetch(https://www.nice.org.uk/*)", "WebFetch(https://bnf.nice.org.uk/*)",
+        "WebFetch(https://www.bmj.com/*)", "WebFetch(https://www.thelancet.com/*)",
+        "WebFetch(https://www.nejm.org/*)", "WebFetch(https://jamanetwork.com/*)",
+        "WebFetch(https://www.cochranelibrary.com/*)", "WebFetch(https://www.who.int/*)",
+        "WebFetch(https://www.gov.uk/government/*)", "WebFetch(https://www.ukhsa.gov.uk/*)",
+        "WebFetch(https://www.nhs.uk/*)", "--disallowedTools", "Edit", "Write", "NotebookEdit",
+        "--permission-mode", "default", "--strict-mcp-config"
+      ]
+    }
+  }
+}
