@@ -146,7 +146,7 @@ export async function runBridgeBroker(specInput, options = {}) {
       verification: progress
     }),
     ownerId: `bridge-broker:${os.hostname()}:${process.pid}`,
-    leaseMs: Math.max(intervalMs * 4, 2_000),
+    leaseMs: Math.max(intervalMs * 4, 30_000),
     executorOptions: {
       jobDir: spec.jobDir,
       tmuxBinary: spec.tmuxBinary,

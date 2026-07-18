@@ -53,6 +53,7 @@ test("broker autonomously retries durable inbox delivery until the origin acknow
   assert.deepEqual(sleeps, [30_000]);
   assert.equal(runtimeOptions.codexBinary, process.execPath);
   assert.equal(runtimeOptions.maxRepairs, 0);
+  assert.equal(runtimeOptions.leaseMs, 30_000);
 });
 
 test("broker retries a leased delivery claim instead of requiring a later CLI invocation", async () => {
