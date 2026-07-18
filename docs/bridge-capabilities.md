@@ -1,10 +1,12 @@
 # Codex-Claude Bridge contracts
 
-This document freezes the Phase-0 contracts for the planned Codex-Claude Bridge. The target column is a release contract, not a claim about the current `codex-plugin-cc@1.1.1` runtime.
+This document describes the implemented, unreleased Codex-Claude Bridge contract
+in this repository. It is not a claim that the published `codex-plugin-cc@1.1.1`
+package already contains this work.
 
 ## Capability matrix
 
-| Capability | Direct `claude` CLI | `codex-plugin-cc@1.1.1` | Target bridge |
+| Capability | Direct `claude` CLI | Legacy workspace/review lanes | Durable bridge |
 |---|---|---|---|
 | Launch a prompt | Native | Wrapped for review and workspace modes | Typed delegation request |
 | Agent, model, and effort selection | Native flags | Review/workspace selectors | Named or custom agent plus caller-supplied model and effort |
@@ -14,48 +16,131 @@ This document freezes the Phase-0 contracts for the planned Codex-Claude Bridge.
 | Mid-run collaboration | Manual terminal interaction | Status/log polling | Ordered, deduplicated question, message, progress, and cancellation events |
 | Result return | Manual copy/paste | Status/result polling | Active-wait return, correlated Codex follow-up, or durable inbox fallback |
 | Independent verification | Manual | Codex may review after polling | Separate verification state and bounded repair workflow |
-| Crash recovery | Manual archaeology | Job files for review lanes | Reconciliation across ledger, tmux, Claude session, repository, and delivery state |
+| Crash recovery | Manual archaeology | Job files for review lanes | Automatic same-origin restart on ordinary bridge CLI use, plus explicit reconciliation across ledger, tmux, Claude session, repository, and delivery state |
+
+Live steering is deliberately scoped to the active authoritative worker. The
+first authoritative Claude result closes stdin and advances the job to
+verification and delivery; it is not an open-ended chat channel after worker
+completion. Without `send --wait`, success proves only durable queueing; with
+`--wait`, it requires replay acknowledgement from the live session. A message
+queued during the terminal-result race can remain unacknowledged.
+
+The blocking CLI contract is machine-consumable: `delegate --wait` and `wait`
+return `0` only for completed, independently verified, origin-acknowledged work;
+`3` for terminal failure or an unmet verification/delivery gate; and `4` when a
+pending Claude question requires input. A timeout is an operational error and
+returns a nonzero process exit with a diagnostic.
 
 ## Exact meaning of `trusted-autonomous`
 
-`trusted-autonomous` will be an explicit local-workspace trust profile. It will never be the default. Resolving it requires the caller to provide the profile by name and an existing absolute workspace path. Policy resolution canonicalizes that path with `realpath` into a resolved absolute workspace path, confirms it is a directory, and, when a permitted root is supplied, rejects a canonical workspace outside that root. The request and receipt will retain the requested and canonical paths. Its complete Claude permission argument list is:
+`trusted-autonomous` is an explicit local-workspace trust profile. It is never
+the default. Resolving it requires the caller to provide the profile by name and
+an existing absolute workspace path. Policy resolution canonicalizes that path
+with `realpath`, confirms it is a directory, and rejects a canonical workspace
+outside a supplied permitted root. The request and receipt retain the requested
+and canonical paths. Its complete Claude permission argument list is:
 
 ```text
+--setting-sources=
 --permission-mode bypassPermissions
 ```
 
-That mode will bypass Claude's interactive permission checks inside the selected workspace. It does not create an OS sandbox, restrict network access, prevent an agent from operating outside the repository, or make arbitrary source code trustworthy. `sandbox-autonomous` will be used when bypass permissions must be contained by a separately proven OS or container sandbox.
+That mode bypasses Claude's interactive permission checks inside the selected
+workspace. It does not create an OS sandbox, restrict network access, prevent an
+agent from operating outside the repository, or make arbitrary source code
+trustworthy. Use a separately proven OS or container sandbox when bypass
+permissions require containment.
 
-Selecting this profile will not authorize public publishing, deployment, credential changes, or destructive host actions. Those actions will remain governed separately from Claude's local permission mode. The receipt will record the selected profile and exact effective Claude permission arguments, excluding secrets.
+Selecting this profile does not authorize public publishing, deployment,
+credential changes, or destructive host actions. Those actions remain governed
+separately from Claude's local permission mode. The receipt records the selected
+profile and exact effective Claude permission arguments, excluding secrets.
 
-`sandbox-autonomous` is unavailable in Phase 0. Its future request contract retains an executor-produced structured attestation bound to the job ID, executor, canonical workspace path, issue time, and expected authority, but caller-supplied attestations are never accepted as proof. The Phase-0 resolver fails closed even when those fields appear to match. A later executor-owned verifier must validate the authority, freshness, exact job/executor/workspace binding, and runtime sandbox evidence before this profile can become usable. A naked caller-supplied boolean is also not accepted as sandbox proof.
+`sandbox-autonomous` is unavailable. Its request contract retains an
+executor-produced structured attestation bound to the job ID, executor,
+canonical workspace path, issue time, and expected authority, but caller-supplied
+attestations are never accepted as proof. The resolver fails closed even when
+those fields appear to match. A future executor-owned verifier must validate
+authority, freshness, exact job/executor/workspace binding, and runtime sandbox
+evidence before this profile can become usable. A naked caller-supplied boolean
+is not accepted as sandbox proof.
 
 ## Other trust profiles
 
 | Profile | Effective permission policy | Boundary |
 |---|---|---|
-| `review-readonly` | Empty persistent setting sources; read/search/task tools only; `Edit`, `Write`, and `NotebookEdit` denied; `default` permission mode; strict MCP config | Existing shell-free review fence preserved |
-| `standard` | `--permission-mode default` | Claude-native supervised coding behavior |
-| `trusted-autonomous` | `--permission-mode bypassPermissions` | Explicitly trusted absolute local workspace |
-| `sandbox-autonomous` | Unavailable in Phase 0; future policy is `--permission-mode bypassPermissions` | Executor-owned verifier must validate a job-bound OS/container sandbox attestation before dispatch |
+| `review-readonly` | `--setting-sources=`; read/search/task tools only; `Edit`, `Write`, and `NotebookEdit` denied; `--permission-mode default`; `--strict-mcp-config` | Existing shell-free review fence preserved |
+| `standard` | `--setting-sources= --permission-mode default` | Claude-native supervised coding behavior with persistent settings isolated by default |
+| `trusted-autonomous` | `--setting-sources= --permission-mode bypassPermissions` | Explicitly trusted absolute local workspace with persistent settings isolated by default |
+| `sandbox-autonomous` | Unavailable; a future contained policy may use `--permission-mode bypassPermissions` | Executor-owned verifier must validate a job-bound OS/container sandbox attestation before dispatch |
 
 Contradictory combinations fail closed. Examples include asking `review-readonly` for anything outside its exact read/search/task and approved WebFetch allowlist, overriding either safe profile with `bypassPermissions`, or selecting `sandbox-autonomous` before executor-owned provenance verification exists.
 
 ## Agent presets
 
-The checked-in registry defines `implementer`, `debugger`, `reviewer`, `security-reviewer`, `researcher`, and `elite-reviewer`. Presets choose a role and default trust profile only. They do not freeze a Claude model ID; model and effort remain explicit delegation inputs. The request contract will support a named agent, inline custom-agent JSON, a custom-agent file, plugin directories, MCP configuration paths, additional directories, setting-source policy, and the resolved Claude runtime version.
+The checked-in registry defines `implementer`, `debugger`, `reviewer`,
+`security-reviewer`, `researcher`, and `elite-reviewer`. Presets choose a role and
+default trust profile only. They do not freeze a Claude model ID; model and
+effort remain explicit delegation inputs. The request contract supports a named
+agent, inline custom-agent JSON, a custom-agent file, plugin directories, MCP
+configuration paths, additional directories, setting-source policy, and the
+resolved Claude runtime version. The public CLI exposes all of these through
+`--agent`, `--agents-json`, `--agents-file`, repeatable `--plugin-dir`, repeatable
+`--mcp-config`, repeatable `--add-dir`, and `--setting-sources`.
+`--agent` selects the active Claude agent and may be combined with either
+`--agents-json` or `--agents-file` to define that agent. The two definition
+sources are mutually exclusive; selection and definition are complementary.
+
+Persistent Claude settings are isolated by default with the exact
+`--setting-sources=` argument. Opting in to `user`, `project`, or `local` settings
+also opts in to the configuration, hooks, and plugin trust carried by those
+sources. The bridge validates and records that choice, but it cannot make an
+untrusted settings source safe.
+
+## Automatic durable recovery
+
+Every ordinary bridge CLI invocation except `recover` and `gc` performs one silent
+recovery sweep before its requested operation. This is CLI-invocation behavior;
+it is not a claim that Codex itself installs a generic session-start hook. The
+sweep is correlated to the stable Codex thread ID, so a later turn or repository
+head in the same thread can resume older queued work. It inspects at most 64
+recent durable jobs and attempts at most eight broker starts. Explicit
+`recover` remains available for operator-directed reconciliation and does not run
+the automatic sweep. Broker descendants receive a recursion guard, so resuming a
+Codex thread cannot recursively launch another sweep. A restarted broker still
+drains only the full immutable origin persisted in its own request. A heartbeat
+PID suppresses restart only when its exact executable, broker script, `--spec`
+argument, and spec path match; stale, reused, or ambiguous PIDs fail closed and
+trigger a replacement start. Acknowledged or terminally failed deliveries are not
+restarted.
+
+`codex-claude gc` is a bounded dry run by default. It scans at most 256 durable
+jobs and lists at most 64 terminal jobs older than 30 days. `--older-than-days`
+and `--limit` may lower or tune those documented bounds; only explicit `--apply`
+removes the listed job directories. Active and recent jobs are never candidates.
 
 ## Durable state contracts
 
 - `schemas/bridge-delegation-request.schema.json` records immutable origin, worker, execution, policy, and task acceptance data.
 - `schemas/bridge-event.schema.json` defines the ordered, deduplicated event journal.
+- `schemas/bridge-message-operation.schema.json` validates broker-owned message delivery and acknowledgement operations.
 - `schemas/bridge-result.schema.json` defines the worker outcome and its evidence.
 - `schemas/bridge-receipt.schema.json` defines delivery and verification lifecycle state.
 
 Worker completion, delivery, acknowledgement, and verification are separate states. A Claude process exiting successfully cannot by itself mark a result delivered, acknowledged, or verified.
 
-The receipt rejects impossible lifecycle combinations. Nonterminal, failed, or cancelled workers cannot be marked delivered or acknowledged; only a completed worker can reach those delivery states. Failed or cancelled workers may leave delivery pending or record a failed delivery attempt. Delivery and acknowledgement require at least one attempt and their corresponding timestamps, while a failed delivery requires an error and cannot carry delivered or acknowledged timestamps. Verification `passed` or `failed` also requires a completed worker.
+The receipt rejects impossible lifecycle combinations. Nonterminal workers cannot
+be marked delivered or acknowledged. Every terminal worker outcome—`completed`,
+`failed`, or `cancelled`—can be returned to and acknowledged by its Codex origin,
+so failures and cancellations do not disappear. Delivery and acknowledgement
+require at least one attempt and their corresponding timestamps, while a failed
+delivery requires an error and cannot carry delivered or acknowledged timestamps.
+Independent verification `passed` or `failed` requires a completed worker; failed
+and cancelled worker outcomes are reported without pretending they passed a
+verification gate.
 
 Production callers validate receipts through `validateBridgeReceiptContract` in `scripts/lib/bridge-contracts.mjs`. That single entry point always applies both the JSON Schema and semantic chronology rules. Delivery follows `createdAt <= deliveredAt <= acknowledgedAt`; verification independently follows `createdAt <= verifiedAt`. Verification may therefore finish before delivery or acknowledgement without invalidating the receipt.
+
+Cancellation is two-phase in the durable ledger: `cancel_requested` records caller intent and its timestamp; only a later schema-valid `cancelled` lifecycle event confirms that the executor stopped the worker and releases the workspace lease.
 
 Product identity and compatibility policy are frozen separately in [Bridge identity and migration](bridge-migration.md).

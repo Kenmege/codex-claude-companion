@@ -6,11 +6,19 @@ import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const RECEIPT_SCHEMA_PATH = path.join(ROOT, "schemas", "bridge-receipt.schema.json");
-const receiptSchema = JSON.parse(fs.readFileSync(RECEIPT_SCHEMA_PATH, "utf8"));
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 addFormats(ajv);
-const validateReceiptSchema = ajv.compile(receiptSchema);
+const SCHEMAS = Object.freeze({
+  request: "bridge-delegation-request.schema.json",
+  event: "bridge-event.schema.json",
+  messageOperation: "bridge-message-operation.schema.json",
+  result: "bridge-result.schema.json",
+  receipt: "bridge-receipt.schema.json"
+});
+const validators = Object.fromEntries(Object.entries(SCHEMAS).map(([kind, filename]) => [
+  kind,
+  ajv.compile(JSON.parse(fs.readFileSync(path.join(ROOT, "schemas", filename), "utf8")))
+]));
 
 export class BridgeContractValidationError extends Error {
   constructor(message, { phase, errors = [] } = {}) {
@@ -26,6 +34,44 @@ function formatSchemaErrors(errors = []) {
     const location = error.instancePath || "/";
     return `${location} ${error.message}`;
   }).join("; ");
+}
+
+function validateSchema(kind, value) {
+  const validator = validators[kind];
+  if (!validator(value)) {
+    const errors = structuredClone(validator.errors ?? []);
+    throw new BridgeContractValidationError(
+      `Bridge ${kind} failed schema validation: ${formatSchemaErrors(errors)}`,
+      { phase: "schema", errors }
+    );
+  }
+  return value;
+}
+
+export function validateBridgeRequestContract(request) {
+  validateSchema("request", request);
+  const { execution } = request;
+  if (execution.sandboxAttestation !== null) {
+    const attestation = execution.sandboxAttestation;
+    for (const key of ["jobId", "executor", "canonicalWorkspacePath"]) {
+      if (attestation[key] !== (key === "jobId" ? request.jobId : execution[key])) {
+        throw new BridgeContractValidationError(`Bridge request sandbox attestation ${key} is not bound to the request.`, { phase: "semantics" });
+      }
+    }
+  }
+  return request;
+}
+
+export function validateBridgeEventContract(event) {
+  return validateSchema("event", event);
+}
+
+export function validateBridgeMessageOperationContract(operation) {
+  return validateSchema("messageOperation", operation);
+}
+
+export function validateBridgeResultContract(result) {
+  return validateSchema("result", result);
 }
 
 function parseTimestamp(receipt, label, value) {
@@ -80,13 +126,7 @@ function validateReceiptSemantics(receipt) {
  * @throws {BridgeContractValidationError} with `phase` set to `schema` or `semantics`
  */
 export function validateBridgeReceiptContract(receipt) {
-  if (!validateReceiptSchema(receipt)) {
-    const errors = structuredClone(validateReceiptSchema.errors ?? []);
-    throw new BridgeContractValidationError(
-      `Bridge receipt failed schema validation: ${formatSchemaErrors(errors)}`,
-      { phase: "schema", errors }
-    );
-  }
+  validateSchema("receipt", receipt);
   validateReceiptSemantics(receipt);
   return receipt;
 }

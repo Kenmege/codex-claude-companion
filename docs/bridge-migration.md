@@ -1,12 +1,25 @@
 # Codex-Claude Bridge identity and migration
 
-This document freezes naming and compatibility direction for a future bridge release. It does not rename or publish the current `codex-plugin-cc` package.
+This document records naming and compatibility direction for the implemented,
+unreleased bridge. It does not rename, reserve, or publish a package.
 
 ## Product identity
 
-The product name will be **Codex-Claude Bridge**. The primary executable will remain `codex-claude`, preserving the command users already invoke. The product description will lead with its differentiated role: a durable Codex-to-Claude control plane with tmux process ownership, typed delegation contracts, collaboration events, delivery acknowledgement, and independent verification.
+The public product display name is **Codex-Claude Bridge**. The primary
+executable remains `codex-claude`, preserving the command users already invoke.
+Its differentiated role is a durable Codex-to-Claude control plane with tmux
+process ownership, typed delegation contracts, collaboration events, delivery
+acknowledgement, recovery, and independent verification.
 
 The current npm package and plugin identity will stay `codex-plugin-cc` during the implementation and compatibility period. Existing commands will remain available. If a later approved rename occurs, `codex-plugin-cc` will become a thin legacy shim that prints a migration notice and forwards compatible arguments to the new executable. Removal of that shim will require a separately announced major-version policy.
+
+The native Codex plugin ID and slash-command namespace remain `claude-review`
+for compatibility, so commands continue to appear as `/claude-review:*` even
+though the display name is Codex-Claude Bridge. The local wrapper marketplace is
+named `codex-claude-bridge-local`, but its plugin source entry also remains
+`claude-review`. Changing either compatibility identifier requires an explicit
+migration with alias and rollback tests; this release does not claim that
+identity migration is complete.
 
 ## Name guard and attribution
 
@@ -20,7 +33,7 @@ The current `codex-plugin-cc` repository and package remain authoritative until 
 
 ## Migration sequence
 
-1. The current package will add the new bridge commands behind compatible `codex-claude` entry points.
+1. The current repository adds bridge commands behind the compatible `codex-claude` entry point and `/claude-review:*` namespace; publication remains a separate approval-gated release action.
 2. Durable bridge receipts will record schema and runtime versions so mixed installations fail clearly.
 3. Documentation will mark legacy review/workspace commands as compatibility lanes, not as tmux-owned bridge jobs.
 4. Only after explicit approval may maintainers select and reserve a new package name, publish it, or change public manifests.

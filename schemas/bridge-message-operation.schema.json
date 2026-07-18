@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Kenmege/codex-plugin-cc/schemas/bridge-message-operation.schema.json",
+  "title": "Codex-Claude Bridge durable messaging operation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "jobId", "sequence", "kind", "state", "messageId", "deduplicationKey", "timestamp", "text", "inReplyTo", "continuation"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "jobId": { "type": "string", "pattern": "^ccb_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "kind": { "enum": ["codex_message", "codex_applied", "claude_message"] },
+    "state": { "enum": ["pending", "applied", "ack"] },
+    "messageId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$" },
+    "deduplicationKey": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "text": { "type": ["string", "null"], "minLength": 1 },
+    "inReplyTo": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$" },
+    "continuation": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "boundaryId", "fromClaudeSessionId", "toClaudeSessionId", "ordinal", "recordedAt"],
+          "properties": {
+            "kind": { "const": "claude-resume" },
+            "boundaryId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$" },
+            "fromClaudeSessionId": { "type": "string", "format": "uuid" },
+            "toClaudeSessionId": { "type": "string", "format": "uuid" },
+            "ordinal": { "type": "integer", "minimum": 1 },
+            "recordedAt": { "type": "string", "format": "date-time" }
+          }
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    { "properties": { "kind": { "const": "codex_message" }, "state": { "const": "pending" }, "text": { "type": "string", "minLength": 1 }, "continuation": { "type": "null" } } },
+    { "properties": { "kind": { "const": "codex_applied" }, "state": { "const": "applied" }, "text": { "type": "null" }, "inReplyTo": { "type": "null" } } },
+    { "properties": { "kind": { "const": "claude_message" }, "state": { "const": "ack" }, "text": { "type": "string", "minLength": 1 }, "inReplyTo": { "type": "string" } } }
+  ]
+}

@@ -46,6 +46,16 @@ test("pull request workflow proves the platform-neutral surface on minimum Node 
   assert.match(source, /run: npm run pack:check/);
 });
 
+test("pull request workflow runs the real tmux executor on macOS", () => {
+  const source = read(".github/workflows/pull-request-ci.yml");
+  const macosJob = source.match(/\n  macos-tmux:\n([\s\S]*?)(?=\n  [a-z][a-z0-9-]*:\n|$)/)?.[0] ?? "";
+
+  assert.match(macosJob, /runs-on: macos-latest/);
+  assert.match(macosJob, /brew install tmux/);
+  assert.match(macosJob, /run: npm ci/);
+  assert.match(macosJob, /node --test test\/tmux-executor\.test\.mjs/);
+});
+
 test("release workflow binds manual recovery to the triggering tag for accurate OIDC provenance", () => {
   const source = read(".github/workflows/release.yml");
   const refGate = workflowStep(source, "Verify release workflow ref");
@@ -474,6 +484,14 @@ test("public-facing docs do not contain private local machine paths", () => {
     "commands/deep-review.md",
     "commands/security-review.md",
     "commands/workspace.md",
+    "commands/delegate.md",
+    "commands/wait.md",
+    "commands/logs.md",
+    "commands/recover.md",
+    "commands/list.md",
+    "commands/attach.md",
+    "commands/send.md",
+    "commands/bridge-doctor.md",
     "commands/doctor.md",
     "commands/setup.md",
     "commands/status.md",
@@ -521,7 +539,13 @@ test("public trust metadata is attribution-safe and precise", () => {
   );
   assert.doesNotMatch(bug, /@kenmege\/codex-plugin-cc/);
   assert.doesNotMatch(historicalLaunchNotes, /GPT-5\.5|gpt-5\.5/);
-  assert.match(readme, /active Codex model is inherited automatically/i);
+  assert.equal(plugin.name, "claude-review");
+  assert.equal(plugin.interface.displayName, "Codex-Claude Bridge");
+  assert.match(readme, /durable Codex-to-Claude control plane/i);
+  assert.match(readme, /separate ephemeral, read-only\s+Codex process/i);
+  assert.match(readme, /\/claude-review:delegate/);
+  assert.match(security, /cooperative same-UID host trust/i);
+  assert.match(security, /not a multi-tenant\s+security sandbox/i);
   assert.match(currentReleaseNotes, /Codex-supervised Claude coding workspace/);
   assert.match(currentReleaseNotes, /never launches a nested\s+Codex process/);
 });

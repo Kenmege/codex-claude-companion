@@ -1,7 +1,7 @@
 {
-  "name": "claude-review-private",
+  "name": "codex-claude-bridge-local",
   "interface": {
-    "displayName": "Claude Review Private"
+    "displayName": "Codex-Claude Bridge Local Marketplace"
   },
   "plugins": [
     {

@@ -3,10 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
-import { loadBrokerSession, teardownBrokerSession, clearBrokerSession } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
+import { loadBrokerSession, teardownBrokerSession, clearBrokerSession, inspectBrokerProcessIdentity } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
 import { terminateProcessTree } from "../plugins/codex/scripts/lib/process.mjs";
 
 const createdTempDirs = [];
+const observedRunContexts = new Map();
 
 export function makeTempDir(prefix = "codex-plugin-test-") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -21,26 +22,122 @@ export function makeTempDir(prefix = "codex-plugin-test-") {
  * runs the SessionEnd hook leaks that broker (and its codex app-server child)
  * for the lifetime of the machine. Safe to call even when no broker exists.
  */
-export function cleanupLeakedBrokers() {
-  for (const dir of createdTempDirs) {
-    let session;
-    try {
-      session = loadBrokerSession(dir);
-    } catch {
+export function cleanupLeakedBrokers(options = {}) {
+  const inspectProcess = options.inspectProcess ?? ((session, cwd) => inspectBrokerProcessIdentity(session, cwd, options));
+  const killProcess = options.killProcess ?? terminateProcessTree;
+  const receipt = { cleaned: 0, skippedIdentityMismatch: 0, terminatedPids: [] };
+
+  for (const { cwd, pluginDataDir } of observedRunContexts.values()) {
+    if (!isRegisteredTempPath(cwd) || (pluginDataDir !== undefined && !isRegisteredTempPath(pluginDataDir))) {
       continue;
     }
-    if (!session) {
-      continue;
-    }
-    teardownBrokerSession({
-      endpoint: session.endpoint ?? null,
-      pidFile: session.pidFile ?? null,
-      logFile: session.logFile ?? null,
-      sessionDir: session.sessionDir ?? null,
-      pid: session.pid ?? null,
-      killProcess: terminateProcessTree
+    withPluginDataDir(pluginDataDir, () => {
+      let session;
+      try {
+        session = loadBrokerSession(cwd);
+      } catch {
+        return;
+      }
+      if (!session) return;
+
+      const identity = inspectProcess(session, cwd);
+      if (identity.alive && !identity.exact) {
+        receipt.skippedIdentityMismatch += 1;
+        return;
+      }
+
+      if (identity.alive) receipt.terminatedPids.push(session.pid);
+
+      teardownBrokerSession({
+        endpoint: session.endpoint ?? null,
+        pidFile: session.pidFile ?? null,
+        logFile: session.logFile ?? null,
+        sessionDir: session.sessionDir ?? null,
+        pid: session.pid ?? null,
+        killProcess: identity.alive ? killProcess : null
+      });
+      clearBrokerSession(cwd);
+      receipt.cleaned += 1;
     });
-    clearBrokerSession(dir);
+  }
+
+  return receipt;
+}
+
+function defaultProcessTreeAlive(pid) {
+  try {
+    process.kill(process.platform === "win32" ? pid : -pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    if (error?.code === "EPERM") return true;
+    throw error;
+  }
+}
+
+/**
+ * Waits until every detached broker process group signalled by
+ * cleanupLeakedBrokers() is gone. Test teardown must not return while the
+ * broker's app-server child is still exiting, otherwise the suite itself
+ * leaks production-shaped processes into the host.
+ */
+export async function waitForTerminatedProcessTrees(pids, options = {}) {
+  const uniquePids = [...new Set(pids)].filter((pid) => Number.isInteger(pid) && pid > 0);
+  const processTreeAlive = options.processTreeAlive ?? defaultProcessTreeAlive;
+  const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const timeoutMs = options.timeoutMs ?? 5000;
+  const intervalMs = options.intervalMs ?? 20;
+  const deadline = Date.now() + timeoutMs;
+  let pending = uniquePids.filter((pid) => processTreeAlive(pid));
+
+  while (pending.length > 0 && Date.now() < deadline) {
+    await sleep(intervalMs);
+    pending = pending.filter((pid) => processTreeAlive(pid));
+  }
+
+  if (pending.length > 0) {
+    throw new Error(`Timed out waiting for terminated broker process groups: ${pending.join(", ")}`);
+  }
+
+  return { reaped: uniquePids.length };
+}
+
+export function assertBrokerCleanupComplete(receipt) {
+  if ((receipt?.skippedIdentityMismatch ?? 0) > 0) {
+    throw new Error(
+      `Test cleanup could not verify ${receipt.skippedIdentityMismatch} live broker process identity; refusing a false-green teardown.`
+    );
+  }
+}
+
+function canonicalPath(value) {
+  const resolved = path.resolve(value);
+  try {
+    return fs.realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+function isRegisteredTempPath(value) {
+  if (typeof value !== "string" || value.length === 0) return false;
+  const candidate = canonicalPath(value);
+  return createdTempDirs.some((root) => {
+    const registeredRoot = canonicalPath(root);
+    return candidate === registeredRoot || candidate.startsWith(`${registeredRoot}${path.sep}`);
+  });
+}
+
+function withPluginDataDir(pluginDataDir, callback) {
+  const hadValue = Object.hasOwn(process.env, "CLAUDE_PLUGIN_DATA");
+  const previousValue = process.env.CLAUDE_PLUGIN_DATA;
+  try {
+    if (pluginDataDir === undefined) delete process.env.CLAUDE_PLUGIN_DATA;
+    else process.env.CLAUDE_PLUGIN_DATA = pluginDataDir;
+    return callback();
+  } finally {
+    if (hadValue) process.env.CLAUDE_PLUGIN_DATA = previousValue;
+    else delete process.env.CLAUDE_PLUGIN_DATA;
   }
 }
 
@@ -49,6 +146,15 @@ export function writeExecutable(filePath, source) {
 }
 
 export function run(command, args, options = {}) {
+  if (options.cwd) {
+    const pluginDataDir = options.env && Object.hasOwn(options.env, "CLAUDE_PLUGIN_DATA")
+      ? options.env.CLAUDE_PLUGIN_DATA
+      : process.env.CLAUDE_PLUGIN_DATA;
+    observedRunContexts.set(`${options.cwd}\0${pluginDataDir ?? ""}`, {
+      cwd: options.cwd,
+      pluginDataDir
+    });
+  }
   return spawnSync(command, args, {
     cwd: options.cwd,
     env: options.env,

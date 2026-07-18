@@ -248,14 +248,14 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
             try {
               terminateProcessTree(this.proc.pid);
             } catch {
-              // Best-effort cleanup inside an unref'd timer — swallow errors
-              // to avoid crashing the host process during shutdown.
+              // Best-effort cleanup during shutdown; preserve the original
+              // app-server exit evidence if process-tree termination fails.
             }
           } else {
             this.proc.kill("SIGTERM");
           }
         }
-      }, 50).unref?.();
+      }, 50);
     }
 
     await this.exitPromise;

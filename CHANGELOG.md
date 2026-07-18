@@ -6,6 +6,28 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Added a durable Codex-to-Claude bridge with tmux-owned workers, typed state
+  and message contracts, recovery controls, same-session steering, origin
+  delivery, and independent Codex verification.
+- Added bridge CLI and slash-command surfaces for delegation, waiting, logs,
+  messaging, recovery, listing, attachment, and runtime diagnostics.
+- Added explicit trust profiles and fail-closed workspace, capability-token,
+  lease, verification-command, and delivery boundaries.
+
+### Changed
+
+- The packaged `plugins/codex/` subtree now provides the production Codex
+  delivery adapter instead of serving only as reference material.
+- npm package-closure tests now exercise the bridge broker and packaged Codex
+  adapter from an extracted tarball.
+
+### Fixed
+
+- Detached Codex app-server brokers are now reaped reliably and test fixtures
+  tear down spawned brokers, preventing stale-process leaks after the suite.
+
 ## [1.1.1] — 2026-07-11
 
 ### Changed

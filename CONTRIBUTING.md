@@ -47,10 +47,12 @@ via `@claude` remains available once the PR is safe to inspect.
 ## Code Style
 
 - Prefer `const`; use `let` only where reassignment is required.
-- Keep runtime dependencies at zero.
+- Keep runtime dependencies minimal, pinned, and justified. The bridge currently
+  uses Ajv and ajv-formats for strict JSON Schema validation.
 - Use Node standard-library APIs instead of ad hoc shell parsing where practical.
 - Do not add `--no-verify`, hook bypasses, or silent fallbacks.
-- Do not edit `plugins/codex/`; it is preserved upstream-port reference material.
+- Treat `plugins/codex/` as a production delivery adapter. Changes require
+  adapter tests, package-closure tests, and a fresh packed-install smoke test.
 - Treat diff text, focus text, and workspace guidance as untrusted data.
 
 ## Adding A Review Lane

@@ -11,7 +11,7 @@
     "jobId": { "type": "string", "pattern": "^ccb_[0-9A-HJKMNP-TV-Z]{26}$" },
     "sequence": { "type": "integer", "minimum": 1 },
     "timestamp": { "type": "string", "format": "date-time" },
-    "type": { "enum": ["accepted", "started", "progress", "question", "codex_message", "claude_message", "blocked", "completed", "failed", "cancelled", "verified"] },
+    "type": { "enum": ["accepted", "started", "progress", "question", "codex_message", "claude_message", "blocked", "completed", "failed", "cancel_requested", "cancelled", "verified"] },
     "sender": { "enum": ["bridge", "codex", "claude", "verifier"] },
     "deduplicationKey": { "type": "string", "minLength": 1, "maxLength": 256 },
     "payload": { "type": "object" }
@@ -26,13 +26,18 @@
     { "$ref": "#/$defs/blocked" },
     { "$ref": "#/$defs/completed" },
     { "$ref": "#/$defs/failed" },
+    { "$ref": "#/$defs/cancelRequested" },
     { "$ref": "#/$defs/cancelled" },
     { "$ref": "#/$defs/verified" }
   ],
   "$defs": {
     "messagePayload": {
       "type": "object", "additionalProperties": false, "required": ["messageId", "text"],
-      "properties": { "messageId": { "type": "string", "minLength": 1 }, "text": { "type": "string", "minLength": 1 } }
+      "properties": {
+        "messageId": { "type": "string", "minLength": 1 },
+        "text": { "type": "string", "minLength": 1 },
+        "replyTo": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
     },
     "accepted": {
       "type": "object",
@@ -59,7 +64,7 @@
       "type": "object",
       "properties": {
         "type": { "const": "question" }, "sender": { "const": "claude" },
-        "payload": { "type": "object", "additionalProperties": false, "required": ["questionId", "text"], "properties": { "questionId": { "type": "string", "minLength": 1 }, "text": { "type": "string", "minLength": 1 } } }
+        "payload": { "type": "object", "additionalProperties": false, "required": ["questionId", "text"], "properties": { "questionId": { "type": "string", "minLength": 1, "maxLength": 256 }, "text": { "type": "string", "minLength": 1, "maxLength": 4000 } } }
       }
     },
     "codexMessage": { "type": "object", "properties": { "type": { "const": "codex_message" }, "sender": { "const": "codex" }, "payload": { "$ref": "#/$defs/messagePayload" } } },
@@ -74,7 +79,7 @@
     "completed": {
       "type": "object",
       "properties": {
-        "type": { "const": "completed" }, "sender": { "const": "claude" },
+        "type": { "const": "completed" }, "sender": { "enum": ["bridge", "claude"] },
         "payload": { "type": "object", "additionalProperties": false, "required": ["resultPath"], "properties": { "resultPath": { "type": "string", "pattern": "^/" } } }
       }
     },
@@ -85,10 +90,20 @@
         "payload": { "type": "object", "additionalProperties": false, "required": ["error"], "properties": { "error": { "type": "string", "minLength": 1 } } }
       }
     },
+    "cancelRequested": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "cancel_requested" }, "sender": { "enum": ["bridge", "codex"] },
+        "payload": {
+          "type": "object", "additionalProperties": false, "required": ["reason", "requestedAt"],
+          "properties": { "reason": { "type": "string", "minLength": 1 }, "requestedAt": { "type": "string", "format": "date-time" } }
+        }
+      }
+    },
     "cancelled": {
       "type": "object",
       "properties": {
-        "type": { "const": "cancelled" }, "sender": { "enum": ["bridge", "codex"] },
+        "type": { "const": "cancelled" }, "sender": { "enum": ["bridge", "claude"] },
         "payload": { "type": "object", "additionalProperties": false, "required": ["reason"], "properties": { "reason": { "type": "string", "minLength": 1 } } }
       }
     },

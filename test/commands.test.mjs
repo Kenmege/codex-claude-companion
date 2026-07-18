@@ -542,11 +542,11 @@ test("elite command exposes the exhaustive review lane", () => {
   assert.match(source, /Keep this command read-only/i);
 });
 
-test("plugin manifest has the expected plugin name", () => {
+test("plugin manifest preserves the package id and exposes the bridge identity", () => {
   const manifest = JSON.parse(read(".codex-plugin/plugin.json"));
   assert.equal(manifest.name, "claude-review");
   assert.equal(manifest.skills, "./skills/");
-  assert.equal(manifest.interface.displayName, "Claude Workspace & Review");
+  assert.equal(manifest.interface.displayName, "Codex-Claude Bridge");
   assert.ok(Array.isArray(manifest.interface.defaultPrompt));
   assert.ok(manifest.interface.defaultPrompt.length > 0);
   assert.ok(manifest.interface.defaultPrompt.length <= 3);

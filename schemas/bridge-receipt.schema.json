@@ -50,37 +50,66 @@
   },
   "allOf": [
     { "if": { "properties": { "workerState": { "const": "failed" } }, "required": ["workerState"] }, "then": { "properties": { "workerError": { "type": "string", "minLength": 1 } } }, "else": { "properties": { "workerError": { "type": "null" } } } },
-    { "if": { "properties": { "workerState": { "enum": ["accepted", "running", "stalled", "failed", "cancelled"] } }, "required": ["workerState"] }, "then": { "properties": { "delivery": { "type": "object", "properties": { "state": { "enum": ["pending", "failed"] } } } } } },
+    { "if": { "properties": { "workerState": { "enum": ["accepted", "running", "stalled"] } }, "required": ["workerState"] }, "then": { "properties": { "delivery": { "type": "object", "properties": { "state": { "enum": ["pending", "failed"] } } } } } },
     { "if": { "properties": { "verification": { "type": "object", "properties": { "state": { "enum": ["passed", "failed"] } }, "required": ["state"] } }, "required": ["verification"] }, "then": { "properties": { "workerState": { "const": "completed" } } } },
     { "if": { "properties": { "profile": { "const": "review-readonly" } }, "required": ["profile"] }, "then": { "properties": { "effectiveClaudePermissionArgs": { "$ref": "#/$defs/reviewReadonlyArgs" } } } },
     { "if": { "properties": { "profile": { "const": "standard" } }, "required": ["profile"] }, "then": { "properties": { "effectiveClaudePermissionArgs": { "$ref": "#/$defs/standardArgs" } } } },
     { "if": { "properties": { "profile": { "enum": ["trusted-autonomous", "sandbox-autonomous"] } }, "required": ["profile"] }, "then": { "properties": { "effectiveClaudePermissionArgs": { "$ref": "#/$defs/autonomousArgs" } } } }
   ],
   "$defs": {
-    "standardArgs": { "const": ["--permission-mode", "default"] },
-    "autonomousArgs": { "const": ["--permission-mode", "bypassPermissions"] },
+    "settingSourcesArg": {
+      "type": "string",
+      "pattern": "^--setting-sources=(?:(?:user|project|local)(?:,(?:user|project|local))*)?$"
+    },
+    "standardArgs": {
+      "type": "array",
+      "prefixItems": [
+        { "$ref": "#/$defs/settingSourcesArg" },
+        { "const": "--permission-mode" },
+        { "const": "default" }
+      ],
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "autonomousArgs": {
+      "type": "array",
+      "prefixItems": [
+        { "$ref": "#/$defs/settingSourcesArg" },
+        { "const": "--permission-mode" },
+        { "const": "bypassPermissions" }
+      ],
+      "minItems": 3,
+      "maxItems": 3
+    },
     "reviewReadonlyArgs": {
-      "const": [
-        "--setting-sources=", "--tools", "Read", "Glob", "Grep", "Task", "WebFetch", "WebSearch",
-        "--allowedTools", "Read", "Glob", "Grep", "Task", "WebSearch",
-        "WebFetch(https://docs.anthropic.com/*)", "WebFetch(https://nvd.nist.gov/*)",
-        "WebFetch(https://cve.mitre.org/*)", "WebFetch(https://github.com/*)",
-        "WebFetch(https://raw.githubusercontent.com/*)", "WebFetch(https://api.github.com/*)",
-        "WebFetch(https://gist.github.com/*)", "WebFetch(https://developer.mozilla.org/*)",
-        "WebFetch(https://nodejs.org/api/*)", "WebFetch(https://nodejs.org/dist/*)",
-        "WebFetch(https://registry.npmjs.org/*)", "WebFetch(https://www.npmjs.com/package/*)",
-        "WebFetch(https://pypi.org/project/*)", "WebFetch(https://crates.io/crates/*)",
-        "WebFetch(https://docs.python.org/*)", "WebFetch(https://owasp.org/*)",
-        "WebFetch(https://cwe.mitre.org/*)", "WebFetch(https://www.rfc-editor.org/*)",
-        "WebFetch(https://datatracker.ietf.org/*)", "WebFetch(https://www.w3.org/TR/*)",
-        "WebFetch(https://www.nice.org.uk/*)", "WebFetch(https://bnf.nice.org.uk/*)",
-        "WebFetch(https://www.bmj.com/*)", "WebFetch(https://www.thelancet.com/*)",
-        "WebFetch(https://www.nejm.org/*)", "WebFetch(https://jamanetwork.com/*)",
-        "WebFetch(https://www.cochranelibrary.com/*)", "WebFetch(https://www.who.int/*)",
-        "WebFetch(https://www.gov.uk/government/*)", "WebFetch(https://www.ukhsa.gov.uk/*)",
-        "WebFetch(https://www.nhs.uk/*)", "--disallowedTools", "Edit", "Write", "NotebookEdit",
-        "--permission-mode", "default", "--strict-mcp-config"
-      ]
+      "type": "array",
+      "prefixItems": [
+        { "$ref": "#/$defs/settingSourcesArg" },
+        { "const": "--tools" }, { "const": "Read" }, { "const": "Glob" }, { "const": "Grep" },
+        { "const": "Task" }, { "const": "WebFetch" }, { "const": "WebSearch" },
+        { "const": "--allowedTools" }, { "const": "Read" }, { "const": "Glob" }, { "const": "Grep" },
+        { "const": "Task" }, { "const": "WebSearch" },
+        { "const": "WebFetch(https://docs.anthropic.com/*)" }, { "const": "WebFetch(https://nvd.nist.gov/*)" },
+        { "const": "WebFetch(https://cve.mitre.org/*)" }, { "const": "WebFetch(https://github.com/*)" },
+        { "const": "WebFetch(https://raw.githubusercontent.com/*)" }, { "const": "WebFetch(https://api.github.com/*)" },
+        { "const": "WebFetch(https://gist.github.com/*)" }, { "const": "WebFetch(https://developer.mozilla.org/*)" },
+        { "const": "WebFetch(https://nodejs.org/api/*)" }, { "const": "WebFetch(https://nodejs.org/dist/*)" },
+        { "const": "WebFetch(https://registry.npmjs.org/*)" }, { "const": "WebFetch(https://www.npmjs.com/package/*)" },
+        { "const": "WebFetch(https://pypi.org/project/*)" }, { "const": "WebFetch(https://crates.io/crates/*)" },
+        { "const": "WebFetch(https://docs.python.org/*)" }, { "const": "WebFetch(https://owasp.org/*)" },
+        { "const": "WebFetch(https://cwe.mitre.org/*)" }, { "const": "WebFetch(https://www.rfc-editor.org/*)" },
+        { "const": "WebFetch(https://datatracker.ietf.org/*)" }, { "const": "WebFetch(https://www.w3.org/TR/*)" },
+        { "const": "WebFetch(https://www.nice.org.uk/*)" }, { "const": "WebFetch(https://bnf.nice.org.uk/*)" },
+        { "const": "WebFetch(https://www.bmj.com/*)" }, { "const": "WebFetch(https://www.thelancet.com/*)" },
+        { "const": "WebFetch(https://www.nejm.org/*)" }, { "const": "WebFetch(https://jamanetwork.com/*)" },
+        { "const": "WebFetch(https://www.cochranelibrary.com/*)" }, { "const": "WebFetch(https://www.who.int/*)" },
+        { "const": "WebFetch(https://www.gov.uk/government/*)" }, { "const": "WebFetch(https://www.ukhsa.gov.uk/*)" },
+        { "const": "WebFetch(https://www.nhs.uk/*)" }, { "const": "--disallowedTools" },
+        { "const": "Edit" }, { "const": "Write" }, { "const": "NotebookEdit" },
+        { "const": "--permission-mode" }, { "const": "default" }, { "const": "--strict-mcp-config" }
+      ],
+      "minItems": 52,
+      "maxItems": 52
     }
   }
 }

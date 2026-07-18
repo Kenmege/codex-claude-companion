@@ -63,6 +63,12 @@ Expected before publishing a new version:
 - `npm view codex-plugin-cc@<version>` returns `E404`, proving the immutable
   target version has not already been published.
 
+In addition to the dry run, create and inspect a real tarball in a throwaway
+directory. Install that tarball, then prove both binaries, the bridge broker,
+and the packaged Codex delivery adapter are present and executable/importable.
+Run `codex-claude bridge-doctor --json` from the packed install and confirm no
+broker, Claude worker, or `ccb-*` tmux session remains after the smoke test.
+
 ## Publish
 
 1. Confirm `package.json`, `package-lock.json`, and `.codex-plugin/plugin.json`
@@ -105,6 +111,9 @@ npm install codex-plugin-cc@<version> --registry=https://registry.npmjs.org
 ./node_modules/.bin/codex-claude --version
 ./node_modules/.bin/codex-claude --help
 ./node_modules/.bin/codex-claude doctor --json
+./node_modules/.bin/codex-claude bridge-doctor --json
+node --check node_modules/codex-plugin-cc/scripts/bridge-broker.mjs
+node --check node_modules/codex-plugin-cc/plugins/codex/scripts/app-server-broker.mjs
 ```
 
 Then verify the global install path:

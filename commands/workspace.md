@@ -1,8 +1,12 @@
 ---
-description: Dispatch a full Claude coding worker in another terminal while this Codex task supervises it.
+description: Dispatch the legacy Claude background workspace lane with its native agents panel.
 ---
 
 # /claude-review:workspace
+
+> Compatibility lane: use `/claude-review:delegate` for new durable tmux-owned
+> jobs with recovery, collaboration, delivery acknowledgement, and independent
+> verification.
 
 ## Purpose
 
@@ -18,7 +22,7 @@ remain isolated and read-only.
 2. Record the branch, `git status --short`, and the repository's real verification
    commands. Preserve all pre-existing user changes.
 3. Keep the exact user request as the worker prompt. Never add a permission-bypass
-   flag or start another Codex process.
+   flag or start another Codex process in this legacy lane.
 
 ## Dispatch
 

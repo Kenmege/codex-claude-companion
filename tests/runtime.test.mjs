@@ -6,8 +6,19 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
-import { cleanupLeakedBrokers, initGitRepo, makeTempDir, run } from "./helpers.mjs";
-import { loadBrokerSession, saveBrokerSession } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
+import {
+  assertBrokerCleanupComplete,
+  cleanupLeakedBrokers,
+  initGitRepo,
+  makeTempDir,
+  run,
+  waitForTerminatedProcessTrees
+} from "./helpers.mjs";
+import {
+  clearBrokerSession,
+  loadBrokerSession,
+  saveBrokerSession
+} from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
 import { resolveStateDir } from "../plugins/codex/scripts/lib/state.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -21,8 +32,10 @@ const SESSION_HOOK = path.join(PLUGIN_ROOT, "scripts", "session-lifecycle-hook.m
 // tests are not required to tear that broker down themselves; reap every
 // broker this file leaked once, after all tests finish, so none survive the
 // test run regardless of which tests happened to trigger a spawn.
-after(() => {
-  cleanupLeakedBrokers();
+after(async () => {
+  const cleanup = cleanupLeakedBrokers();
+  assertBrokerCleanupComplete(cleanup);
+  await waitForTerminatedProcessTrees(cleanup.terminatedPids);
 });
 
 async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 50 } = {}) {
@@ -1794,6 +1807,52 @@ test("session end fully cleans up jobs for the ending session", async (t) => {
   assert.deepEqual(state.jobs.map((job) => job.id), ["review-other"]);
   const otherJob = state.jobs[0];
   assert.equal(otherJob.logFile, otherSessionLog);
+});
+
+test("session end preserves a live process whose persisted broker identity does not match", async (t) => {
+  const repo = makeTempDir();
+  initGitRepo(repo);
+  const sessionDir = makeTempDir();
+  const sleeper = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    cwd: repo,
+    detached: true,
+    stdio: "ignore"
+  });
+  sleeper.unref();
+
+  t.after(() => {
+    clearBrokerSession(repo);
+    try {
+      process.kill(-sleeper.pid, "SIGTERM");
+    } catch {
+      try {
+        process.kill(sleeper.pid, "SIGTERM");
+      } catch {
+        // Ignore missing process.
+      }
+    }
+  });
+
+  saveBrokerSession(repo, {
+    endpoint: `unix:${path.join(sessionDir, "missing.sock")}`,
+    pidFile: path.join(sessionDir, "broker.pid"),
+    logFile: path.join(sessionDir, "broker.log"),
+    sessionDir,
+    pid: sleeper.pid,
+    scriptPath: path.join(sessionDir, "not-the-broker.mjs"),
+    identityToken: "f".repeat(64)
+  });
+
+  const result = run("node", [SESSION_HOOK, "SessionEnd"], {
+    cwd: repo,
+    env: process.env,
+    input: JSON.stringify({ hook_event_name: "SessionEnd", cwd: repo })
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.doesNotThrow(() => process.kill(sleeper.pid, 0));
+  assert.equal(loadBrokerSession(repo)?.pid, sleeper.pid);
 });
 
 test("stop hook runs a stop-time review task and blocks on findings when the review gate is enabled", () => {

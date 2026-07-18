@@ -1,9 +1,10 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createBrokerEndpoint, parseBrokerEndpoint } from "./broker-endpoint.mjs";
 import { resolveStateDir } from "./state.mjs";
@@ -11,6 +12,11 @@ import { resolveStateDir } from "./state.mjs";
 export const PID_FILE_ENV = "CODEX_COMPANION_APP_SERVER_PID_FILE";
 export const LOG_FILE_ENV = "CODEX_COMPANION_APP_SERVER_LOG_FILE";
 const BROKER_STATE_FILE = "broker.json";
+const BROKER_IDENTITY_PATTERN = /^[a-f0-9]{64}$/;
+
+function defaultBrokerScriptPath() {
+  return fileURLToPath(new URL("../app-server-broker.mjs", import.meta.url));
+}
 
 export function createBrokerSessionDir(prefix = "cxc-") {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -56,9 +62,12 @@ export async function sendBrokerShutdown(endpoint) {
   });
 }
 
-export function spawnBrokerProcess({ scriptPath, cwd, endpoint, pidFile, logFile, env = process.env }) {
+export function spawnBrokerProcess({ scriptPath, cwd, endpoint, pidFile, logFile, identityToken, env = process.env }) {
   const logFd = fs.openSync(logFile, "a");
-  const child = spawn(process.execPath, [scriptPath, "serve", "--endpoint", endpoint, "--cwd", cwd, "--pid-file", pidFile], {
+  const child = spawn(process.execPath, [
+    scriptPath, "serve", "--endpoint", endpoint, "--cwd", cwd, "--pid-file", pidFile,
+    "--identity-token", identityToken
+  ], {
     cwd,
     env,
     detached: true,
@@ -67,6 +76,54 @@ export function spawnBrokerProcess({ scriptPath, cwd, endpoint, pidFile, logFile
   child.unref();
   fs.closeSync(logFd);
   return child;
+}
+
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "EPERM") return true;
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+export function inspectBrokerProcessIdentity(session, cwd, options = {}) {
+  if (!Number.isInteger(session?.pid) || session.pid < 1) return { alive: false, exact: false };
+  const alive = (options.processAlive ?? processIsAlive)(session.pid);
+  if (!alive) return { alive: false, exact: false };
+
+  const platform = options.platform ?? process.platform;
+  const listProcess = options.listProcess ?? spawnSync;
+  const result = platform === "win32"
+    ? listProcess("powershell.exe", [
+        "-NoProfile", "-NonInteractive", "-Command",
+        `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${session.pid}').CommandLine`
+      ], { encoding: "utf8", windowsHide: true })
+    : listProcess("ps", ["-ww", "-p", String(session.pid), "-o", "command="], {
+        encoding: "utf8", windowsHide: true
+      });
+  if (result.status !== 0 || typeof result.stdout !== "string") return { alive: true, exact: false };
+  const command = result.stdout.trim();
+
+  if (BROKER_IDENTITY_PATTERN.test(session.identityToken ?? "")) {
+    const tokenFlag = `--identity-token ${session.identityToken}`;
+    const tokenEquals = `--identity-token=${session.identityToken}`;
+    return { alive: true, exact: command.includes(tokenFlag) || command.includes(tokenEquals) };
+  }
+  if (platform === "win32") return { alive: true, exact: false };
+
+  const canonicalCwd = fs.realpathSync.native(path.resolve(cwd));
+  const expectedCommand = [
+    process.execPath,
+    session.scriptPath ?? defaultBrokerScriptPath(),
+    "serve",
+    "--endpoint", session.endpoint,
+    "--cwd", canonicalCwd,
+    "--pid-file", session.pidFile
+  ].join(" ");
+  return { alive: true, exact: command === expectedCommand };
 }
 
 function resolveBrokerStateFile(cwd) {
@@ -117,13 +174,14 @@ export async function ensureBrokerSession(cwd, options = {}) {
   }
 
   if (existing) {
+    const identity = (options.inspectProcess ?? inspectBrokerProcessIdentity)(existing, cwd, options);
     teardownBrokerSession({
       endpoint: existing.endpoint ?? null,
       pidFile: existing.pidFile ?? null,
       logFile: existing.logFile ?? null,
       sessionDir: existing.sessionDir ?? null,
       pid: existing.pid ?? null,
-      killProcess: options.killProcess ?? null
+      killProcess: identity.alive && identity.exact ? (options.killProcess ?? null) : null
     });
     clearBrokerSession(cwd);
   }
@@ -133,20 +191,23 @@ export async function ensureBrokerSession(cwd, options = {}) {
   const endpoint = endpointFactory(sessionDir, options.platform);
   const pidFile = path.join(sessionDir, "broker.pid");
   const logFile = path.join(sessionDir, "broker.log");
-  const scriptPath =
-    options.scriptPath ??
-    fileURLToPath(new URL("../app-server-broker.mjs", import.meta.url));
+  const scriptPath = options.scriptPath ?? defaultBrokerScriptPath();
+  const identityToken = options.identityToken ?? crypto.randomBytes(32).toString("hex");
+  if (!BROKER_IDENTITY_PATTERN.test(identityToken)) {
+    throw new Error("broker identity token must be a 64-character lowercase hexadecimal value");
+  }
 
-  const child = spawnBrokerProcess({
+  const child = (options.spawnBrokerProcess ?? spawnBrokerProcess)({
     scriptPath,
     cwd,
     endpoint,
     pidFile,
     logFile,
+    identityToken,
     env: options.env ?? process.env
   });
 
-  const ready = await waitForBrokerEndpoint(endpoint, options.timeoutMs ?? 2000);
+  const ready = await (options.waitForBrokerEndpoint ?? waitForBrokerEndpoint)(endpoint, options.timeoutMs ?? 2000);
   if (!ready) {
     teardownBrokerSession({
       endpoint,
@@ -164,7 +225,9 @@ export async function ensureBrokerSession(cwd, options = {}) {
     pidFile,
     logFile,
     sessionDir,
-    pid: child.pid ?? null
+    pid: child.pid ?? null,
+    scriptPath,
+    identityToken
   };
   saveBrokerSession(cwd, session);
   return session;

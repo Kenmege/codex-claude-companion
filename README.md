@@ -1,21 +1,24 @@
-# Claude Workspace & Review Plugin For Codex
+# Codex-Claude Bridge
 
 [![CI](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/pull-request-ci.yml/badge.svg)](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/pull-request-ci.yml)
 [![CodeQL](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/codeql.yml/badge.svg)](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/codeql.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18.18-brightgreen.svg)](#requirements)
 
-> Codex orchestrates Claude coding workers, then verifies and reviews their work.
+> A durable Codex-to-Claude control plane with tmux process ownership, recovery,
+> collaboration, result delivery, and independent verification.
 
-The writable workspace lane keeps the originating Codex task active while
-Claude runs as a background coding worker. Claude's native `agents` control
-panel opens in a separate terminal, so the user can watch or interact without
-blocking Codex. The active Codex model is inherited automatically as the
-planner, supervisor, verifier, and reviewer; the plugin never launches a nested
-Codex process or hardcodes a GPT model.
+The bridge keeps the originating Codex task responsive while a Claude worker is
+owned by a named tmux session. A detached local broker records heartbeats,
+leases, ordered collaboration messages, recovery state, delivery acknowledgement,
+and verification evidence. When a delegation finishes, the bridge runs the
+origin-supplied verification command as a bounded local subprocess with a
+secret-stripped environment. A separate ephemeral, read-only Codex process
+then independently reviews the recorded outcome; it does not hardcode a GPT
+model.
 
-The plugin has two explicit surfaces: a writable Codex-supervised Claude coding
-workspace and isolated read-only review lanes. Reviews can use Claude Code's
+The package has three explicit surfaces: the durable bridge, a legacy writable
+Claude workspace, and isolated read-only review lanes. Reviews can use Claude Code's
 current Opus alias, including the Opus 1M long-context alias, with `Read`,
 `Glob`, `Grep`, Task sub-agents, and domain-fenced web access. They do not get
 `Edit`, `Write`, Bash, raw shell, or repository-controlled Claude settings by
@@ -30,6 +33,7 @@ Public npm is the frictionless install lane:
 npm install -g codex-plugin-cc
 codex-claude enable
 codex-claude doctor
+codex-claude bridge-doctor --json
 ```
 
 For local development on the plugin itself, install from source:
@@ -51,7 +55,50 @@ Codex CLI after running it. `doctor` checks Node, Git, Claude Code CLI/version
 auth, Codex registration, job storage, non-Git folder support, and optional live
 Claude runtime access with `--probe-runtime`.
 
-Dispatch a coding job from a Codex task:
+Delegate a durable coding job from a Codex task. The verification command is a
+JSON argv array supplied by the origin, not shell text interpreted by the worker:
+
+```bash
+codex-claude delegate \
+  --thread-id "$CODEX_THREAD_ID" \
+  --profile trusted-autonomous \
+  --verify-command '["npm","test"]' \
+  -- "implement the requested change and report validation evidence"
+codex-claude list --json
+codex-claude wait <ccb_job-id>
+codex-claude logs <ccb_job-id>
+codex-claude send <ccb_job-id> --message "Focus on the failing integration test"
+codex-claude recover <ccb_job-id>
+codex-claude gc                         # bounded dry run
+codex-claude gc --older-than-days 30 --apply
+```
+
+The write-capable quickstart selects `trusted-autonomous` explicitly. It runs
+Claude with `bypassPermissions` on the same user account so the detached worker
+can execute the implementation without interactive permission prompts. Omit
+that option to keep the default `standard` profile, which is appropriate for
+non-writing headless work.
+
+`delegate --wait` and `wait` use stable orchestration exit codes: `0` means the
+worker completed, independent verification passed, and origin delivery was
+acknowledged; `3` means the terminal job failed or did not satisfy verification
+and delivery; `4` means Claude has a pending question that needs a reply. A wait
+timeout is an operational error and exits nonzero with a diagnostic.
+
+`send` provides live same-session steering only while the authoritative Claude
+worker is still running. The first authoritative result closes that input
+window so verification and delivery can begin. Without `--wait`, exit `0` means
+the message was durably queued, not that Claude observed it; with `--wait`, exit
+`0` requires a replay acknowledgement from that session. Use a new or resumed
+job for follow-up work after the worker becomes terminal.
+
+`CODEX_THREAD_ID` may supply `--thread-id`. The bridge also supports `status`,
+`cancel`, and `attach` for `ccb_...` job IDs. `trusted-autonomous` is an explicit
+same-user host-trust mode that uses Claude's `bypassPermissions`; it is not an OS
+sandbox. `sandbox-autonomous` remains unavailable until independently proven
+containment exists.
+
+The older workspace lane remains available for compatibility:
 
 ```bash
 codex-claude workspace --path . -- "implement the requested change and run tests"
@@ -82,21 +129,26 @@ codex-claude review --preset security --add-dir ../shared-libs
 ```
 
 Codex slash commands are available once the plugin marketplace is loaded:
-`/claude-review:workspace`, `/claude-review:review`, `/claude-review:elite-review`,
-`/claude-review:deep-review`, `/claude-review:security-review`, and
-`/claude-review:doctor`.
+`/claude-review:delegate`, `/claude-review:wait`, `/claude-review:logs`,
+`/claude-review:send`, `/claude-review:recover`, `/claude-review:bridge-doctor`,
+`/claude-review:gc`,
+`/claude-review:workspace`, `/claude-review:review`,
+`/claude-review:elite-review`, `/claude-review:deep-review`,
+`/claude-review:security-review`, and `/claude-review:doctor`.
 
 ## Requirements
 
 - Node.js 18.18 or newer.
 - Git on `PATH`.
+- tmux on `PATH` for durable bridge workers.
 - Claude Code CLI authenticated locally for direct helper usage.
 - Codex CLI with local plugin marketplace support for slash-command usage.
 
-## Workspace And Review Lanes
+## Bridge, Workspace, And Review Lanes
 
 | Lane | Purpose |
 |---|---|
+| `delegate` | Durable tmux-owned Claude worker with typed state, collaboration, recovery, delivery, and independent verification. |
 | `workspace` | Writable Claude background worker with a separate control panel and active-session Codex supervision. |
 | `review` | Quick agentic Claude review for everyday diffs. |
 | `adversarial-review` | Skeptical challenge pass for risky changes. |
@@ -118,6 +170,15 @@ Use presets when you want one command that chooses the right lane:
 
 ## Why Trust The Boundary?
 
+- Explicit bridge trust profiles: `standard` retains Claude-native prompts;
+  `trusted-autonomous` is opt-in cooperative same-UID host trust, not isolation;
+  and unsupported `sandbox-autonomous` requests fail closed.
+- Durable authority separation: worker completion, result delivery,
+  acknowledgement, and independent verification are distinct recorded states.
+- Bounded verification: the origin supplies JSON argv verification commands,
+  which run as bounded local subprocesses with a secret-stripped environment;
+  a separate ephemeral Codex process with a read-only sandbox independently
+  reviews their recorded outcomes.
 - Read-only by default: `Edit`, `Write`, `NotebookEdit`, raw shell, and raw git
   are outside the safe-mode tool catalog.
 - Prompt-injection resistant framing: diff, focus text, and workspace guidance
@@ -322,7 +383,7 @@ codex plugin marketplace add <repo-root>
 ```
 
 This loads `.agents/plugins/marketplace.json` as the
-`claude-review-private` marketplace. Do not install the private lane from a
+`codex-claude-bridge-local` marketplace. Do not install the private lane from a
 GitHub URL unless intentionally testing the public marketplace path.
 
 ### GitHub Packages historical install
@@ -519,11 +580,18 @@ creation, and updated with atomic writes. `status` marks long-running jobs as
 | `0` | Clean command or review with no ship-blocking findings |
 | `1` | Operational/runtime error |
 | `2` | Invalid usage or validation error |
-| `3` | Review completed and found ship-blocking findings |
+| `3` | Review found ship blockers, or bridge wait reached terminal non-success/failed verification or delivery |
+| `4` | Bridge wait stopped for a pending Claude question while the worker remains nonterminal |
 
 The same gating contract applies when a review is run in the background:
 `codex-claude result <job-id>` re-validates the persisted result and
 exits `3` when the completed job contains ship-blocking findings.
+
+For `codex-claude wait` and `codex-claude delegate --wait`, exit `0` has the
+narrower orchestration meaning documented above: completed worker, passed
+independent verification, and acknowledged origin delivery. Other subcommands
+retain their command-specific contracts; for example, `bridge-doctor` can use
+exit `2` when the runtime is not ready.
 
 ## Supported Platforms
 
@@ -559,6 +627,15 @@ pushing tag `vX.Y.Z-rc.1`.
 ```text
 .codex-plugin/plugin.json
 commands/
+  delegate.md
+  wait.md
+  logs.md
+  recover.md
+  gc.md
+  list.md
+  attach.md
+  send.md
+  bridge-doctor.md
   review.md
   adversarial-review.md
   elite-review.md
@@ -570,11 +647,17 @@ commands/
   cancel.md
 docs/plans/
 schemas/
+  bridge-delegation-request.schema.json
+  bridge-event.schema.json
+  bridge-message-operation.schema.json
+  bridge-result.schema.json
+  bridge-receipt.schema.json
   review-output.schema.json
   elite-review-output.schema.json
   agentic-review-output.schema.json
 scripts/
   claude-review-companion.mjs
+  bridge-broker.mjs
   bin/
     git-safe.mjs
   lib/
@@ -588,9 +671,9 @@ scripts/
 test/
 ```
 
-The original Claude Code plugin subtree remains under `plugins/codex/` as an
-upstream reference while this Codex-native runtime is developed at the repo
-root. Its Codex prompt guidance tracks the current OpenAI model family:
+The Claude Code plugin subtree under `plugins/codex/` now supplies the packaged
+Codex delivery adapter used by the durable bridge; it is no longer
+reference-only. Its Codex prompt guidance tracks the current OpenAI model family:
 `gpt-5.5` for complex coding/research work, `gpt-5.4-mini` for lighter
 subtasks, and the `spark` shortcut for `gpt-5.3-codex-spark` preview runs when
 that model is available to the user.

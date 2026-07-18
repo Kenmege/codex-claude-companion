@@ -152,6 +152,7 @@ plugins/codex/.generated/
 /coverage/
 /.production/
 /.worktrees/
+/.acceptance-*/
 
 # ByteRover local context cache (created by codex-review subagent runs)
 /.brv

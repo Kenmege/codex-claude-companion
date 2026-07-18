@@ -13,7 +13,7 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function ensurePrivateDirectory(dir) {
+export function ensurePrivateDirectory(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   if (process.platform === "win32") {
     const currentStat = fs.lstatSync(dir);
@@ -160,7 +160,7 @@ export function resolveJobPromptFile(cwd, jobId, options = {}) {
   return resolveJobArtifact(cwd, jobId, ".prompt.md", options);
 }
 
-function writeJsonAtomic(file, payload) {
+export function writeJsonAtomic(file, payload) {
   const tmpFile = `${file}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`;
   fs.writeFileSync(tmpFile, `${JSON.stringify(payload, null, 2)}\n`, {
     encoding: "utf8",
@@ -292,7 +292,7 @@ function listLiveContenders(queueDir, prefix) {
   return names.sort();
 }
 
-function acquireLock(lockFile, options = {}) {
+export function acquireQueuedLock(lockFile, options = {}) {
   const timeoutMs = options.timeoutMs ?? 5_000;
   const startedAt = Date.now();
   let delayMs = 5;
@@ -390,7 +390,7 @@ export function createJob(cwd, jobId, payload, options = {}) {
 
 export function updateJob(cwd, jobId, patch, options = {}) {
   const jobFile = resolveJobFile(cwd, jobId, options);
-  const releaseLock = acquireLock(`${jobFile}.lock`);
+  const releaseLock = acquireQueuedLock(`${jobFile}.lock`);
   try {
     const current = readJob(cwd, jobId, options);
     if (!current) {

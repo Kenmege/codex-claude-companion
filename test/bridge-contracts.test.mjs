@@ -23,6 +23,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCHEMA_FILES = {
   request: "bridge-delegation-request.schema.json",
   event: "bridge-event.schema.json",
+  messageOperation: "bridge-message-operation.schema.json",
   result: "bridge-result.schema.json",
   receipt: "bridge-receipt.schema.json"
 };
@@ -81,7 +82,7 @@ function sampleRequest(overrides = {}) {
       claudeSessionId: CLAUDE_SESSION_ID,
       sandboxAttestation: null,
       timeoutSeconds: 900,
-      effectiveClaudePermissionArgs: ["--permission-mode", "default"]
+      effectiveClaudePermissionArgs: ["--setting-sources=", "--permission-mode", "default"]
     },
     task: { promptFile: "prompt.md", acceptance: ["tests pass"] }
   };
@@ -133,9 +134,24 @@ test("event schema defines ordered, deduplicated bridge messages", () => {
   assert.equal(schema.properties.sequence.minimum, 1);
   assert.deepEqual(schema.properties.type.enum, [
     "accepted", "started", "progress", "question", "codex_message", "claude_message",
-    "blocked", "completed", "failed", "cancelled", "verified"
+    "blocked", "completed", "failed", "cancel_requested", "cancelled", "verified"
   ]);
   assert.deepEqual(schema.properties.sender.enum, ["bridge", "codex", "claude", "verifier"]);
+});
+
+test("message-operation schema makes bidirectional delivery durable and correlated", () => {
+  const schema = readSchema("messageOperation");
+  assert.deepEqual(schema.required, [
+    "schemaVersion", "jobId", "sequence", "kind", "state", "messageId", "deduplicationKey",
+    "timestamp", "text", "inReplyTo", "continuation"
+  ]);
+  assert.deepEqual(schema.properties.kind.enum, ["codex_message", "codex_applied", "claude_message"]);
+  assert.deepEqual(schema.properties.state.enum, ["pending", "applied", "ack"]);
+  assert.equal(schema.properties.sequence.minimum, 1);
+  assert.equal(schema.properties.continuation.oneOf[1].additionalProperties, false);
+  assert.deepEqual(schema.properties.continuation.oneOf[1].required, [
+    "kind", "boundaryId", "fromClaudeSessionId", "toClaudeSessionId", "ordinal", "recordedAt"
+  ]);
 });
 
 test("result and receipt schemas separate completion from delivery acknowledgement and verification", () => {
@@ -321,14 +337,15 @@ test("bridge agent preset registry exposes the six promised roles without hard-c
 
 test("bridge capability documentation contrasts the three product generations and defines trusted autonomy", () => {
   const docs = fs.readFileSync(path.join(ROOT, "docs", "bridge-capabilities.md"), "utf8");
-  assert.match(docs, /\| Capability \| Direct `claude` CLI \| `codex-plugin-cc@1\.1\.1` \| Target bridge \|/);
+  assert.match(docs, /\| Capability \| Direct `claude` CLI \| Legacy workspace\/review lanes \| Durable bridge \|/);
+  assert.match(docs, /not a claim that the published `codex-plugin-cc@1\.1\.1`/i);
   assert.match(docs, /## Exact meaning of `trusted-autonomous`/);
   assert.match(docs, /`--permission-mode bypassPermissions`/);
-  assert.match(docs, /resolved absolute workspace path/);
-  assert.match(docs, /will not authorize public publishing, deployment, credential changes, or destructive host actions/i);
+  assert.match(docs, /existing absolute workspace path/);
+  assert.match(docs, /does not authorize public publishing, deployment,[\s\S]*credential changes, or destructive host actions/i);
   assert.match(docs, /completion, delivery, acknowledgement, and verification are separate states/i);
   assert.match(docs, /executor-produced structured attestation/i);
-  assert.match(docs, /unavailable in Phase 0/i);
+  assert.match(docs, /`sandbox-autonomous` is unavailable/i);
   assert.match(docs, /authority, freshness, exact job\/executor\/workspace binding/i);
 });
 
@@ -338,12 +355,12 @@ test("Draft 2020-12 schemas compile and accept or reject representative contract
   assert.equal(validators.request(request), true, JSON.stringify(validators.request.errors));
 
   const wrongArgs = structuredClone(request);
-  wrongArgs.execution.effectiveClaudePermissionArgs = ["--permission-mode", "bypassPermissions"];
+  wrongArgs.execution.effectiveClaudePermissionArgs = ["--setting-sources=", "--permission-mode", "bypassPermissions"];
   assert.equal(validators.request(wrongArgs), false);
 
   for (const [profile, args, expected] of [
-    ["trusted-autonomous", ["--permission-mode", "bypassPermissions"], true],
-    ["trusted-autonomous", ["--permission-mode", "default"], false],
+    ["trusted-autonomous", ["--setting-sources=", "--permission-mode", "bypassPermissions"], true],
+    ["trusted-autonomous", ["--setting-sources=", "--permission-mode", "default"], false],
     ["review-readonly", ["--permission-mode", "default"], false]
   ]) {
     const candidate = structuredClone(request);
@@ -363,7 +380,7 @@ test("Draft 2020-12 schemas compile and accept or reject representative contract
 
   const sandbox = structuredClone(request);
   sandbox.execution.profile = "sandbox-autonomous";
-  sandbox.execution.effectiveClaudePermissionArgs = ["--permission-mode", "bypassPermissions"];
+  sandbox.execution.effectiveClaudePermissionArgs = ["--setting-sources=", "--permission-mode", "bypassPermissions"];
   sandbox.execution.sandboxAttestation = sandboxAttestation();
   assert.equal(validators.request(sandbox), true, JSON.stringify(validators.request.errors));
   const sandboxWithExtraAttestationPayload = structuredClone(sandbox);
@@ -408,7 +425,7 @@ test("Draft 2020-12 schemas compile and accept or reject representative contract
     schemaVersion: 1, jobId: JOB_ID, createdAt: "2026-07-18T12:00:00Z", workerState: "completed", workerError: null,
     delivery: { state: "acknowledged", attempts: 1, deliveredAt: "2026-07-18T12:01:00Z", acknowledgedAt: "2026-07-18T12:02:00Z", lastError: null },
     verification: { state: "passed", verifiedAt: "2026-07-18T12:03:00Z", evidence: ["npm test"] },
-    profile: "standard", effectiveClaudePermissionArgs: ["--permission-mode", "default"]
+    profile: "standard", effectiveClaudePermissionArgs: ["--setting-sources=", "--permission-mode", "default"]
   };
   assert.equal(validateBridgeReceiptContract(receipt), receipt);
   assert.throws(

@@ -7,6 +7,7 @@ import { terminateProcessTree } from "./lib/process.mjs";
 import { BROKER_ENDPOINT_ENV } from "./lib/app-server.mjs";
 import {
   clearBrokerSession,
+  inspectBrokerProcessIdentity,
   LOG_FILE_ENV,
   loadBrokerSession,
   PID_FILE_ENV,
@@ -94,21 +95,26 @@ async function handleSessionEnd(input) {
   const logFile = brokerSession?.logFile ?? null;
   const sessionDir = brokerSession?.sessionDir ?? null;
   const pid = brokerSession?.pid ?? null;
+  const brokerIdentity = brokerSession
+    ? inspectBrokerProcessIdentity(brokerSession, cwd)
+    : { alive: false, exact: false };
 
   if (brokerEndpoint) {
     await sendBrokerShutdown(brokerEndpoint);
   }
 
   cleanupSessionJobs(cwd, input.session_id || process.env[SESSION_ID_ENV]);
-  teardownBrokerSession({
-    endpoint: brokerEndpoint,
-    pidFile,
-    logFile,
-    sessionDir,
-    pid,
-    killProcess: terminateProcessTree
-  });
-  clearBrokerSession(cwd);
+  if (!brokerIdentity.alive || brokerIdentity.exact) {
+    teardownBrokerSession({
+      endpoint: brokerEndpoint,
+      pidFile,
+      logFile,
+      sessionDir,
+      pid,
+      killProcess: brokerIdentity.exact ? terminateProcessTree : null
+    });
+    clearBrokerSession(cwd);
+  }
 }
 
 async function main() {

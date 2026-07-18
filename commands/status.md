@@ -1,5 +1,5 @@
 ---
-description: Show running and recent Claude review jobs for the current workspace.
+description: Show a durable bridge job by ccb_ ID, or running and recent Claude review jobs.
 ---
 
 # /claude-review:status
@@ -13,7 +13,8 @@ description: Show running and recent Claude review jobs for the current workspac
 
 ## Plan
 
-Run the helper in status mode and return the result.
+Run the helper in status mode and return the result. A `ccb_...` ID selects the
+durable bridge ledger; other arguments use the legacy review-job status route.
 
 ## Commands
 
@@ -24,7 +25,8 @@ Use the exact argument tail the user supplied after `/claude-review:status`.
 
 ## Verification
 
-Treat the helper output as the source of truth for job state.
+Treat the helper output as the source of truth for job state. For bridge jobs,
+worker completion, delivery, acknowledgement, and verification are distinct.
 
 ## Summary
 
@@ -32,4 +34,5 @@ Return the helper stdout verbatim.
 
 ## Next Steps
 
-If a job is finished, suggest `/claude-review:result`.
+For a finished legacy review, suggest `/claude-review:result`. For a bridge job,
+report its receipt and verification state or use `/claude-review:wait`.
