@@ -160,7 +160,7 @@ function codexVerifierPrompt({ request, result, integrity, repository }) {
   return [
     "Act as an independent read-only verifier for a Claude implementation worker.",
     repository.passed
-      ? "Review only the acceptance criteria, worker result, and listed changed paths. Do not modify anything or inventory unrelated repository state."
+      ? "Perform an evidence-only review of the acceptance criteria, worker result, scoped workspace integrity, and authoritative repository-check evidence supplied below. Do not execute commands, tests, package managers, or tools; those checks already ran outside your read-only sandbox."
       : "The repository gate already failed. Confirm its concrete failures from the supplied evidence and return promptly; do not perform a broad repository audit.",
     "Pass only if the reported work satisfies the request and all supplied gates pass; otherwise fail with concrete findings.",
     `Request acceptance: ${JSON.stringify(request.task.acceptance)}`,

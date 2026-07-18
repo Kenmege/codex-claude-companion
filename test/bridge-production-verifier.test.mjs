@@ -304,6 +304,51 @@ test("production Codex review uses the job timeout, scoped prompt, and live hear
   assert.ok(heartbeatCount >= 1);
 });
 
+test("green repository gates constrain Codex review to supplied evidence", async (t) => {
+  const { workspace } = fixture(t);
+  let observedPrompt;
+  const dependencies = createProductionBridgeVerificationDependencies({
+    codexBinary: process.execPath,
+    async runProcess(_binary, args, options) {
+      observedPrompt = options.inputData;
+      const outputFile = args[args.indexOf("--output-last-message") + 1];
+      fs.writeFileSync(outputFile, JSON.stringify({
+        passed: true,
+        evidence: ["supplied repository checks passed"],
+        findings: []
+      }));
+      return { status: 0, signal: null, stdout: "", stderr: "", error: null };
+    },
+    recordVerificationAttempts() {},
+    recordVerification() {}
+  });
+
+  const review = await dependencies.runCodexReview({
+    request: {
+      execution: { canonicalWorkspacePath: workspace },
+      task: { acceptance: ["all required checks pass"] }
+    },
+    result: { status: "completed", filesChanged: [] },
+    integrity: {
+      changedPaths: [],
+      unexpectedChanges: [],
+      reportedButUnchanged: [],
+      passed: true
+    },
+    repository: {
+      passed: true,
+      evidence: ["independent check [\"npm\",\"run\",\"check\"] exit=0"],
+      findings: []
+    },
+    attempt: 0
+  });
+
+  assert.equal(review.passed, true);
+  assert.match(observedPrompt, /evidence-only review/i);
+  assert.match(observedPrompt, /do not execute commands, tests, package managers, or tools/i);
+  assert.match(observedPrompt, /independent check/);
+});
+
 test("production verifier rejects verifier timing outside bounded contracts", () => {
   const base = {
     codexBinary: process.execPath,
