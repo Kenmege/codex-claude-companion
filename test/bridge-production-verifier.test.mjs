@@ -119,6 +119,27 @@ test("repository check failures retain salient test failures from truncated outp
   assert.ok(failed.findings[0].length <= 4_500);
 });
 
+test("repository check failures prioritize actual TAP failures over passing failure-named tests", (t) => {
+  const { request } = fixture(t);
+  const passingNoise = Array.from(
+    { length: 80 },
+    (_, index) => `ok ${index + 1} - failure recovery scenario ${index + 1}`
+  ).join("\n");
+  const script = [
+    `process.stdout.write(${JSON.stringify(`${passingNoise}\nnot ok 417 - exact failing lifecycle test\n`)});`,
+    'process.stdout.write("detail".repeat(1000));',
+    "process.exit(1);"
+  ].join("");
+
+  const failed = runProductionRepositoryChecks({ request }, {
+    verificationCommands: [[process.execPath, "-e", script]]
+  });
+
+  assert.equal(failed.passed, false);
+  assert.match(failed.findings[0], /not ok 417 - exact failing lifecycle test/);
+  assert.ok(failed.findings[0].length <= 4_500);
+});
+
 test("repository checks preserve working and staged git diff diagnostics", (t) => {
   const { workspace, request } = fixture(t);
   fs.writeFileSync(path.join(workspace, "working.txt"), "clean\n");

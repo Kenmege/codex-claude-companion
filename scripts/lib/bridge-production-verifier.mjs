@@ -26,8 +26,15 @@ function verifierEnvironment(environment = process.env) {
 function boundedStream(value, limit = 1_800) {
   const text = String(value ?? "").trim();
   if (text.length <= limit) return text;
-  const salient = [...new Set(text.split(/\r?\n/)
-    .filter((line) => /(?:\bnot ok\b|\b(?:fail(?:ed|ure)?|error)\b|\bERR_[A-Z0-9_]+\b|\bexit(?:ed)?(?: with)?\s+(?:code\s+)?[1-9]\d*\b)/i.test(line)))]
+  const lines = text.split(/\r?\n/);
+  const primary = lines.filter((line) =>
+    /^\s*not ok\b/i.test(line) ||
+    /\bERR_[A-Z0-9_]+\b/.test(line) ||
+    /^\s*(?:error|failureType)\s*:/i.test(line));
+  const secondary = lines.filter((line) =>
+    !/^\s*ok\b/i.test(line) &&
+    /(?:\b(?:fail(?:ed|ure)?|error)\b|\bexit(?:ed)?(?: with)?\s+(?:code\s+)?[1-9]\d*\b)/i.test(line));
+  const salient = [...new Set([...primary, ...secondary])]
     .join("\n")
     .slice(0, Math.floor(limit / 3));
   const remaining = limit - salient.length;
