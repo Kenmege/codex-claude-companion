@@ -1,3 +1,4 @@
+// Modified by Kennedy Umege for Codex-Claude Bridge, 2026.
 /**
  * @typedef {Error & { data?: unknown, rpcCode?: number }} ProtocolError
  * @typedef {import("./app-server-protocol").AppServerMethod} AppServerMethod

@@ -1,3 +1,4 @@
+// Modified by Kennedy Umege for Codex-Claude Bridge, 2026.
 import fs from "node:fs";
 import path from "node:path";
 import test, { after } from "node:test";

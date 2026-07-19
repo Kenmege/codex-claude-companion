@@ -37,27 +37,25 @@ structured output fails closed.
 
 ## 60-Second Quickstart
 
-The current public npm release does not yet contain the durable `delegate` and
-`bridge-doctor` commands. Until an approved bridge release is published, install
-the bridge from a source checkout that contains this README:
+The stable `latest` release remains `1.1.1`. The approved public bridge release
+candidate is `codex-plugin-cc@next` (`1.2.0-rc.1`), so installing the RC does not
+move existing stable users automatically:
 
 ```bash
-git clone https://github.com/Kenmege/codex-plugin-cc.git
-cd codex-plugin-cc
-npm install -g .
+npm install -g codex-plugin-cc@next
 codex-claude enable
 codex-claude doctor
 codex-claude bridge-doctor --json
 ```
 
-The existing npm package remains useful for its released review and workspace
-lanes, but it must not be presented as the durable bridge until those commands
-ship. The future scoped package name is only a candidate; no command in this
-guide assumes it has been published.
+`codex-plugin-cc@1.1.1` remains useful for its stable review and workspace lanes,
+but it does not contain the durable bridge. The future scoped package name is
+only a candidate; no command in this guide assumes it has been published.
 
-For local development after the first installation:
+For source development or an unpublished-commit test:
 
 ```bash
+git clone https://github.com/Kenmege/codex-plugin-cc.git
 cd codex-plugin-cc
 npm install -g .
 codex-claude enable

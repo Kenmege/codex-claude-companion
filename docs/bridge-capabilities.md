@@ -1,8 +1,8 @@
 # Codex-Claude Bridge contracts
 
-This document describes the implemented, unreleased Codex-Claude Bridge contract
-in this repository. It is not a claim that the published `codex-plugin-cc@1.1.1`
-package already contains this work.
+This document describes the Codex-Claude Bridge contract shipped in the
+`codex-plugin-cc@1.2.0-rc.1` public release candidate. The stable
+`codex-plugin-cc@1.1.1` package does not contain this work.
 
 ## Capability matrix
 

@@ -39,7 +39,8 @@ test("identity documentation distinguishes the two product directions", () => {
   assert.match(readme, /OpenAI[\s\S]{0,80}`openai\/codex-plugin-cc`[\s\S]{0,80}Claude Code[\s\S]{0,40}Codex/i);
   assert.match(readme, /this project[\s\S]{0,80}Codex[\s\S]{0,40}Claude/i);
   assert.match(readme, /Delegate to Claude from Codex, keep control, and get verified work back/i);
-  assert.match(readme, /current public npm release does not yet contain[\s\S]{0,100}`delegate`[\s\S]{0,80}`bridge-doctor`/i);
+  assert.match(readme, /stable `latest` release remains `1\.1\.1`[\s\S]{0,180}`1\.2\.0-rc\.1`/i);
+  assert.match(readme, /npm install -g codex-plugin-cc@next/i);
   assert.doesNotMatch(readme, /Public npm is the frictionless install lane/i);
   assert.match(migration, /unscoped\s+`codex-claude-bridge`[^\n]*already occupied/i);
   assert.match(migration, /`@kenmege\/codex-claude-bridge`[^\n]*candidate/i);
@@ -68,7 +69,7 @@ test("established plugin and marketplace identifiers remain aligned", () => {
   assert.doesNotMatch(readme, /`codex-claude-bridge-local` marketplace/i);
 });
 
-test("public cutover remains fail-closed behind authenticated and attribution gates", () => {
+test("existing-package RC is approved while scoped cutover remains fail-closed", () => {
   const migration = read("docs/bridge-migration.md");
 
   assert.match(migration, /verified npm authentication and control of the `@kenmege` scope/i);
@@ -76,7 +77,33 @@ test("public cutover remains fail-closed behind authenticated and attribution ga
   assert.match(migration, /trusted publisher, provenance, badges, workflows, and repository\s+redirects/i);
   assert.match(migration, /OpenAI-derived files[\s\S]{0,180}Apache-2\.0[\s\S]{0,180}modification notices/i);
   assert.match(migration, /explicit public-release approval/i);
-  assert.match(migration, /release verdict:\s*blocked/i);
+  assert.match(migration, /existing-package prerelease verdict:\s*approved/i);
+  assert.match(migration, /codex-plugin-cc@1\.2\.0-rc\.1[\s\S]{0,80}dist-tag `next`/i);
+  assert.match(migration, /scoped cutover verdict:\s*blocked/i);
+});
+
+test("modified OpenAI-derived files carry Apache-2.0 change notices", () => {
+  const modifiedInheritedFiles = [
+    ".github/workflows/pull-request-ci.yml",
+    ".gitignore",
+    "package.json",
+    "package-lock.json",
+    "plugins/codex/scripts/app-server-broker.mjs",
+    "plugins/codex/scripts/lib/app-server.mjs",
+    "plugins/codex/scripts/lib/broker-lifecycle.mjs",
+    "plugins/codex/scripts/lib/codex.mjs",
+    "plugins/codex/scripts/session-lifecycle-hook.mjs",
+    "tests/helpers.mjs",
+    "tests/runtime.test.mjs"
+  ];
+
+  for (const file of modifiedInheritedFiles) {
+    assert.match(
+      read(file).slice(0, 1_024),
+      /Modified by Kennedy Umege for Codex-Claude Bridge, 2026\./,
+      `${file} must carry a prominent modification notice`
+    );
+  }
 });
 
 test("legacy package scaffold is inert until the coordinated cutover", () => {

@@ -6,6 +6,8 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.2.0-rc.1] — 2026-07-19
+
 ### Added
 
 - Added a durable Codex-to-Claude bridge with tmux-owned workers, typed state
@@ -22,6 +24,10 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
   delivery adapter instead of serving only as reference material.
 - npm package-closure tests now exercise the bridge broker and packaged Codex
   adapter from an extracted tarball.
+- Prerelease publication now uses the npm `next` dist-tag, preserving the
+  stable `latest` install until the release candidate is promoted.
+- Modified OpenAI-derived files now carry explicit Apache-2.0 modification
+  notices alongside the retained licenses and notices.
 
 ### Fixed
 

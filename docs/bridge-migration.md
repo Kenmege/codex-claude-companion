@@ -1,8 +1,8 @@
 # Codex-Claude Bridge identity and migration
 
 This document records naming and compatibility direction for the implemented
-bridge. It prepares, but does not perform, a public repository rename, package
-reservation, or publication.
+bridge. It authorizes the existing-package release candidate, but does not
+perform a public repository rename or scoped-package reservation/publication.
 
 ## Product identity
 
@@ -46,8 +46,10 @@ The target repository name is `codex-claude-bridge`. The scoped name
 `@kenmege/codex-claude-bridge` is the only current package candidate and remains
 conditional on scope-control and final registry verification. An npm `E404` is
 not a reservation or proof of scope ownership. The unscoped
-`codex-claude-bridge` name is already occupied and is not a fallback. Public npm
-reservation and publication remain approval-gated.
+`codex-claude-bridge` name is already occupied and is not a fallback. The
+existing-package `codex-plugin-cc@1.2.0-rc.1` prerelease is approved. Public
+reservation or publication of the scoped candidate remains gated on verified
+scope control and trusted-publisher evidence.
 
 The current `codex-plugin-cc` repository and package remain authoritative until
 that compatibility migration is approved and completed. They are not renamed by
@@ -61,7 +63,7 @@ this contract.
    `packages/codex-plugin-cc-shim/`; it remains private before cutover.
 3. Release the full bridge on the existing package through a prerelease and a
    clean-install compatibility gate.
-4. After explicit release approval and verified npm scope control, dual-publish
+4. After explicit scoped-release approval and verified npm scope control, dual-publish
    the identical full implementation under the scoped candidate.
 5. At the next synchronized stable release, make the scoped package canonical
    and replace `codex-plugin-cc` with the tested exact-version shim. Release
@@ -89,9 +91,11 @@ the first scoped package release or repository rename:
   Apache-2.0 attribution requirements, including any required modification notices;
 - explicit public-release approval from Kennedy.
 
-**Release verdict: BLOCKED.** The current local preparation does not satisfy the
-authenticated npm-scope or attribution-review gates and therefore must not be
-published, renamed, or presented as reserved.
+**Existing-package prerelease verdict: APPROVED.** Kennedy approved publication
+of `codex-plugin-cc@1.2.0-rc.1` under npm dist-tag `next`. The trusted publisher,
+CI, clean-install, provenance, and post-publish smoke gates still fail closed.
 
-No public release, npm reservation, deployment, or external name claim is
-performed by this repository preparation.
+**Scoped cutover verdict: BLOCKED.** Control of the `@kenmege` npm scope and a
+matching scoped trusted publisher have not been authenticated. The scoped
+package must not be presented as reserved or published, and the GitHub repository
+must not be renamed, until every public-cutover gate above has recorded evidence.

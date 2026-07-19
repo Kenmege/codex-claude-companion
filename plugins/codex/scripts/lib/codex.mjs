@@ -1,3 +1,4 @@
+// Modified by Kennedy Umege for Codex-Claude Bridge, 2026.
 /**
  * @typedef {import("./app-server-protocol").AppServerNotification} AppServerNotification
  * @typedef {import("./app-server-protocol").ReviewTarget} ReviewTarget

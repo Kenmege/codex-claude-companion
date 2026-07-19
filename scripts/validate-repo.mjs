@@ -92,7 +92,9 @@ if (
   !bridgeMigration.includes("target repository name is `codex-claude-bridge`") ||
   !bridgeMigration.includes("`@kenmege/codex-claude-bridge` is the only current package candidate") ||
   !bridgeMigration.includes("unscoped\n`codex-claude-bridge` name is already occupied") ||
-  !bridgeMigration.includes("Public npm\nreservation and publication remain approval-gated") ||
+  !bridgeMigration.includes("reservation or publication of the scoped candidate remains gated on verified\nscope control and trusted-publisher evidence") ||
+  !bridgeMigration.includes("Existing-package prerelease verdict: APPROVED") ||
+  !bridgeMigration.includes("Scoped cutover verdict: BLOCKED") ||
   !bridgeMigration.includes("not affiliated with or endorsed by OpenAI or\nAnthropic")
 ) {
   throw new Error("Bridge migration documentation must preserve differentiated identity, compatibility, and the approval-gated scoped-package boundary.");

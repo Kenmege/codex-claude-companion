@@ -486,16 +486,15 @@
         <article class="step">
           <div class="step-no">1</div>
           <div>
-            <h3>Install the current bridge from source</h3>
-            <p>As of 19 July 2026, public npm version <code>1.1.1</code> predates the durable bridge. Use a source checkout containing <code>delegate</code> and <code>bridge-doctor</code>, register it with Codex, then restart Codex CLI once.</p>
+            <h3>Install the public bridge release candidate</h3>
+            <p>The stable <code>latest</code> release remains <code>1.1.1</code>. Install the approved bridge RC from npm dist-tag <code>next</code>; it contains <code>delegate</code> and <code>bridge-doctor</code> without moving stable users automatically.</p>
             <div class="code-card">
               <div class="code-head"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Terminal - one-time setup</span><button class="copy" type="button" aria-label="Copy one-time setup commands" aria-live="polite">Copy</button></div>
-              <pre><code><span class="cmd">cd</span> /absolute/path/to/codex-plugin-cc
-<span class="cmd">npm</span> install -g .
+              <pre><code><span class="cmd">npm</span> install -g codex-plugin-cc@next
 <span class="cmd">codex-claude</span> enable
 <span class="comment"># Restart Codex CLI after enable completes.</span></code></pre>
             </div>
-            <p>Confirm the installed build exposes the new surface with <code>codex-claude --help</code>. The source directory is still named <code>codex-plugin-cc</code> during the staged migration. Do not treat OpenAI's repository of the same name as this bridge, and do not install the proposed scoped package until an approved release publishes it.</p>
+            <p>Confirm the installed build reports <code>1.2.0-rc.1</code> and exposes the new surface with <code>codex-claude --help</code>. The package is still named <code>codex-plugin-cc</code> during the staged migration. Do not treat OpenAI's repository of the same name as this bridge, and do not install the proposed scoped package until a separately verified release publishes it.</p>
           </div>
         </article>
 

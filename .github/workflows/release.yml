@@ -92,6 +92,10 @@ jobs:
         if: ${{ env.NPMJS_PUBLISH_ENABLED == 'true' }}
         run: |
           VERSION="${{ steps.tag-version-gate.outputs.version }}"
+          PUBLISH_TAG="latest"
+          if [[ "$VERSION" == *-* ]]; then
+            PUBLISH_TAG="next"
+          fi
           PACKAGE_EXISTS="false"
           if npm view "codex-plugin-cc@${VERSION}" version > .published-version 2>/dev/null; then
             if [ -s .published-version ]; then
@@ -101,8 +105,9 @@ jobs:
           if [ "$PACKAGE_EXISTS" = "true" ]; then
             echo "Package codex-plugin-cc@${VERSION} already exists; skipping npm publish."
           else
-            npm publish --access public --provenance
+            npm publish --access public --provenance --tag "$PUBLISH_TAG"
           fi
+          printf 'publish_tag=%s\n' "$PUBLISH_TAG" >> "$GITHUB_OUTPUT"
           printf 'package_exists=%s\n' "$PACKAGE_EXISTS" >> "$GITHUB_OUTPUT"
 
       - name: Skip npmjs publish
@@ -123,7 +128,7 @@ jobs:
             RELEASE_FLAGS=(--latest)
           fi
           if [ ! -f "$NOTES_FILE" ]; then
-            echo "First public npm release of codex-plugin-cc v${VERSION}." > "$NOTES_FILE.gen"
+            echo "Public npm release of codex-plugin-cc v${VERSION}." > "$NOTES_FILE.gen"
             NOTES_FILE="$NOTES_FILE.gen"
           fi
           if gh release view "v${VERSION}" --repo "${{ github.repository }}" > /dev/null 2>&1; then

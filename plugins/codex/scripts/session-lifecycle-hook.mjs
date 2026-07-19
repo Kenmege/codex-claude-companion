@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Modified by Kennedy Umege for Codex-Claude Bridge, 2026.
 
 import fs from "node:fs";
 import process from "node:process";

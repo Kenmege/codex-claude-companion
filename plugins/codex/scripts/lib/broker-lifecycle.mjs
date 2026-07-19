@@ -1,3 +1,4 @@
+// Modified by Kennedy Umege for Codex-Claude Bridge, 2026.
 import fs from "node:fs";
 import crypto from "node:crypto";
 import net from "node:net";

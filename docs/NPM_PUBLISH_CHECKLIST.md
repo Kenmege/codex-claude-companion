@@ -1,20 +1,21 @@
 # npmjs Publish Checklist
 
-This checklist is the approval-gated path for making the public install command
+This checklist is the controlled path for making the public install command
 real:
 
 ```bash
 npm install -g codex-plugin-cc
 ```
 
-Do not publish until Kennedy explicitly approves the npmjs publish action.
+Kennedy approved the `1.2.0-rc.1` npmjs prerelease on 2026-07-19. Future stable
+or scoped-package releases require their own recorded release decision.
 
 ## Current Registry Facts
 
-Checked on 2026-07-11:
+Checked on 2026-07-19:
 
 - `npm view codex-plugin-cc --registry=https://registry.npmjs.org` returned
-  `1.1.0` as the current version at check time.
+  `1.1.1` as the current stable version at check time.
 - The repo is configured for npmjs publishing through `publishConfig.registry`
   and `.github/workflows/release.yml`.
 
@@ -73,7 +74,10 @@ broker, Claude worker, or `ccb-*` tmux session remains after the smoke test.
 
 1. Confirm `package.json`, `package-lock.json`, and `.codex-plugin/plugin.json`
    versions match.
-2. Push a semver tag matching the package version exactly:
+2. For a prerelease version such as `1.2.0-rc.1`, confirm the workflow selects
+   npm dist-tag `next`; stable versions select `latest`. This preserves the
+   current stable install while release-candidate smoke tests run.
+3. Push a semver tag matching the package version exactly:
 
    ```bash
    VERSION="$(node -p "require('./package.json').version")"
@@ -81,7 +85,7 @@ broker, Claude worker, or `ccb-*` tmux session remains after the smoke test.
    git push origin "v${VERSION}"
    ```
 
-3. Watch the release workflow:
+4. Watch the release workflow:
 
    ```bash
    gh run list --workflow release.yml --limit 1
@@ -115,6 +119,15 @@ npm install codex-plugin-cc@<version> --registry=https://registry.npmjs.org
 node --check node_modules/codex-plugin-cc/scripts/bridge-broker.mjs
 node --check node_modules/codex-plugin-cc/plugins/codex/scripts/app-server-broker.mjs
 ```
+
+For `1.2.0-rc.1`, also verify the dist-tags explicitly:
+
+```bash
+npm view codex-plugin-cc version --registry=https://registry.npmjs.org
+npm view codex-plugin-cc@next version --registry=https://registry.npmjs.org
+```
+
+The expected values are `1.1.1` and `1.2.0-rc.1`, respectively.
 
 Then verify the global install path:
 

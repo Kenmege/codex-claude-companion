@@ -408,7 +408,9 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.match(workflow, /id: publish-package/);
   assert.match(workflow, /npm view "codex-plugin-cc@\$\{VERSION\}" version/);
   assert.match(workflow, /Package codex-plugin-cc@\$\{VERSION\} already exists; skipping npm publish/);
-  assert.match(workflow, /npm publish --access public --provenance/);
+  assert.match(workflow, /PUBLISH_TAG="latest"/);
+  assert.match(workflow, /if \[\[ "\$VERSION" == \*-\* \]\]; then[\s\S]{0,120}PUBLISH_TAG="next"/);
+  assert.match(workflow, /npm publish --access public --provenance --tag "\$PUBLISH_TAG"/);
   assert.match(workflow, /gh release view "v\$\{VERSION\}"/);
   assert.match(workflow, /gh release edit "v\$\{VERSION\}"/);
   assert.match(workflow, /gh release create "v\$\{VERSION\}"/);
