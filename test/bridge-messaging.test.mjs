@@ -64,8 +64,13 @@ test("Codex enqueue is broker-only, private, redacted, deduplicated, and visibly
   assert.deepEqual(replay, first);
   assert.equal(readBridgeMessages(JOB_ID, options).pending.length, 1);
   const journal = path.join(options.stateRoot, "jobs", JOB_ID, "messages.jsonl");
-  assert.equal(fs.statSync(journal).mode & 0o777, 0o600);
-  assert.doesNotMatch(fs.readFileSync(journal, "utf8"), /sk-abcdefghijklmnop/);
+  const journalFd = fs.openSync(journal, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try {
+    assert.equal(fs.fstatSync(journalFd).mode & 0o777, 0o600);
+    assert.doesNotMatch(fs.readFileSync(journalFd, "utf8"), /sk-abcdefghijklmnop/);
+  } finally {
+    fs.closeSync(journalFd);
+  }
   assert.throws(() => appendCodexMessage(JOB_ID, { ...input, text: "changed" }, broker), /deduplication conflict/i);
 });
 

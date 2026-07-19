@@ -39,6 +39,15 @@
         "replyTo": { "type": "string", "minLength": 1, "maxLength": 256 }
       }
     },
+    "codexMessagePayload": {
+      "type": "object", "additionalProperties": false, "required": ["messageId", "text"],
+      "properties": {
+        "messageId": { "type": "string", "minLength": 1 },
+        "text": { "type": "string", "minLength": 1 },
+        "replyTo": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "contentSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
     "accepted": {
       "type": "object",
       "properties": {
@@ -67,7 +76,7 @@
         "payload": { "type": "object", "additionalProperties": false, "required": ["questionId", "text"], "properties": { "questionId": { "type": "string", "minLength": 1, "maxLength": 256 }, "text": { "type": "string", "minLength": 1, "maxLength": 4000 } } }
       }
     },
-    "codexMessage": { "type": "object", "properties": { "type": { "const": "codex_message" }, "sender": { "const": "codex" }, "payload": { "$ref": "#/$defs/messagePayload" } } },
+    "codexMessage": { "type": "object", "properties": { "type": { "const": "codex_message" }, "sender": { "const": "codex" }, "payload": { "$ref": "#/$defs/codexMessagePayload" } } },
     "claudeMessage": { "type": "object", "properties": { "type": { "const": "claude_message" }, "sender": { "const": "claude" }, "payload": { "$ref": "#/$defs/messagePayload" } } },
     "blocked": {
       "type": "object",

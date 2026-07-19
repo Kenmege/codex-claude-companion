@@ -13,7 +13,13 @@ import {
   questionsFromClaudeLine,
   runClaudeWorker
 } from "../scripts/lib/claude-runner.mjs";
-import { enqueueBridgeInput, readBridgeInputAck } from "../scripts/lib/bridge-input.mjs";
+import {
+  commitBridgeInput,
+  discardStagedBridgeInput,
+  initializeBridgeInput,
+  readBridgeInputAck,
+  stageBridgeInput
+} from "../scripts/lib/bridge-input.mjs";
 
 const WORKER_CAPABILITY = "w".repeat(43);
 const RUNNER_PATH = fileURLToPath(new URL("../scripts/lib/claude-runner.mjs", import.meta.url));
@@ -54,6 +60,29 @@ function privateRuntimeDir(base) {
   const runtimeDir = path.join(base, "job", "runtime");
   fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
   return runtimeDir;
+}
+
+function authorizeAndCommitInput(jobDir, message) {
+  const eventsFile = path.join(jobDir, "events.jsonl");
+  const sequence = fs.existsSync(eventsFile)
+    ? fs.readFileSync(eventsFile, "utf8").split("\n").filter(Boolean).length + 1
+    : 1;
+  const event = {
+    schemaVersion: 1,
+    jobId: message.jobId,
+    sequence,
+    timestamp: new Date().toISOString(),
+    type: "codex_message",
+    sender: "codex",
+    deduplicationKey: `codex-message:${message.messageId}`,
+    payload: {
+      messageId: message.messageId,
+      text: message.content,
+      contentSha256: message.contentSha256
+    }
+  };
+  fs.appendFileSync(eventsFile, `${JSON.stringify(event)}\n`, { mode: 0o600 });
+  return commitBridgeInput(jobDir, message);
 }
 
 test("runner builds exact argv while keeping the prompt out of argv", () => {
@@ -364,12 +393,12 @@ test("runner consumes and unlinks the private current environment instead of usi
 
 test("runner steers two durable messages through one live Claude session and acknowledges replay", async () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccb-runner-steer-"));
-  const jobDir = path.join(base, "job");
-  const runtimeDir = path.join(jobDir, "runtime");
   const workspace = path.join(base, "workspace");
-  fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
   fs.mkdirSync(workspace);
   const value = request(workspace);
+  const jobDir = path.join(base, "jobs", value.jobId);
+  const runtimeDir = path.join(jobDir, "runtime");
+  fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
   value.worker.inlineAgents = null;
   value.worker.pluginDirs = [];
   value.worker.mcpConfigPaths = [];
@@ -404,8 +433,10 @@ lines.on("line", (line) => {
 
   const running = runClaudeWorker(spec);
   while (!fs.existsSync(spec.identityFile)) await new Promise((resolve) => setTimeout(resolve, 10));
-  const first = enqueueBridgeInput(jobDir, value.jobId, "first continuation");
-  const second = enqueueBridgeInput(jobDir, value.jobId, "second continuation");
+  const first = authorizeAndCommitInput(jobDir,
+    stageBridgeInput(jobDir, value.jobId, "first continuation"));
+  const second = authorizeAndCommitInput(jobDir,
+    stageBridgeInput(jobDir, value.jobId, "second continuation"));
   const result = await running;
 
   assert.equal(result.code, 0);
@@ -413,6 +444,248 @@ lines.on("line", (line) => {
   assert.equal(readBridgeInputAck(jobDir, first.messageId)?.claudeSessionId, value.execution.claudeSessionId);
   assert.equal(readBridgeInputAck(jobDir, second.messageId)?.claudeSessionId, value.execution.claudeSessionId);
   assert.equal(JSON.parse(fs.readFileSync(spec.identityFile)).permissionVerification, "verified");
+});
+
+test("runner fails closed and terminates Claude when a replay acknowledgement is corrupt", {
+  skip: process.platform === "win32",
+  timeout: 15_000
+}, async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccb-runner-corrupt-ack-"));
+  const workspace = path.join(base, "workspace");
+  fs.mkdirSync(workspace);
+  const value = request(workspace);
+  const jobDir = path.join(base, "jobs", value.jobId);
+  const runtimeDir = path.join(jobDir, "runtime");
+  fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
+  value.worker.inlineAgents = null;
+  value.worker.pluginDirs = [];
+  value.worker.mcpConfigPaths = [];
+  value.worker.addDirs = [];
+  value.worker.settingSources = [];
+  const requestFile = path.join(runtimeDir, "request.json");
+  const promptFile = path.join(runtimeDir, "prompt.txt");
+  const receivedFile = path.join(base, "continuation-received");
+  const releaseFile = path.join(base, "release-replay");
+  const fakeClaude = path.join(base, "fake-claude.mjs");
+  fs.writeFileSync(requestFile, JSON.stringify(value), { mode: 0o600 });
+  fs.writeFileSync(promptFile, "initial prompt", { mode: 0o600 });
+  fs.writeFileSync(fakeClaude, `#!/usr/bin/env node
+import fs from "node:fs";
+import readline from "node:readline";
+const session = ${JSON.stringify(value.execution.claudeSessionId)};
+const receivedFile = ${JSON.stringify(receivedFile)};
+const releaseFile = ${JSON.stringify(releaseFile)};
+let count = 0;
+process.stdout.write(JSON.stringify({type:"system",subtype:"init",session_id:session,permissionMode:"bypassPermissions"}) + "\\n");
+const lines = readline.createInterface({input:process.stdin});
+lines.on("line", async (line) => {
+  count += 1;
+  if (count === 1) {
+    process.stdout.write(JSON.stringify({...JSON.parse(line),session_id:session}) + "\\n");
+    return;
+  }
+  fs.writeFileSync(receivedFile, "received", {mode:0o600});
+  while (!fs.existsSync(releaseFile)) await new Promise((resolve) => setTimeout(resolve, 10));
+  process.stdout.write(JSON.stringify({...JSON.parse(line),session_id:session}) + "\\n");
+});
+setInterval(() => {}, 1000);
+`, { mode: 0o700 });
+  const spec = {
+    requestFile, promptFile, claudeBinary: fakeClaude, environmentFile: privateEnvironmentFile(runtimeDir),
+    workerCapabilityToken: WORKER_CAPABILITY,
+    identityFile: path.join(runtimeDir, "identity.json"), heartbeatFile: path.join(runtimeDir, "heartbeat.json"),
+    exitFile: path.join(runtimeDir, "exit.json"), stdoutFile: path.join(runtimeDir, "stdout.log"),
+    stderrFile: path.join(runtimeDir, "stderr.log"), heartbeatIntervalMs: 20, inputPollIntervalMs: 5_000,
+    timeoutGraceMs: 100, requirePermissionAttestation: true
+  };
+  const specFile = path.join(runtimeDir, "runner-spec.json");
+  fs.writeFileSync(specFile, JSON.stringify(spec), { mode: 0o600 });
+  const runner = spawn(process.execPath, [RUNNER_PATH, "--spec", specFile], {
+    cwd: workspace,
+    stdio: "ignore"
+  });
+  const runnerExit = new Promise((resolve) => runner.once("close", (code, signal) => resolve({ code, signal })));
+  const identityDeadline = Date.now() + 3_000;
+  let identity;
+  while (Date.now() < identityDeadline) {
+    try {
+      identity = JSON.parse(fs.readFileSync(spec.identityFile, "utf8"));
+      if (Number.isInteger(identity.claudePid) && identity.permissionVerification === "verified") break;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(identity?.permissionVerification, "verified", "fake Claude never completed permission attestation");
+
+  const message = authorizeAndCommitInput(jobDir,
+    stageBridgeInput(jobDir, value.jobId, "continuation with corrupt ack race"));
+  const receivedDeadline = Date.now() + 7_000;
+  while (!fs.existsSync(receivedFile) && Date.now() < receivedDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(fs.existsSync(receivedFile), true, "runner never submitted the continuation");
+  const inputPaths = initializeBridgeInput(jobDir);
+  const corruptAckFile = path.join(inputPaths.ackDir, `${message.messageId}.json`);
+  fs.writeFileSync(corruptAckFile, "{", { mode: 0o600 });
+  fs.writeFileSync(releaseFile, "release", { mode: 0o600 });
+
+  const runnerOutcome = await runnerExit;
+  assert.equal(runnerOutcome.code, 1);
+  assert.equal(fs.existsSync(spec.exitFile), true, "runner did not write a controlled exit receipt");
+  const receipt = JSON.parse(fs.readFileSync(spec.exitFile, "utf8"));
+  assert.match(receipt.error, /invalid durable bridge input acknowledgement/);
+  assert.equal(receipt.treeTerminated, true);
+  assert.throws(() => process.kill(identity.claudePid, 0), /ESRCH/);
+  assert.equal(fs.readFileSync(corruptAckFile, "utf8"), "{", "corrupt authoritative ACK was overwritten");
+  assert.equal(fs.readdirSync(inputPaths.queueDir).some((name) => name.endsWith(`-${message.messageId}.json`)), true,
+    "unacknowledged continuation was removed from the durable queue");
+  assert.deepEqual(
+    fs.readdirSync(inputPaths.ackDir).filter((name) => name.startsWith(`.ack-${message.messageId}.tmp-`)),
+    [],
+    "failed acknowledgement writer left a hidden recovery anchor"
+  );
+});
+
+test("runner records a controlled exit and terminates Claude after a post-spawn identity write failure", {
+  skip: process.platform === "win32",
+  timeout: 10_000
+}, async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccb-runner-identity-fault-"));
+  const workspace = path.join(base, "workspace");
+  fs.mkdirSync(workspace);
+  const value = request(workspace);
+  const runtimeDir = path.join(base, "jobs", value.jobId, "runtime");
+  fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
+  value.worker.inlineAgents = null;
+  value.worker.pluginDirs = [];
+  value.worker.mcpConfigPaths = [];
+  value.worker.addDirs = [];
+  value.worker.settingSources = [];
+  const requestFile = path.join(runtimeDir, "request.json");
+  const promptFile = path.join(runtimeDir, "prompt.txt");
+  const readyFile = path.join(base, "fake-ready");
+  const releaseFile = path.join(base, "release-init");
+  const fakeClaude = path.join(base, "fake-claude.mjs");
+  fs.writeFileSync(requestFile, JSON.stringify(value), { mode: 0o600 });
+  fs.writeFileSync(promptFile, "initial prompt", { mode: 0o600 });
+  fs.writeFileSync(fakeClaude, `#!/usr/bin/env node
+import fs from "node:fs";
+const session = ${JSON.stringify(value.execution.claudeSessionId)};
+const readyFile = ${JSON.stringify(readyFile)};
+const releaseFile = ${JSON.stringify(releaseFile)};
+fs.writeFileSync(readyFile, "ready", {mode:0o600});
+while (!fs.existsSync(releaseFile)) await new Promise((resolve) => setTimeout(resolve, 10));
+process.stdout.write(JSON.stringify({type:"system",subtype:"init",session_id:session,permissionMode:"bypassPermissions"}) + "\\n");
+setInterval(() => {}, 1000);
+`, { mode: 0o700 });
+  const spec = {
+    requestFile, promptFile, claudeBinary: fakeClaude, environmentFile: privateEnvironmentFile(runtimeDir),
+    workerCapabilityToken: WORKER_CAPABILITY,
+    identityFile: path.join(runtimeDir, "identity.json"), heartbeatFile: path.join(runtimeDir, "heartbeat.json"),
+    exitFile: path.join(runtimeDir, "exit.json"), stdoutFile: path.join(runtimeDir, "stdout.log"),
+    stderrFile: path.join(runtimeDir, "stderr.log"), heartbeatIntervalMs: 10_000,
+    timeoutGraceMs: 100, requirePermissionAttestation: true
+  };
+  const specFile = path.join(runtimeDir, "runner-spec.json");
+  fs.writeFileSync(specFile, JSON.stringify(spec), { mode: 0o600 });
+  const runner = spawn(process.execPath, [RUNNER_PATH, "--spec", specFile], {
+    cwd: workspace,
+    stdio: "ignore"
+  });
+  const runnerExit = new Promise((resolve) => runner.once("close", (code, signal) => resolve({ code, signal })));
+  const readyDeadline = Date.now() + 3_000;
+  let identity;
+  while (Date.now() < readyDeadline) {
+    try { identity = JSON.parse(fs.readFileSync(spec.identityFile, "utf8")); } catch {}
+    if (fs.existsSync(readyFile) && Number.isInteger(identity?.claudePid)) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(fs.existsSync(readyFile), true, "fake Claude did not reach its controlled init boundary");
+  assert.equal(Number.isInteger(identity?.claudePid), true, "runner did not publish the Claude pid");
+  fs.mkdirSync(`${spec.identityFile}.${runner.pid}.tmp`);
+  fs.writeFileSync(releaseFile, "release", { mode: 0o600 });
+
+  const runnerOutcome = await runnerExit;
+  assert.equal(runnerOutcome.code, 1);
+  assert.equal(fs.existsSync(spec.exitFile), true, "runner skipped its controlled exit receipt");
+  const receipt = JSON.parse(fs.readFileSync(spec.exitFile, "utf8"));
+  assert.match(receipt.error, /directory|EISDIR/i);
+  assert.equal(receipt.treeTerminated, true);
+  assert.throws(() => process.kill(identity.claudePid, 0), /ESRCH/);
+});
+
+test("runner never submits staged input and survives its concurrent rejection", async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccb-runner-staged-reject-"));
+  const workspace = path.join(base, "workspace");
+  const capturedInput = path.join(base, "captured-input.jsonl");
+  fs.mkdirSync(workspace);
+  const value = request(workspace);
+  const jobDir = path.join(base, "jobs", value.jobId);
+  const runtimeDir = path.join(jobDir, "runtime");
+  fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
+  value.worker.inlineAgents = null;
+  value.worker.pluginDirs = [];
+  value.worker.mcpConfigPaths = [];
+  value.worker.addDirs = [];
+  value.worker.settingSources = [];
+  value.execution.timeoutSeconds = 5;
+  const requestFile = path.join(runtimeDir, "request.json");
+  const promptFile = path.join(runtimeDir, "prompt.txt");
+  const fakeClaude = path.join(base, "fake-claude.mjs");
+  fs.writeFileSync(requestFile, JSON.stringify(value), { mode: 0o600 });
+  fs.writeFileSync(promptFile, "initial prompt", { mode: 0o600 });
+  fs.writeFileSync(fakeClaude, `#!/usr/bin/env node
+import fs from "node:fs";
+import readline from "node:readline";
+const session = ${JSON.stringify(value.execution.claudeSessionId)};
+const capture = ${JSON.stringify(capturedInput)};
+let count = 0;
+process.stdout.write(JSON.stringify({type:"system",subtype:"init",session_id:session,permissionMode:"bypassPermissions"}) + "\\n");
+const lines = readline.createInterface({input:process.stdin});
+lines.on("line", (line) => {
+  fs.appendFileSync(capture, line + "\\n");
+  const envelope = JSON.parse(line);
+  process.stdout.write(JSON.stringify({...envelope,session_id:session}) + "\\n");
+  count += 1;
+  if (count === 2) process.exit(0);
+});
+`, { mode: 0o700 });
+  const spec = {
+    requestFile, promptFile, claudeBinary: fakeClaude, environmentFile: privateEnvironmentFile(runtimeDir),
+    workerCapabilityToken: WORKER_CAPABILITY,
+    identityFile: path.join(runtimeDir, "identity.json"), heartbeatFile: path.join(runtimeDir, "heartbeat.json"),
+    exitFile: path.join(runtimeDir, "exit.json"), stdoutFile: path.join(runtimeDir, "stdout.log"),
+    stderrFile: path.join(runtimeDir, "stderr.log"), heartbeatIntervalMs: 20, inputPollIntervalMs: 20,
+    requirePermissionAttestation: true
+  };
+
+  const rejected = stageBridgeInput(jobDir, value.jobId, "journal-rejected continuation");
+  const running = runClaudeWorker(spec);
+  const readyDeadline = Date.now() + 5_000;
+  let permissionVerified = false;
+  while (Date.now() < readyDeadline) {
+    try {
+      permissionVerified = JSON.parse(fs.readFileSync(spec.identityFile, "utf8")).permissionVerification === "verified";
+    } catch {}
+    if (permissionVerified && fs.existsSync(capturedInput) && fs.existsSync(spec.heartbeatFile)) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(permissionVerified, true, "fake Claude never completed permission attestation");
+  assert.equal(fs.existsSync(capturedInput), true, "fake Claude never captured the initial prompt");
+  assert.equal(fs.existsSync(spec.heartbeatFile), true, "runner never completed an input-pump pass");
+  assert.doesNotMatch(fs.readFileSync(capturedInput, "utf8"), /journal-rejected continuation/);
+  assert.equal(fs.existsSync(spec.exitFile), false, "worker exited while staged input was invisible");
+  assert.equal(discardStagedBridgeInput(jobDir, rejected), true);
+  assert.equal(fs.existsSync(spec.exitFile), false, "worker exited while staged input was discarded");
+
+  const accepted = authorizeAndCommitInput(jobDir,
+    stageBridgeInput(jobDir, value.jobId, "accepted continuation"));
+  const result = await running;
+  const captured = fs.readFileSync(capturedInput, "utf8");
+  assert.equal(result.code, 0);
+  assert.doesNotMatch(captured, /journal-rejected continuation/);
+  assert.match(captured, /accepted continuation/);
+  assert.equal(readBridgeInputAck(jobDir, rejected.messageId), null);
+  assert.equal(readBridgeInputAck(jobDir, accepted.messageId)?.claudeSessionId, value.execution.claudeSessionId);
 });
 
 test("runner closes stream-json input after the authoritative terminal result", async () => {

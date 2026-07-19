@@ -124,7 +124,7 @@ removes the listed job directories. Active and recent jobs are never candidates.
 - `schemas/bridge-delegation-request.schema.json` records immutable origin, worker, execution, policy, and task acceptance data.
 - `schemas/bridge-event.schema.json` defines the ordered, deduplicated event journal.
 - `schemas/bridge-message-operation.schema.json` validates broker-owned message delivery and acknowledgement operations.
-- `schemas/bridge-result.schema.json` defines the worker outcome and its evidence.
+- `schemas/bridge-result.schema.json` defines the worker outcome and its evidence. Its `filesChanged` field contains only workspace-relative paths actually mutated by that worker during the job; reviewed or pre-existing dirty-but-unchanged files are excluded, and read-only jobs report `[]`.
 - `schemas/bridge-receipt.schema.json` defines delivery and verification lifecycle state.
 
 Worker completion, delivery, acknowledgement, and verification are separate states. A Claude process exiting successfully cannot by itself mark a result delivered, acknowledged, or verified.

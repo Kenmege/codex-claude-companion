@@ -48,6 +48,8 @@ export function buildBridgeWorkerPrompt({ request, userPrompt }) {
     `End with ${BRIDGE_RESULT_MARKER} on its own line followed by exactly one JSON object with:`,
     "summary (string), filesChanged (string[]), commandsRun ({command,status,exitCode}[]),",
     "testsRun ({command,status,summary}[]), findings ({title,detail}[]), and blockers ({title,detail}[]).",
+    "filesChanged must contain only workspace-relative paths whose contents, type, or existence this worker actually changed during this job.",
+    "Do not list files merely reviewed, inspected, or already dirty before the job; use [] when this worker made no file changes.",
     "Allowed command statuses: passed, failed, interrupted, unknown. Allowed test statuses: passed, failed, not-run.",
     "The bridge owns job identity, session identity, exit status, artifact paths, and the final completed/failed/cancelled state."
   ].join("\n");
@@ -75,9 +77,12 @@ function parseStream(stdout, expectedSessionId) {
 
 function parseReport(text) {
   if (typeof text !== "string") throw new Error("Claude terminal result is not text");
-  const markerIndex = text.lastIndexOf(BRIDGE_RESULT_MARKER);
-  if (markerIndex < 0) throw new Error(`Claude result is missing ${BRIDGE_RESULT_MARKER} marker`);
-  let encoded = text.slice(markerIndex + BRIDGE_RESULT_MARKER.length).trim();
+  const escapedMarker = BRIDGE_RESULT_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const markerPattern = new RegExp(`^${escapedMarker}[ \\t]*\\r?$`, "gm");
+  let marker = null;
+  for (const match of text.matchAll(markerPattern)) marker = match;
+  if (!marker) throw new Error(`Claude result is missing ${BRIDGE_RESULT_MARKER} marker on its own line`);
+  let encoded = text.slice(marker.index + marker[0].length).trim();
   if (encoded.startsWith("```")) {
     encoded = encoded.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
   }

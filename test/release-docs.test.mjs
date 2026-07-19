@@ -10,7 +10,7 @@ import { bumpVersion, recoverInterruptedTransaction } from "../scripts/bump-vers
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function read(relativePath) {
-  return fs.readFileSync(path.join(root, relativePath), "utf8");
+  return fs.readFileSync(path.join(root, relativePath), "utf8").replaceAll("\r\n", "\n");
 }
 
 function workflowStep(source, name) {
@@ -24,6 +24,17 @@ function workflowStep(source, name) {
     const lineIndent = line.match(/^\s*/)?.[0].length ?? 0;
     if (line.trim().startsWith("- name: ") && lineIndent === indent) break;
     if (line.trim() && lineIndent < indent) break;
+    end += 1;
+  }
+  return lines.slice(start, end).join("\n");
+}
+
+function workflowJob(source, name) {
+  const lines = source.split("\n");
+  const start = lines.findIndex((line) => line === `  ${name}:`);
+  assert.notEqual(start, -1, `missing workflow job: ${name}`);
+  let end = start + 1;
+  while (end < lines.length && !/^  [a-zA-Z0-9_-]+:\s*$/.test(lines[end])) {
     end += 1;
   }
   return lines.slice(start, end).join("\n");
@@ -47,7 +58,7 @@ test("pull request workflow proves the platform-neutral surface on minimum Node 
 });
 
 test("pull request workflow runs the real tmux executor on macOS", () => {
-  const source = read(".github/workflows/pull-request-ci.yml");
+  const source = read(".github/workflows/pull-request-ci.yml").replaceAll("\r\n", "\n");
   const macosJob = source.match(/\n  macos-tmux:\n([\s\S]*?)(?=\n  [a-z][a-z0-9-]*:\n|$)/)?.[0] ?? "";
 
   assert.match(macosJob, /runs-on: macos-latest/);
@@ -110,6 +121,14 @@ test("packed package installs working primary and compatibility command aliases"
       assert.equal(result.status, 0, `${alias}: ${result.stderr || result.stdout}`);
       assert.match(result.stdout, /codex-claude workspace/);
       assert.match(result.stdout, /Compatibility alias:\s+codex-claude-review/);
+
+      const invalid = spawnSync(executable, ["definitely-not-a-command"], {
+        cwd: tempRoot,
+        encoding: "utf8",
+        shell: process.platform === "win32"
+      });
+      assert.equal(invalid.status, 2, `${alias}: ${invalid.stderr || invalid.stdout}`);
+      assert.match(`${invalid.stdout}${invalid.stderr}`, /codex-claude workspace/);
     }
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -378,6 +397,9 @@ test("package.json shape supports public npm publish", () => {
 test("npmjs release configuration is public and trusted-publisher safe", () => {
   const packageJson = JSON.parse(read("package.json"));
   const workflow = read(".github/workflows/release.yml");
+  const validateJob = workflowJob(workflow, "validate");
+  const publishJob = workflowJob(workflow, "publish_npm");
+  const githubReleaseJob = workflowJob(workflow, "github_release");
 
   assert.equal(packageJson.name, "codex-plugin-cc");
   assert.match(
@@ -388,15 +410,13 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
     registry: "https://registry.npmjs.org",
     access: "public"
   });
-  assert.match(workflow, /contents: write/);
-  assert.match(workflow, /id-token: write/);
+  assert.match(workflow, /^permissions:\n  contents: read$/m);
+  assert.match(workflow, /concurrency:[\s\S]{0,240}cancel-in-progress: false/);
   assert.doesNotMatch(workflow, /packages: write/);
-  assert.match(workflow, /registry-url: https:\/\/registry\.npmjs\.org/);
   assert.match(workflow, /package-manager-cache: false/);
   assert.doesNotMatch(workflow, /^\s+cache: npm$/m);
   assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN/);
   assert.doesNotMatch(workflow, /secrets\.NPM_TOKEN/);
-  assert.match(workflow, /npm install --global --ignore-scripts --no-audit --no-fund npm@11\.5\.1/);
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /release_tag:/);
   assert.match(workflow, /name: Verify release workflow ref/);
@@ -405,25 +425,51 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.match(workflow, /fetch-depth: 0/);
   assert.match(workflow, /NPMJS_PUBLISH_ENABLED/);
   assert.doesNotMatch(workflow, /npm pkg set private=false/);
-  assert.match(workflow, /id: publish-package/);
-  assert.match(workflow, /npm view "codex-plugin-cc@\$\{VERSION\}" version/);
-  assert.match(workflow, /Package codex-plugin-cc@\$\{VERSION\} already exists; skipping npm publish/);
+
+  assert.match(validateJob, /permissions:\n      contents: read/);
+  assert.doesNotMatch(validateJob, /id-token: write|contents: write/);
+  assert.match(validateJob, /persist-credentials: false/);
+  assert.match(validateJob, /npm run check/);
+  assert.match(validateJob, /npm run pack:check/);
+  assert.match(validateJob, /npm pack --json --pack-destination/);
+  assert.match(validateJob, /sha256sum "\$PACKAGE_BASENAME" > package\.sha256/);
+  assert.match(validateJob, /package\.integrity/);
+  assert.match(validateJob, /actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/);
+
+  assert.match(publishJob, /permissions:\n      contents: read\n      id-token: write/);
+  assert.doesNotMatch(publishJob, /contents: write|actions\/checkout|npm ci/);
+  assert.match(publishJob, /actions\/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c/);
+  assert.match(publishJob, /node-version: 22/);
+  assert.match(publishJob, /registry-url: https:\/\/registry\.npmjs\.org/);
+  assert.match(publishJob, /npm install --global --ignore-scripts --no-audit --no-fund npm@11\.5\.1/);
+  assert.match(publishJob, /sha256sum --check package\.sha256/);
+  assert.match(publishJob, /Expected exactly one npm package artifact/);
+  assert.match(publishJob, /npm view "\$\{PACKAGE_NAME\}@\$\{VERSION\}" version/);
+  assert.match(publishJob, /verify_registry_integrity/);
+  assert.match(publishJob, /npm view "\$\{PACKAGE_NAME\}@\$\{VERSION\}" dist\.integrity/);
+  assert.match(publishJob, /already exists with identical integrity; skipping npm publish/);
   assert.match(workflow, /PUBLISH_TAG="latest"/);
-  assert.match(workflow, /if \[\[ "\$VERSION" == \*-\* \]\]; then[\s\S]{0,120}PUBLISH_TAG="next"/);
-  assert.match(workflow, /npm publish --access public --provenance --tag "\$PUBLISH_TAG"/);
-  assert.match(workflow, /for ATTEMPT in 1 2 3 4 5 6/);
-  assert.match(workflow, /npm view "codex-plugin-cc@\$\{PUBLISH_TAG\}" version/);
-  assert.match(workflow, /if \[ "\$RESOLVED_VERSION" != "\$VERSION" \]; then/);
-  assert.match(workflow, /npm dist-tag \$\{PUBLISH_TAG\} resolved to \$\{RESOLVED_VERSION:-<missing>\}, expected \$\{VERSION\}/);
-  assert.ok(
-    workflow.indexOf('if [ "$RESOLVED_VERSION" != "$VERSION" ]; then') < workflow.indexOf("- name: Create GitHub Release"),
-    "npm dist-tag postcondition must fail closed before GitHub Release creation"
-  );
-  assert.match(workflow, /gh release view "v\$\{VERSION\}"/);
-  assert.match(workflow, /gh release edit "v\$\{VERSION\}"/);
-  assert.match(workflow, /gh release create "v\$\{VERSION\}"/);
-  assert.match(workflow, /--latest/);
-  assert.match(workflow, /--prerelease/);
+  assert.match(workflow, /SEMVER_WITHOUT_BUILD="\$\{PACKAGE_VERSION%%\+\*\}"/);
+  assert.match(workflow, /if \[\[ "\$SEMVER_WITHOUT_BUILD" == \*-\* \]\]; then[\s\S]{0,120}PUBLISH_TAG="next"/);
+  assert.match(publishJob, /npm publish "\$PACKAGE_FILE" --access public --tag "\$PUBLISH_TAG"/);
+  assert.match(publishJob, /for ATTEMPT in 1 2 3 4 5 6/);
+  assert.match(publishJob, /npm view "\$\{PACKAGE_NAME\}@\$\{PUBLISH_TAG\}" version/);
+  assert.match(publishJob, /if \[ "\$RESOLVED_VERSION" != "\$VERSION" \]; then/);
+  assert.match(publishJob, /npm dist-tag \$\{PUBLISH_TAG\} resolved to \$\{RESOLVED_VERSION:-<missing>\}, expected \$\{VERSION\}/);
+
+  assert.match(githubReleaseJob, /needs: \[validate, publish_npm\]/);
+  assert.match(githubReleaseJob, /needs\.publish_npm\.result == 'success'/);
+  assert.match(githubReleaseJob, /permissions:\n      contents: write/);
+  assert.doesNotMatch(githubReleaseJob, /id-token: write|actions\/checkout|npm ci/);
+  assert.match(githubReleaseJob, /actions\/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c/);
+  assert.match(githubReleaseJob, /sha256sum --check package\.sha256/);
+  assert.match(githubReleaseJob, /GitHub release artifact does not match npm integrity/);
+  assert.match(githubReleaseJob, /SEMVER_WITHOUT_BUILD="\$\{VERSION%%\+\*\}"/);
+  assert.match(githubReleaseJob, /gh release view "v\$\{VERSION\}"/);
+  assert.match(githubReleaseJob, /gh release edit "v\$\{VERSION\}"/);
+  assert.match(githubReleaseJob, /gh release create "v\$\{VERSION\}"/);
+  assert.match(githubReleaseJob, /--latest/);
+  assert.match(githubReleaseJob, /--prerelease/);
   assert.doesNotMatch(workflow, /--access restricted/);
   assert.equal(workflow.indexOf(["npm", "pkg", "github", "com"].join(".")), -1);
 });
@@ -435,8 +481,7 @@ test("release workflow fails closed when tag and package version differ", () => 
 
   assert.match(workflow, /Verify tag matches package version/);
   assert.match(workflow, /id: tag-version-gate/);
-  assert.match(workflow, /node -p "require\('\.\/package\.json'\)\.version" > \.release-package-version/);
-  assert.match(workflow, /read -r PACKAGE_VERSION < \.release-package-version/);
+  assert.match(workflow, /PACKAGE_VERSION="\$\(node -p "require\('\.\/package\.json'\)\.version"\)"/);
   assert.match(workflow, /RELEASE_TAG: \$\{\{ github\.event_name == 'workflow_dispatch'/);
   assert.match(workflow, /Release tag '\$RELEASE_TAG' is not a supported semantic-version tag/);
   assert.ok(tagPatternMatch, "release workflow must expose its exact SemVer tag pattern");
@@ -452,7 +497,7 @@ test("release workflow fails closed when tag and package version differ", () => 
   assert.match(workflow, /Checked-out commit \$\{CHECKED_OUT_COMMIT\} does not match tag \$\{RELEASE_TAG\} commit \$\{TAG_COMMIT\}/);
   assert.match(workflow, /TAG_VERSION="\$\{RELEASE_TAG#v\}"/);
   assert.match(workflow, /Release tag v\$\{TAG_VERSION\} does not match package\.json version \$\{PACKAGE_VERSION\}/);
-  assert.match(workflow, /printf 'version=%s\\n' "\$PACKAGE_VERSION" >> "\$GITHUB_OUTPUT"/);
+  assert.match(workflow, /printf 'version=%s\\n' "\$PACKAGE_VERSION"/);
   assert.match(contributing, /tag and package version differ/);
   assert.match(contributing, /1\.0\.3-rc\.1/);
 });

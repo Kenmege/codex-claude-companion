@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   acquireQueuedLock,
@@ -542,6 +543,7 @@ function appendEventLocked(paths, state, eventInput, options = {}) {
   if (!EVENT_TYPES.has(type)) throw new Error(`Unknown bridge event type ${type}`);
   if (!EVENT_SENDERS.has(sender)) throw new Error(`Unknown bridge event sender ${sender}`);
   assertPlainObject(eventInput.payload ?? {}, "event payload");
+  const payload = redactBridgeValue(eventInput.payload ?? {});
   const journal = readEventFile(paths.events, state.jobId);
   for (const recorded of journal) {
     state.lastEventSequence = Math.max(state.lastEventSequence, recorded.sequence);
@@ -552,7 +554,24 @@ function appendEventLocked(paths, state, eventInput, options = {}) {
   }
   const priorSequence = state.eventDeduplication?.[deduplicationKey];
   if (priorSequence) {
-    return journal.find((event) => event.sequence === priorSequence);
+    const prior = journal.find((event) => event.sequence === priorSequence);
+    if (!prior || prior.type !== type || prior.sender !== sender ||
+        !isDeepStrictEqual(prior.payload, payload)) {
+      throw new Error(`Event deduplication identity conflict for ${deduplicationKey}`);
+    }
+    return prior;
+  }
+  if (type === "codex_message" && payload.replyTo) {
+    const questionExists = journal.some((event) => event.type === "question" &&
+      event.payload?.questionId === payload.replyTo);
+    if (!questionExists) {
+      throw new Error(`No pending Claude question ${payload.replyTo} exists for ${state.jobId}`);
+    }
+    const alreadyAnswered = journal.some((event) => event.type === "codex_message" &&
+      event.payload?.replyTo === payload.replyTo);
+    if (alreadyAnswered) {
+      throw new Error(`Claude question ${payload.replyTo} was already answered for ${state.jobId}`);
+    }
   }
   if (journal.length >= MAX_EVENT_COUNT) {
     throw new Error(`Bridge event journal exceeds ${MAX_EVENT_COUNT}-event quota for ${state.jobId}`);
@@ -565,7 +584,7 @@ function appendEventLocked(paths, state, eventInput, options = {}) {
     type,
     sender,
     deduplicationKey,
-    payload: eventInput.payload ?? {}
+    payload
   });
   assertPersistenceShape(event, "Bridge event");
   validateBridgeEventContract(event);
@@ -757,17 +776,18 @@ export function verifyBridgeCapability(jobId, capabilityToken, options = {}) {
 }
 
 function readEventFile(file, jobId) {
+  assertSafeJobDirectory(path.dirname(file));
+  let fd;
   try {
-    fs.lstatSync(file);
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
   } catch (error) {
     if (error?.code === "ENOENT") return [];
     throw error;
   }
-  assertSafeArtifact(file);
-  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
   let contents;
   try {
     const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw new Error(`Bridge event journal must be a regular file for ${jobId}`);
     if (stat.size > MAX_EVENT_JOURNAL_BYTES) {
       throw new Error(`Bridge event journal exceeds ${MAX_EVENT_JOURNAL_BYTES}-byte quota for ${jobId}`);
     }
@@ -837,9 +857,11 @@ export function appendBridgeCodexMessage(jobId, messageInput, options = {}) {
   const messageId = String(messageInput.messageId ?? "");
   const text = String(messageInput.text ?? "");
   const replyTo = messageInput.replyTo == null ? null : String(messageInput.replyTo);
+  const contentSha256 = String(messageInput.contentSha256 ?? "");
   if (!messageId || messageId.length > 256) throw new Error("Codex message id must contain 1-256 characters");
   if (!text || text.length > 64 * 1024) throw new Error("Codex message text must contain 1-65536 characters");
   if (replyTo !== null && (!replyTo || replyTo.length > 256)) throw new Error("Codex replyTo must contain 1-256 characters");
+  if (!/^[0-9a-f]{64}$/.test(contentSha256)) throw new Error("Codex message contentSha256 must be a lowercase SHA-256 digest");
   const paths = jobPaths(jobId, options);
   const release = acquireQueuedLock(paths.lock);
   try {
@@ -850,7 +872,7 @@ export function appendBridgeCodexMessage(jobId, messageInput, options = {}) {
       type: "codex_message",
       sender: "codex",
       deduplicationKey: `codex-message:${messageId}`,
-      payload: { messageId, text, ...(replyTo ? { replyTo } : {}) }
+      payload: { messageId, text, contentSha256, ...(replyTo ? { replyTo } : {}) }
     }, options);
     writeStateAtomic(paths.state, state);
     return structuredClone(event);
@@ -902,7 +924,7 @@ function validatedDispatchIdentity(jobId, identity, request) {
   if (hasAttestation && identity.requestedPermissionMode !== identity.effectivePermissionMode) {
     throw new Error(`Dispatch permission attestation mismatch for ${jobId}`);
   }
-  if (JSON.stringify(identity.origin) !== JSON.stringify(request.origin)) {
+  if (!isDeepStrictEqual(identity.origin, request.origin)) {
     throw new Error(`Dispatch origin mismatch for ${jobId}`);
   }
   if (typeof identity.recordedAt !== "string" || !Number.isFinite(Date.parse(identity.recordedAt))) {
@@ -928,7 +950,7 @@ export function recordDispatch(jobId, identity, options = {}) {
         readJson(paths.dispatch, "immutable dispatch identity"),
         request
       );
-      if (JSON.stringify(durableIdentity) !== JSON.stringify(persistedIdentity)) {
+      if (!isDeepStrictEqual(durableIdentity, persistedIdentity)) {
         throw new Error(`Dispatch identity is immutable for ${jobId}`);
       }
     } else {
@@ -936,7 +958,7 @@ export function recordDispatch(jobId, identity, options = {}) {
       assertSafeArtifact(paths.dispatch);
     }
     if (state.dispatch !== null && state.dispatch !== undefined) {
-      if (JSON.stringify(state.dispatch) !== JSON.stringify(persistedIdentity)) {
+      if (!isDeepStrictEqual(state.dispatch, persistedIdentity)) {
         throw new Error(`Dispatch identity is immutable for ${jobId}`);
       }
       if (state.status !== "running") {

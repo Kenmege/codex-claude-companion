@@ -552,6 +552,9 @@ test("default durable coordination records a concrete dispatch before reporting 
     panePid: 700,
     workerPid: 701,
     claudeSessionId,
+    requestedPermissionMode: "default",
+    effectivePermissionMode: "default",
+    permissionVerification: "verified",
     origin,
     recordedAt: "2026-07-18T12:00:00.000Z"
   };

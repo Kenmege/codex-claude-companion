@@ -69,20 +69,43 @@ function git(workspace, args) {
 
 function fingerprint(workspace, relative) {
   const file = path.join(workspace, relative);
-  let stat;
   try {
-    stat = fs.lstatSync(file);
+    return crypto.createHash("sha256").update(`symlink:${fs.readlinkSync(file)}`).digest("hex");
   } catch (error) {
     if (error?.code === "ENOENT") {
       return crypto.createHash("sha256").update("missing").digest("hex");
     }
+    if (error?.code !== "EINVAL" && error?.code !== "UNKNOWN") throw error;
+  }
+  let fd;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return crypto.createHash("sha256").update("missing").digest("hex");
+    }
+    if (error?.code === "EISDIR" || (process.platform === "win32" && error?.code === "EPERM")) {
+      const stat = fs.lstatSync(file);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) throw error;
+      return crypto.createHash("sha256").update(`other:${stat.mode}:${stat.size}`).digest("hex");
+    }
     throw error;
   }
-  if (stat.isSymbolicLink()) {
-    return crypto.createHash("sha256").update(`symlink:${fs.readlinkSync(file)}`).digest("hex");
+  try {
+    const before = fs.fstatSync(fd);
+    if (!before.isFile()) {
+      return crypto.createHash("sha256").update(`other:${before.mode}:${before.size}`).digest("hex");
+    }
+    const contents = fs.readFileSync(fd);
+    const after = fs.fstatSync(fd);
+    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size ||
+        before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) {
+      throw new Error(`workspace file changed while fingerprinting: ${relative}`);
+    }
+    return crypto.createHash("sha256").update(contents).digest("hex");
+  } finally {
+    fs.closeSync(fd);
   }
-  if (!stat.isFile()) return crypto.createHash("sha256").update(`other:${stat.mode}:${stat.size}`).digest("hex");
-  return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
 export function captureGitWorkspace(workspace) {

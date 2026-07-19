@@ -497,12 +497,16 @@ test("executor transports current auth in a private artifact without exposing it
         command = args.at(-1);
         const spec = JSON.parse(fs.readFileSync(path.join(jobDir, "runtime", "runner-spec.json"), "utf8"));
         environmentFile = spec.environmentFile;
-        const stat = fs.statSync(environmentFile);
-        assert.equal(stat.mode & 0o077, 0);
-        assert.deepEqual(JSON.parse(fs.readFileSync(environmentFile, "utf8")), {
-          PATH: process.env.PATH,
-          ANTHROPIC_API_KEY: secret
-        });
+        const environmentFd = fs.openSync(environmentFile, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+        try {
+          assert.equal(fs.fstatSync(environmentFd).mode & 0o077, 0);
+          assert.deepEqual(JSON.parse(fs.readFileSync(environmentFd, "utf8")), {
+            PATH: process.env.PATH,
+            ANTHROPIC_API_KEY: secret
+          });
+        } finally {
+          fs.closeSync(environmentFd);
+        }
         fs.unlinkSync(environmentFile);
         fs.writeFileSync(spec.identityFile, JSON.stringify({
           workerPid: 4242,

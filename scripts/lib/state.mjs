@@ -302,11 +302,7 @@ export function acquireQueuedLock(lockFile, options = {}) {
   const owner = `${process.pid}:${nonce}\n`;
   let contenderDir = path.join(queueDir, `choosing-${token}`);
 
-  fs.mkdirSync(queueDir, { recursive: true, mode: 0o700 });
-  const queueStat = fs.lstatSync(queueDir);
-  if (queueStat.isSymbolicLink() || !queueStat.isDirectory()) {
-    throw new Error(`Unsafe job state lock queue ${queueDir}`);
-  }
+  ensurePrivateDirectory(queueDir);
   fs.mkdirSync(contenderDir, { mode: 0o700 });
   fs.writeFileSync(path.join(contenderDir, "owner"), owner, { encoding: "utf8", mode: 0o600, flag: "wx" });
 

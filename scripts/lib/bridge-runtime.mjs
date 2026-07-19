@@ -293,13 +293,22 @@ function cancellationTransport(identity, jobId, jobDir, executorOptions) {
   });
 }
 
-function readPrivateWorkspaceSnapshot(file) {
-  const stat = fs.lstatSync(file);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024 ||
-      (process.platform !== "win32" && (stat.mode & 0o077) !== 0)) {
-    throw new Error("verification baseline is not a bounded private regular file");
+function readBoundedPrivateFile(file, label, maximumBytes = 16 * 1024 * 1024) {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > maximumBytes ||
+        (process.platform !== "win32" && (stat.mode & 0o077) !== 0)) {
+      throw new Error(`${label} is not a bounded private regular file`);
+    }
+    return fs.readFileSync(fd, "utf8");
+  } finally {
+    fs.closeSync(fd);
   }
-  const value = JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function readPrivateWorkspaceSnapshot(file) {
+  const value = JSON.parse(readBoundedPrivateFile(file, "verification baseline"));
   if (!value || !Array.isArray(value.entries)) throw new Error("verification baseline is invalid");
   return value;
 }
@@ -323,10 +332,7 @@ function writePrivateImmutableJson(file, value) {
     } finally { fs.closeSync(fd); }
   } catch (error) {
     if (error?.code !== "EEXIST") throw error;
-    const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink() ||
-        (process.platform !== "win32" && (stat.mode & 0o077) !== 0) ||
-        fs.readFileSync(file, "utf8") !== serialized) {
+    if (readBoundedPrivateFile(file, "immutable verification attempt evidence") !== serialized) {
       throw new Error("immutable verification attempt evidence conflicts with existing artifact");
     }
   }
@@ -334,12 +340,7 @@ function writePrivateImmutableJson(file, value) {
 }
 
 function readPrivateVerificationAttempts(file, jobId) {
-  const stat = fs.lstatSync(file);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024 ||
-      (process.platform !== "win32" && (stat.mode & 0o077) !== 0)) {
-    throw new Error("verification attempt evidence is not a bounded private regular file");
-  }
-  const value = JSON.parse(fs.readFileSync(file, "utf8"));
+  const value = JSON.parse(readBoundedPrivateFile(file, "verification attempt evidence"));
   if (!value || value.schemaVersion !== 1 || value.jobId !== jobId ||
       !["passed", "failed"].includes(value.verification?.state) ||
       !Array.isArray(value.verification.evidence) || value.verification.evidence.length === 0 ||
@@ -601,14 +602,9 @@ export function createBridgeRuntime(options = {}) {
         normalizeResult: options.normalizeResult ?? ((exit, context) => {
           if (typeof jobDir !== "string") throw new Error("worker result normalization requires jobDir");
           const stdoutFile = path.join(jobDir, "runtime", "stdout.jsonl");
-          const stat = fs.lstatSync(stdoutFile);
-          if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024 ||
-              (process.platform !== "win32" && (stat.mode & 0o077) !== 0)) {
-            throw new Error("worker stdout artifact is unsafe or exceeds quota");
-          }
           return normalizeClaudeWorkerResult({
             request: context.request,
-            stdout: fs.readFileSync(stdoutFile, "utf8"),
+            stdout: readBoundedPrivateFile(stdoutFile, "worker stdout artifact"),
             exit,
             artifactPaths: input.artifactPaths ?? options.artifactPaths ?? []
           });

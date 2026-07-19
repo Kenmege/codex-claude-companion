@@ -137,13 +137,19 @@ function commandOwnsClaudeSession(command, claudeBinary, claudeSessionId) {
 }
 
 function readJsonIfPresent(file) {
+  let fd;
   try {
-    const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`unsafe runtime artifact: ${file}`);
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
   } catch (error) {
     if (error?.code === "ENOENT") return null;
     throw error;
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw new Error(`unsafe runtime artifact: ${file}`);
+    return JSON.parse(fs.readFileSync(fd, "utf8"));
+  } finally {
+    fs.closeSync(fd);
   }
 }
 

@@ -70,6 +70,22 @@ test("workspace integrity surfaces dirty overlap and result drift", () => {
   assert.equal(report.passed, false);
 });
 
+test("read-only review scope cannot masquerade as worker file mutations", () => {
+  const before = { entries: [
+    { path: "src/a.mjs", fingerprint: "pre-existing-a", dirty: true },
+    { path: "src/b.mjs", fingerprint: "pre-existing-b", dirty: true }
+  ] };
+  const report = analyzeBridgeWorkspaceIntegrity({
+    before,
+    after: structuredClone(before),
+    reportedFiles: ["src/a.mjs", "src/b.mjs"]
+  });
+
+  assert.deepEqual(report.changedPaths, []);
+  assert.deepEqual(report.reportedButUnchanged, ["src/a.mjs", "src/b.mjs"]);
+  assert.equal(report.passed, false);
+});
+
 test("independent repository and Codex evidence are both required", async () => {
   const deps = dependencies();
   const outcome = await runBridgeVerification(fixture(), deps);

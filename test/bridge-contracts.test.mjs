@@ -106,6 +106,13 @@ test("bridge schemas are strict versioned object contracts", () => {
   }
 });
 
+test("result contract defines filesChanged as worker mutations, not review scope", () => {
+  const description = readSchema("result").properties.filesChanged.description;
+  assert.match(description, /contents, type, or existence this worker actually changed during this job/);
+  assert.match(description, /Excludes files only reviewed or inspected/);
+  assert.match(description, /read-only and no-edit jobs report an empty array/);
+});
+
 test("delegation request schema captures immutable origin, worker, execution, and task contracts", () => {
   const schema = readSchema("request");
   assert.deepEqual(schema.required, ["schemaVersion", "jobId", "origin", "worker", "execution", "task"]);

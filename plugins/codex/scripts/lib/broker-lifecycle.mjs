@@ -14,6 +14,7 @@ export const PID_FILE_ENV = "CODEX_COMPANION_APP_SERVER_PID_FILE";
 export const LOG_FILE_ENV = "CODEX_COMPANION_APP_SERVER_LOG_FILE";
 const BROKER_STATE_FILE = "broker.json";
 const BROKER_IDENTITY_PATTERN = /^[a-f0-9]{64}$/;
+const PROCESS_INSPECTION_TIMEOUT_MS = 2_000;
 
 function defaultBrokerScriptPath() {
   return fileURLToPath(new URL("../app-server-broker.mjs", import.meta.url));
@@ -91,29 +92,43 @@ function processIsAlive(pid) {
 }
 
 export function inspectBrokerProcessIdentity(session, cwd, options = {}) {
-  if (!Number.isInteger(session?.pid) || session.pid < 1) return { alive: false, exact: false };
+  if (!Number.isInteger(session?.pid) || session.pid < 1) {
+    return { alive: false, exact: false, conclusive: true };
+  }
   const alive = (options.processAlive ?? processIsAlive)(session.pid);
-  if (!alive) return { alive: false, exact: false };
+  if (!alive) return { alive: false, exact: false, conclusive: true };
 
   const platform = options.platform ?? process.platform;
   const listProcess = options.listProcess ?? spawnSync;
+  const inspectionOptions = {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: options.processInspectionTimeoutMs ?? PROCESS_INSPECTION_TIMEOUT_MS
+  };
   const result = platform === "win32"
     ? listProcess("powershell.exe", [
         "-NoProfile", "-NonInteractive", "-Command",
         `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${session.pid}').CommandLine`
-      ], { encoding: "utf8", windowsHide: true })
-    : listProcess("ps", ["-ww", "-p", String(session.pid), "-o", "command="], {
-        encoding: "utf8", windowsHide: true
-      });
-  if (result.status !== 0 || typeof result.stdout !== "string") return { alive: true, exact: false };
+      ], inspectionOptions)
+    : listProcess("ps", ["-ww", "-p", String(session.pid), "-o", "command="], inspectionOptions);
+  if (result.status !== 0 || typeof result.stdout !== "string") {
+    return { alive: true, exact: false, conclusive: false };
+  }
   const command = result.stdout.trim();
+  if (!command) return { alive: true, exact: false, conclusive: false };
 
   if (BROKER_IDENTITY_PATTERN.test(session.identityToken ?? "")) {
-    const tokenFlag = `--identity-token ${session.identityToken}`;
-    const tokenEquals = `--identity-token=${session.identityToken}`;
-    return { alive: true, exact: command.includes(tokenFlag) || command.includes(tokenEquals) };
+    const token = session.identityToken.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const tokenArgument = new RegExp(
+      `(?:^|\\s)--identity-token(?:=|\\s+)["']?${token}["']?(?=\\s|$)`
+    );
+    return {
+      alive: true,
+      exact: tokenArgument.test(command),
+      conclusive: true
+    };
   }
-  if (platform === "win32") return { alive: true, exact: false };
+  if (platform === "win32") return { alive: true, exact: false, conclusive: false };
 
   const canonicalCwd = fs.realpathSync.native(path.resolve(cwd));
   const expectedCommand = [
@@ -124,7 +139,7 @@ export function inspectBrokerProcessIdentity(session, cwd, options = {}) {
     "--cwd", canonicalCwd,
     "--pid-file", session.pidFile
   ].join(" ");
-  return { alive: true, exact: command === expectedCommand };
+  return { alive: true, exact: command === expectedCommand, conclusive: true };
 }
 
 function resolveBrokerStateFile(cwd) {
@@ -157,12 +172,12 @@ export function clearBrokerSession(cwd) {
   }
 }
 
-async function isBrokerEndpointReady(endpoint) {
+async function isBrokerEndpointReady(endpoint, options = {}) {
   if (!endpoint) {
     return false;
   }
   try {
-    return await waitForBrokerEndpoint(endpoint, 150);
+    return await (options.waitForBrokerEndpoint ?? waitForBrokerEndpoint)(endpoint, 150);
   } catch {
     return false;
   }
@@ -170,19 +185,27 @@ async function isBrokerEndpointReady(endpoint) {
 
 export async function ensureBrokerSession(cwd, options = {}) {
   const existing = loadBrokerSession(cwd);
-  if (existing && (await isBrokerEndpointReady(existing.endpoint))) {
+  const existingIdentity = existing
+    ? (options.inspectProcess ?? inspectBrokerProcessIdentity)(existing, cwd, options)
+    : null;
+  if (existingIdentity?.alive && existingIdentity.exact && (await isBrokerEndpointReady(existing.endpoint, options))) {
     return existing;
   }
 
+  if (existingIdentity?.alive && !existingIdentity.exact) {
+    throw new Error(
+      `Cannot safely replace live broker PID ${existing.pid}: persisted process identity is not an exact match`
+    );
+  }
+
   if (existing) {
-    const identity = (options.inspectProcess ?? inspectBrokerProcessIdentity)(existing, cwd, options);
     teardownBrokerSession({
       endpoint: existing.endpoint ?? null,
       pidFile: existing.pidFile ?? null,
       logFile: existing.logFile ?? null,
       sessionDir: existing.sessionDir ?? null,
       pid: existing.pid ?? null,
-      killProcess: identity.alive && identity.exact ? (options.killProcess ?? null) : null
+      killProcess: existingIdentity.alive && existingIdentity.exact ? (options.killProcess ?? null) : null
     });
     clearBrokerSession(cwd);
   }

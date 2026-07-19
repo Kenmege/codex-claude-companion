@@ -2,9 +2,9 @@ name: OpenSSF Scorecard
 
 # Continuously scores this repository against the OpenSSF Scorecard checks
 # (branch-protection, code-review, dependency-update-tool, sast, signed-releases,
-# pinned-dependencies, token-permissions, dangerous-workflow, etc.) and publishes
-# the result to the public scorecard.dev viewer so consumers can verify supply-
-# chain hygiene at a glance.
+# pinned-dependencies, token-permissions, dangerous-workflow, etc.) and uploads
+# its SARIF result to GitHub code scanning. Direct scorecard.dev publication is
+# intentionally disabled below until its public badge is restored.
 
 on:
   branch_protection_rule:
@@ -17,9 +17,9 @@ on:
 
 # Workflow-level permissions are intentionally minimal. The OpenSSF
 # Scorecard canonical example uses `read-all`, but the analysis job
-# below already declares the specific scopes it needs (id-token: write
-# for Sigstore, security-events: write for SARIF, contents/actions:
-# read for repo metadata). Workflow-level scope only acts as the
+# below already declares the specific scopes it needs (security-events:
+# write for SARIF and contents/actions read for repo metadata).
+# Workflow-level scope only acts as the
 # default for jobs that don't explicitly declare their own; keeping
 # it at `contents: read` ensures any future job added without explicit
 # permissions inherits a safe, narrow default rather than `read-all`.
@@ -36,8 +36,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      # Required for keyless signing of the published Scorecard result via Sigstore.
-      id-token: write
       # Required to upload SARIF to GitHub code scanning so findings show up
       # under the Security tab alongside CodeQL.
       security-events: write

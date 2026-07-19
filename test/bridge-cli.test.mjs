@@ -365,6 +365,57 @@ test("CLI returns exit 2 and a stable usage envelope for bridge input errors", (
   }
 });
 
+test("send removes its queued input when the authoritative event journal rejects it", async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccb-send-rollback-"));
+  const workspace = path.join(base, "workspace");
+  const stateRoot = path.join(base, "state");
+  fs.mkdirSync(workspace);
+  const jobId = "ccb_00000000000000000000000111";
+  const created = createBridgeJob(bridgeRequestFixture(jobId, workspace), { stateRoot });
+  appendBridgeEvent(jobId, {
+    type: "question",
+    deduplicationKey: "claude-question:empty-answer",
+    payload: { questionId: "empty-answer", text: "Proceed?" }
+  }, { stateRoot, capabilityToken: created.capabilityToken });
+
+  await assert.rejects(
+    () => handleBridgeCommand("send", [
+      jobId,
+      "--question-id", "empty-answer",
+      "--message=",
+      "--state-dir", stateRoot
+    ], { write: () => {}, spawnDetached: () => { throw new Error("broker must not start"); } }),
+    /Codex message text must contain/
+  );
+
+  const queueDir = path.join(resolveBridgeJobDir(jobId, { stateRoot }), "runtime", "input", "queue");
+  const stagingDir = path.join(resolveBridgeJobDir(jobId, { stateRoot }), "runtime", "input", "staging");
+  assert.deepEqual(fs.readdirSync(queueDir), []);
+  assert.deepEqual(fs.readdirSync(stagingDir), []);
+});
+
+test("send validates broker authority before creating any executable or staged input", async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccb-send-authority-"));
+  const workspace = path.join(base, "workspace");
+  const stateRoot = path.join(base, "state");
+  fs.mkdirSync(workspace);
+  const jobId = "ccb_00000000000000000000000112";
+  createBridgeJob(bridgeRequestFixture(jobId, workspace), { stateRoot });
+  fs.writeFileSync(path.join(stateRoot, "broker-authority.key"), `${"b".repeat(43)}\n`, { mode: 0o600 });
+
+  await assert.rejects(
+    () => handleBridgeCommand("send", [
+      jobId,
+      "--message", "must not be delivered",
+      "--state-dir", stateRoot
+    ], { write: () => {}, spawnDetached: () => { throw new Error("broker must not start"); } }),
+    /Broker authority key does not match/
+  );
+
+  const inputRoot = path.join(resolveBridgeJobDir(jobId, { stateRoot }), "runtime", "input");
+  assert.equal(fs.existsSync(inputRoot), false);
+});
+
 test("actual CLI wait returns exit 3 for a delivered terminal worker failure", async () => {
   const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccb-cli-wait-failed-"));

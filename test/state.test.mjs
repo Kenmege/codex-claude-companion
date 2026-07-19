@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 
 import {
+  acquireQueuedLock,
   JOB_SCHEMA_VERSION,
   appendLogLine,
   assertValidJobId,
@@ -314,4 +315,21 @@ test("state helpers lock three concurrent updateJob writers so disjoint patches 
   assert.equal(job.fieldA, "alpha");
   assert.equal(job.fieldB, "beta");
   assert.equal(job.fieldC, "gamma");
+});
+
+test("queued locks re-secure an existing permissive queue directory", {
+  skip: process.platform === "win32"
+}, () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-lock-mode-"));
+  const lockFile = path.join(base, "state.lock");
+  const queueDir = `${lockFile}.queue`;
+  fs.mkdirSync(queueDir, { mode: 0o777 });
+  fs.chmodSync(queueDir, 0o777);
+
+  const release = acquireQueuedLock(lockFile);
+  try {
+    assert.equal(fs.statSync(queueDir).mode & 0o777, 0o700);
+  } finally {
+    release();
+  }
 });

@@ -25,6 +25,7 @@
     "status": { "enum": ["completed", "failed", "cancelled"] },
     "summary": { "type": "string" },
     "filesChanged": {
+      "description": "Workspace-relative paths whose contents, type, or existence this worker actually changed during this job. Excludes files only reviewed or inspected and files already dirty but unchanged by the worker; read-only and no-edit jobs report an empty array.",
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },

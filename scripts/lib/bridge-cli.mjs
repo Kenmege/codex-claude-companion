@@ -10,7 +10,12 @@ import { inspectBridgeRuntimeCompatibility } from "./bridge-runtime.mjs";
 import { buildBridgeRequest } from "./bridge-request.mjs";
 import * as bridgeState from "./bridge-state.mjs";
 import { readReceipt } from "./bridge-messaging.mjs";
-import { enqueueBridgeInput, readBridgeInputAck } from "./bridge-input.mjs";
+import {
+  commitBridgeInput,
+  discardStagedBridgeInput,
+  readBridgeInputAck,
+  stageBridgeInput
+} from "./bridge-input.mjs";
 import { buildBridgeWorkerPrompt } from "./bridge-worker-protocol.mjs";
 import { discoverBrokerProcess } from "./bridge-repair.mjs";
 import { runCommand, spawnDetached } from "./process.mjs";
@@ -108,13 +113,17 @@ function claudeVersion(binary, cwd) {
 }
 
 function readJson(file) {
+  let fd;
   try {
-    const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024) throw new Error(`unsafe bridge artifact: ${file}`);
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 16 * 1024 * 1024) throw new Error(`unsafe bridge artifact: ${file}`);
+    return JSON.parse(fs.readFileSync(fd, "utf8"));
   } catch (error) {
     if (error?.code === "ENOENT") return null;
     throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
 }
 
@@ -479,41 +488,23 @@ async function waitForJob(jobId, bridgeOptions, options, deps = {}) {
 }
 
 function tail(file, bytes = 64 * 1024) {
-  try {
-    const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`unsafe bridge log: ${file}`);
-    const start = Math.max(0, stat.size - bytes);
-    const fd = fs.openSync(file, "r");
-    try {
-      const buffer = Buffer.alloc(stat.size - start);
-      fs.readSync(fd, buffer, 0, buffer.length, start);
-      return redact(buffer.toString("utf8"));
-    } finally { fs.closeSync(fd); }
-  } catch (error) {
-    if (error?.code === "ENOENT") return "";
-    throw error;
-  }
-}
-
-function safeLogStat(file) {
-  try {
-    const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`unsafe bridge log: ${file}`);
-    return stat;
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    throw error;
-  }
+  return readLogRange(file, null, bytes).text;
 }
 
 function readLogRange(file, start, maximumBytes = 64 * 1024) {
-  const stat = safeLogStat(file);
-  if (!stat) return { text: "", offset: 0 };
-  const offset = stat.size < start ? 0 : start;
-  const length = Math.min(maximumBytes, stat.size - offset);
-  if (length <= 0) return { text: "", offset };
-  const fd = fs.openSync(file, "r");
+  let fd;
   try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  } catch (error) {
+    if (error?.code === "ENOENT") return { text: "", offset: 0 };
+    throw error;
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw new Error(`unsafe bridge log: ${file}`);
+    const offset = start === null ? Math.max(0, stat.size - maximumBytes) : stat.size < start ? 0 : start;
+    const length = Math.min(maximumBytes, stat.size - offset);
+    if (length <= 0) return { text: "", offset };
     const buffer = Buffer.alloc(length);
     const bytesRead = fs.readSync(fd, buffer, 0, length, offset);
     return { text: redact(buffer.subarray(0, bytesRead).toString("utf8")), offset: offset + bytesRead };
@@ -527,10 +518,9 @@ export async function followBridgeLog(file, options = {}) {
   const timeoutMs = boundedInteger(options.timeoutMs, 300_000, "follow timeout", { minimum: 1, maximum: 3_600_000 });
   const pollMs = boundedInteger(options.pollMs, 250, "follow poll interval", { minimum: 50, maximum: 5_000 });
   const deadline = now() + timeoutMs;
-  const initial = safeLogStat(file);
-  let offset = initial?.size ?? 0;
-  const initialText = tail(file);
-  if (initialText) write(initialText);
+  const initial = readLogRange(file, null);
+  let offset = initial.offset;
+  if (initial.text) write(initial.text);
 
   while (now() < deadline) {
     const chunk = readLogRange(file, offset);
@@ -742,22 +732,47 @@ export async function handleBridgeCommand(command, argv, deps = {}) {
     }
     const suppliedContent = options.message ?? positionals.slice(1).join(" ").trim();
     const content = questionId ? `[Answer to Claude question ${questionId}]\n${suppliedContent}` : suppliedContent;
-    const message = enqueueBridgeInput(artifacts(jobId, bridgeOptions).jobDir, jobId, content);
     const authority = bridgeState.getBridgeBrokerAuthority(jobId, bridgeOptions);
-    bridgeState.appendBridgeCodexMessage(jobId, {
-      messageId: message.messageId,
-      text: suppliedContent,
-      ...(questionId ? { replyTo: questionId } : {})
-    }, { ...bridgeOptions, brokerAuthority: authority });
+    const jobDir = artifacts(jobId, bridgeOptions).jobDir;
+    const message = stageBridgeInput(jobDir, jobId, content);
+    try {
+      bridgeState.appendBridgeCodexMessage(jobId, {
+        messageId: message.messageId,
+        text: suppliedContent,
+        contentSha256: message.contentSha256,
+        ...(questionId ? { replyTo: questionId } : {})
+      }, { ...bridgeOptions, brokerAuthority: authority });
+    } catch (error) {
+      let authorized = false;
+      try {
+        authorized = bridgeState.readBridgeEvents(jobId, bridgeOptions).some((event) =>
+          event.type === "codex_message" &&
+          event.sender === "codex" &&
+          event.payload.messageId === message.messageId &&
+          event.payload.contentSha256 === message.contentSha256
+        );
+      } catch {
+        authorized = false;
+      }
+      if (!authorized) {
+        discardStagedBridgeInput(jobDir, message);
+        throw error;
+      }
+    }
+    commitBridgeInput(jobDir, message);
     startBroker(jobId, bridgeOptions, deps);
-    let acknowledgement = readBridgeInputAck(artifacts(jobId, bridgeOptions).jobDir, message.messageId);
+    const acknowledgementOptions = {
+      expectedMessage: message,
+      claudeSessionId: state.dispatch?.claudeSessionId
+    };
+    let acknowledgement = readBridgeInputAck(jobDir, message.messageId, acknowledgementOptions);
     if (options.wait) {
       const deadline = Date.now() + integer(options.timeout, 60, "timeout") * 1_000;
       while (!acknowledgement && Date.now() < deadline) {
         const current = bridgeState.getBridgeJob(jobId, bridgeOptions);
         if (TERMINAL.has(current.status)) break;
         await (deps.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))))(50);
-        acknowledgement = readBridgeInputAck(artifacts(jobId, bridgeOptions).jobDir, message.messageId);
+        acknowledgement = readBridgeInputAck(jobDir, message.messageId, acknowledgementOptions);
       }
       if (!acknowledgement) throw new Error(`Bridge input ${message.messageId} was not replay-acknowledged before timeout or worker exit`);
     }

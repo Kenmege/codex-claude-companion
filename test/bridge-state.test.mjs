@@ -197,6 +197,26 @@ test("dispatch identity is an immutable broker-only accepted-to-running mutation
     recordDispatch(jobId, identity, { ...options, brokerAuthority: getBridgeBrokerAuthority(jobId, options) }).dispatch,
     identity
   );
+  const reorderedIdentity = {
+    executor: identity.executor,
+    tmuxSession: identity.tmuxSession,
+    paneId: identity.paneId,
+    panePid: identity.panePid,
+    workerPid: identity.workerPid,
+    claudeSessionId: identity.claudeSessionId,
+    origin: Object.fromEntries(Object.entries(identity.origin).reverse()),
+    recordedAt: identity.recordedAt,
+    requestedPermissionMode: identity.requestedPermissionMode,
+    effectivePermissionMode: identity.effectivePermissionMode,
+    permissionVerification: identity.permissionVerification
+  };
+  assert.deepEqual(
+    recordDispatch(jobId, reorderedIdentity, {
+      ...options,
+      brokerAuthority: getBridgeBrokerAuthority(jobId, options)
+    }).dispatch,
+    identity
+  );
   assert.throws(() => recordDispatch(jobId, { ...identity, workerPid: 9999 }, {
     ...options,
     brokerAuthority: created.brokerAuthority
@@ -264,14 +284,105 @@ test("Codex replies are broker-authorized, durable, and correlated to a Claude q
 
   assert.throws(() => appendBridgeCodexMessage(jobId, {
     messageId: "message-1", text: "Yes", replyTo: "toolu_1"
+  }, { ...options, brokerAuthority: created.brokerAuthority }), /contentSha256/);
+  assert.throws(() => appendBridgeCodexMessage(jobId, {
+    messageId: "message-1", text: "Yes", replyTo: "toolu_1", contentSha256: "not-a-digest"
+  }, { ...options, brokerAuthority: created.brokerAuthority }), /contentSha256/);
+
+  assert.throws(() => appendBridgeCodexMessage(jobId, {
+    messageId: "message-1", text: "Yes", replyTo: "toolu_1", contentSha256: "a".repeat(64)
   }, options), /broker authority/i);
   const event = appendBridgeCodexMessage(jobId, {
-    messageId: "message-1", text: "Yes", replyTo: "toolu_1"
+    messageId: "message-1", text: "Yes", replyTo: "toolu_1", contentSha256: "a".repeat(64)
   }, { ...options, brokerAuthority: created.brokerAuthority });
 
+  assert.deepEqual(appendBridgeCodexMessage(jobId, {
+    messageId: "message-1", text: "Yes", replyTo: "toolu_1", contentSha256: "a".repeat(64)
+  }, { ...options, brokerAuthority: created.brokerAuthority }), event);
+  for (const conflicting of [
+    { messageId: "message-1", text: "No", replyTo: "toolu_1", contentSha256: "a".repeat(64) },
+    { messageId: "message-1", text: "Yes", replyTo: "toolu_1", contentSha256: "b".repeat(64) },
+    { messageId: "message-1", text: "Yes", replyTo: "toolu_2", contentSha256: "a".repeat(64) }
+  ]) {
+    assert.throws(
+      () => appendBridgeCodexMessage(jobId, conflicting, {
+        ...options, brokerAuthority: created.brokerAuthority
+      }),
+      /deduplication identity conflict/i
+    );
+  }
+  assert.throws(() => appendBridgeCodexMessage(jobId, {
+    messageId: "message-2", text: "Again", replyTo: "toolu_1", contentSha256: "c".repeat(64)
+  }, { ...options, brokerAuthority: created.brokerAuthority }), /already answered/i);
+
   assert.equal(event.sender, "codex");
-  assert.deepEqual(event.payload, { messageId: "message-1", text: "Yes", replyTo: "toolu_1" });
+  assert.deepEqual(event.payload, {
+    messageId: "message-1", text: "Yes", replyTo: "toolu_1", contentSha256: "a".repeat(64)
+  });
   assert.equal(readBridgeEvents(jobId, options).at(-1).type, "codex_message");
+});
+
+test("concurrent Codex replies authorize exactly one answer to a pending question", async () => {
+  const { workspace, options } = fixture();
+  const jobId = jid(59);
+  const created = createBridgeJob(request(jobId, workspace), options);
+  appendBridgeEvent(jobId, {
+    type: "question",
+    deduplicationKey: "claude-question:concurrent-question",
+    payload: { questionId: "concurrent-question", text: "Which answer wins?" }
+  }, workerOptions(jobId, options));
+  const script = `
+    import { appendBridgeCodexMessage } from ${JSON.stringify(moduleUrl)};
+    const [jobId, stateRoot, brokerAuthorityJson, messageId, text, digest] = process.argv.slice(1);
+    try {
+      appendBridgeCodexMessage(jobId, {
+        messageId, text, replyTo: "concurrent-question", contentSha256: digest
+      }, { stateRoot, brokerAuthority: JSON.parse(brokerAuthorityJson) });
+      process.stdout.write("authorized");
+    } catch (error) {
+      process.stdout.write("rejected:" + error.message);
+    }
+  `;
+  const results = await Promise.all([
+    runChild(script, [jobId, options.stateRoot, JSON.stringify(created.brokerAuthority), "concurrent-a", "Answer A", "a".repeat(64)]),
+    runChild(script, [jobId, options.stateRoot, JSON.stringify(created.brokerAuthority), "concurrent-b", "Answer B", "b".repeat(64)])
+  ]);
+
+  assert.deepEqual(results.map((result) => result.status), [0, 0]);
+  assert.equal(results.filter((result) => result.stdout === "authorized").length, 1);
+  assert.equal(results.filter((result) => result.stdout.includes("already answered")).length, 1);
+  assert.equal(
+    readBridgeEvents(jobId, options).filter((event) => event.type === "codex_message" &&
+      event.payload.replyTo === "concurrent-question").length,
+    1
+  );
+});
+
+test("schema-v1 journals keep pre-hash Codex messages readable after upgrade", () => {
+  const { workspace, options } = fixture();
+  const jobId = jid(58);
+  createBridgeJob(request(jobId, workspace), options);
+  const accepted = readBridgeEvents(jobId, options)[0];
+  const legacyEvent = {
+    schemaVersion: 1,
+    jobId,
+    sequence: 2,
+    timestamp: accepted.timestamp,
+    type: "codex_message",
+    sender: "codex",
+    deduplicationKey: "codex-message:legacy-without-content-hash",
+    payload: {
+      messageId: "legacy-without-content-hash",
+      text: "message written by the pre-hash schema-v1 bridge"
+    }
+  };
+  fs.appendFileSync(
+    path.join(resolveBridgeJobDir(jobId, options), "events.jsonl"),
+    `${JSON.stringify(legacyEvent)}\n`,
+    { mode: 0o600 }
+  );
+
+  assert.deepEqual(readBridgeEvents(jobId, options).at(-1), legacyEvent);
 });
 
 test("authoritative lifecycle mutations require job-bound broker authority", () => {
@@ -441,8 +552,14 @@ test("events are ordered, redacted, and idempotently deduplicated across replay"
     type: "progress",
     sender: "claude",
     deduplicationKey: "worker:progress:1",
-    payload: { message: "duplicate must not apply" }
+    payload: { message: "using Bearer abcdefghijklmnopqrstuvwxyz" }
   }, workerOptions(jobId, options));
+  assert.throws(() => appendBridgeEvent(jobId, {
+    type: "progress",
+    sender: "claude",
+    deduplicationKey: "worker:progress:1",
+    payload: { message: "conflicting replay must not apply" }
+  }, workerOptions(jobId, options)), /deduplication identity conflict/i);
   assert.equal(replay.sequence, first.sequence);
   assert.deepEqual(readBridgeEvents(jobId, options).map((event) => event.sequence), [1, 2]);
   assert.equal(readBridgeEvents(jobId, options)[1].payload.message.includes("abcdefghijklmnopqrstuvwxyz"), false);

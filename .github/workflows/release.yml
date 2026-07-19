@@ -14,17 +14,23 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.repository }}-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
-  release:
-    name: Validate release tag
+  validate:
+    name: Validate and package release
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write
-      id-token: write
+      contents: read
     env:
-      NPMJS_PUBLISH_ENABLED: ${{ vars.NPMJS_PUBLISH_ENABLED }}
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+    outputs:
+      package_name: ${{ steps.tag-version-gate.outputs.package_name }}
+      publish_tag: ${{ steps.tag-version-gate.outputs.publish_tag }}
+      version: ${{ steps.tag-version-gate.outputs.version }}
 
     steps:
       - name: Verify release workflow ref
@@ -41,16 +47,13 @@ jobs:
         with:
           ref: ${{ github.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
           package-manager-cache: false
-          registry-url: https://registry.npmjs.org
-
-      - name: Install npm with trusted publishing support
-        run: npm install --global --ignore-scripts --no-audit --no-fund npm@11.5.1
 
       - name: Install dependencies
         run: npm ci
@@ -77,39 +80,150 @@ jobs:
             echo "Checked-out commit ${CHECKED_OUT_COMMIT} does not match tag ${RELEASE_TAG} commit ${TAG_COMMIT}." >&2
             exit 1
           fi
-          node -p "require('./package.json').version" > .release-package-version
-          read -r PACKAGE_VERSION < .release-package-version
+          PACKAGE_NAME="$(node -p "require('./package.json').name")"
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
           TAG_VERSION="${RELEASE_TAG#v}"
           if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
             echo "Release tag v${TAG_VERSION} does not match package.json version ${PACKAGE_VERSION}." >&2
             echo "Update package.json, package-lock.json, and .codex-plugin/plugin.json before pushing this tag." >&2
             exit 1
           fi
-          printf 'version=%s\n' "$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Publish to npmjs
-        id: publish-package
-        if: ${{ env.NPMJS_PUBLISH_ENABLED == 'true' }}
-        run: |
-          VERSION="${{ steps.tag-version-gate.outputs.version }}"
           PUBLISH_TAG="latest"
-          if [[ "$VERSION" == *-* ]]; then
+          SEMVER_WITHOUT_BUILD="${PACKAGE_VERSION%%+*}"
+          if [[ "$SEMVER_WITHOUT_BUILD" == *-* ]]; then
             PUBLISH_TAG="next"
           fi
-          PACKAGE_EXISTS="false"
-          if npm view "codex-plugin-cc@${VERSION}" version > .published-version 2>/dev/null; then
-            if [ -s .published-version ]; then
-              PACKAGE_EXISTS="true"
+          {
+            printf 'package_name=%s\n' "$PACKAGE_NAME"
+            printf 'publish_tag=%s\n' "$PUBLISH_TAG"
+            printf 'version=%s\n' "$PACKAGE_VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build immutable release artifact
+        env:
+          PACKAGE_NAME: ${{ steps.tag-version-gate.outputs.package_name }}
+          VERSION: ${{ steps.tag-version-gate.outputs.version }}
+        run: |
+          ARTIFACT_DIR="$RUNNER_TEMP/release-artifact"
+          PACK_JSON="$RUNNER_TEMP/npm-pack.json"
+          mkdir -p "$ARTIFACT_DIR"
+          npm pack --json --pack-destination "$ARTIFACT_DIR" > "$PACK_JSON"
+          readarray -t PACKAGE_METADATA < <(node - "$PACK_JSON" <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const entries = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (!Array.isArray(entries) || entries.length !== 1) throw new Error('npm pack must produce exactly one artifact');
+          const filename = entries[0]?.filename;
+          const integrity = entries[0]?.integrity;
+          if (typeof filename !== 'string' || path.basename(filename) !== filename || !filename.endsWith('.tgz')) {
+            throw new Error('npm pack returned an unsafe artifact filename');
+          }
+          if (typeof integrity !== 'string' || !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(integrity)) {
+            throw new Error('npm pack returned an invalid sha512 integrity value');
+          }
+          process.stdout.write(`${filename}\n${integrity}\n`);
+          NODE
+          )
+          if [ "${#PACKAGE_METADATA[@]}" -ne 2 ]; then
+            echo "npm pack did not return exactly one filename and integrity value." >&2
+            exit 1
+          fi
+          PACKAGE_BASENAME="${PACKAGE_METADATA[0]}"
+          printf '%s\n' "${PACKAGE_METADATA[1]}" > "$ARTIFACT_DIR/package.integrity"
+          test -f "$ARTIFACT_DIR/$PACKAGE_BASENAME"
+          if [ -f "RELEASE_NOTES_v${VERSION}.md" ]; then
+            cp "RELEASE_NOTES_v${VERSION}.md" "$ARTIFACT_DIR/release-notes.md"
+          else
+            printf 'Public npm release of %s v%s.\n' "$PACKAGE_NAME" "$VERSION" > "$ARTIFACT_DIR/release-notes.md"
+          fi
+          (cd "$ARTIFACT_DIR" && sha256sum "$PACKAGE_BASENAME" > package.sha256)
+
+      - name: Upload validated release artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-release-${{ steps.tag-version-gate.outputs.version }}
+          path: ${{ runner.temp }}/release-artifact
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Report disarmed publish lane
+        if: ${{ vars.NPMJS_PUBLISH_ENABLED != 'true' }}
+        run: echo "Validation succeeded, but NPMJS_PUBLISH_ENABLED is not 'true'; no registry or repository write authority was exercised."
+
+  publish_npm:
+    name: Publish exact artifact to npm
+    needs: validate
+    if: ${{ vars.NPMJS_PUBLISH_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
+      PUBLISH_TAG: ${{ needs.validate.outputs.publish_tag }}
+      VERSION: ${{ needs.validate.outputs.version }}
+
+    steps:
+      - name: Download validated release artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-release-${{ needs.validate.outputs.version }}
+          path: release-artifact
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+
+      - name: Install npm with trusted publishing support
+        run: npm install --global --ignore-scripts --no-audit --no-fund npm@11.5.1
+
+      - name: Verify and publish exact artifact
+        run: |
+          (cd release-artifact && sha256sum --check package.sha256)
+          mapfile -t PACKAGES < <(find release-artifact -maxdepth 1 -type f -name '*.tgz' -print)
+          if [ "${#PACKAGES[@]}" -ne 1 ]; then
+            echo "Expected exactly one npm package artifact; found ${#PACKAGES[@]}." >&2
+            exit 1
+          fi
+          PACKAGE_FILE="${PACKAGES[0]}"
+          LOCAL_INTEGRITY="$(cat release-artifact/package.integrity)"
+          verify_registry_integrity() {
+            local registry_integrity=""
+            for ATTEMPT in 1 2 3 4 5 6; do
+              registry_integrity="$(npm view "${PACKAGE_NAME}@${VERSION}" dist.integrity 2>/dev/null || true)"
+              if [ -n "$registry_integrity" ]; then
+                break
+              fi
+              if [ "$ATTEMPT" -lt 6 ]; then sleep 5; fi
+            done
+            if [ "$registry_integrity" != "$LOCAL_INTEGRITY" ]; then
+              echo "::error::npm artifact integrity for ${PACKAGE_NAME}@${VERSION} did not match the validated tarball."
+              exit 1
+            fi
+          }
+          RESOLVED_VERSION="$(npm view "${PACKAGE_NAME}@${VERSION}" version 2>/dev/null || true)"
+          if [ "$RESOLVED_VERSION" = "$VERSION" ]; then
+            verify_registry_integrity
+            echo "Package ${PACKAGE_NAME}@${VERSION} already exists with identical integrity; skipping npm publish."
+          else
+            if ! npm publish "$PACKAGE_FILE" --access public --tag "$PUBLISH_TAG"; then
+              RESOLVED_VERSION="$(npm view "${PACKAGE_NAME}@${VERSION}" version 2>/dev/null || true)"
+              if [ "$RESOLVED_VERSION" != "$VERSION" ]; then
+                echo "npm publish failed and ${PACKAGE_NAME}@${VERSION} is not present in the registry." >&2
+                exit 1
+              fi
+              verify_registry_integrity
+              echo "The exact artifact appeared after a concurrent publish; continuing idempotently."
             fi
           fi
-          if [ "$PACKAGE_EXISTS" = "true" ]; then
-            echo "Package codex-plugin-cc@${VERSION} already exists; skipping npm publish."
-          else
-            npm publish --access public --provenance --tag "$PUBLISH_TAG"
-          fi
+          verify_registry_integrity
           RESOLVED_VERSION=""
           for ATTEMPT in 1 2 3 4 5 6; do
-            RESOLVED_VERSION="$(npm view "codex-plugin-cc@${PUBLISH_TAG}" version 2>/dev/null || true)"
+            RESOLVED_VERSION="$(npm view "${PACKAGE_NAME}@${PUBLISH_TAG}" version 2>/dev/null || true)"
             if [ "$RESOLVED_VERSION" = "$VERSION" ]; then
               break
             fi
@@ -121,40 +235,63 @@ jobs:
             echo "::error::npm dist-tag ${PUBLISH_TAG} resolved to ${RESOLVED_VERSION:-<missing>}, expected ${VERSION}."
             exit 1
           fi
-          printf 'publish_tag=%s\n' "$PUBLISH_TAG" >> "$GITHUB_OUTPUT"
-          printf 'package_exists=%s\n' "$PACKAGE_EXISTS" >> "$GITHUB_OUTPUT"
 
-      - name: Skip npmjs publish
-        if: ${{ env.NPMJS_PUBLISH_ENABLED != 'true' }}
-        run: echo "NPMJS_PUBLISH_ENABLED is not 'true'. To publish to codex-plugin-cc on npmjs, set the GitHub repository variable NPMJS_PUBLISH_ENABLED=true and configure npm trusted publishing for this workflow."
+  github_release:
+    name: Create GitHub release from published artifact
+    needs: [validate, publish_npm]
+    if: ${{ vars.NPMJS_PUBLISH_ENABLED == 'true' && needs.publish_npm.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PACKAGE_NAME: ${{ needs.validate.outputs.package_name }}
+      VERSION: ${{ needs.validate.outputs.version }}
 
-      - name: Create GitHub Release
-        if: ${{ success() && env.NPMJS_PUBLISH_ENABLED == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Download published release artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-release-${{ needs.validate.outputs.version }}
+          path: release-artifact
+
+      - name: Verify artifact and create release
         run: |
-          VERSION="${{ steps.tag-version-gate.outputs.version }}"
-          NOTES_FILE="RELEASE_NOTES_v${VERSION}.md"
+          (cd release-artifact && sha256sum --check package.sha256)
+          mapfile -t PACKAGES < <(find release-artifact -maxdepth 1 -type f -name '*.tgz' -print)
+          if [ "${#PACKAGES[@]}" -ne 1 ]; then
+            echo "Expected exactly one npm package artifact; found ${#PACKAGES[@]}." >&2
+            exit 1
+          fi
+          LOCAL_INTEGRITY="$(cat release-artifact/package.integrity)"
+          REGISTRY_INTEGRITY="$(npm view "${PACKAGE_NAME}@${VERSION}" dist.integrity 2>/dev/null || true)"
+          if [ "$REGISTRY_INTEGRITY" != "$LOCAL_INTEGRITY" ]; then
+            echo "::error::GitHub release artifact does not match npm integrity for ${PACKAGE_NAME}@${VERSION}."
+            exit 1
+          fi
           RELEASE_FLAGS=()
-          if [[ "$VERSION" == *-* ]]; then
+          SEMVER_WITHOUT_BUILD="${VERSION%%+*}"
+          if [[ "$SEMVER_WITHOUT_BUILD" == *-* ]]; then
             RELEASE_FLAGS=(--prerelease)
           else
             RELEASE_FLAGS=(--latest)
-          fi
-          if [ ! -f "$NOTES_FILE" ]; then
-            echo "Public npm release of codex-plugin-cc v${VERSION}." > "$NOTES_FILE.gen"
-            NOTES_FILE="$NOTES_FILE.gen"
           fi
           if gh release view "v${VERSION}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
             gh release edit "v${VERSION}" \
               --repo "${{ github.repository }}" \
               --title "v${VERSION}" \
-              --notes-file "$NOTES_FILE" \
+              --notes-file release-artifact/release-notes.md \
               "${RELEASE_FLAGS[@]}"
           else
             gh release create "v${VERSION}" \
               --repo "${{ github.repository }}" \
               --title "v${VERSION}" \
-              --notes-file "$NOTES_FILE" \
+              --notes-file release-artifact/release-notes.md \
               "${RELEASE_FLAGS[@]}"
           fi
+          gh release upload "v${VERSION}" \
+            "${PACKAGES[0]}" \
+            release-artifact/package.sha256 \
+            --repo "${{ github.repository }}" \
+            --clobber

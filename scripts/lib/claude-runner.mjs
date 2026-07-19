@@ -11,9 +11,10 @@ import {
   bridgeStreamEnvelope,
   initializeBridgeInput,
   listPendingBridgeInput,
+  recoverAuthorizedBridgeInput,
   writeBridgeInputAck
 } from "./bridge-input.mjs";
-import { appendBridgeEvent } from "./bridge-state.mjs";
+import { appendBridgeEvent, readBridgeEvents } from "./bridge-state.mjs";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ENV_ALLOWLIST = new Set([
@@ -186,22 +187,35 @@ function writeJsonAtomic(file, payload) {
   fs.renameSync(temp, file);
 }
 
+function readPrivateRegularFile(file, label, maximumBytes = 16 * 1024 * 1024) {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > maximumBytes ||
+        (process.platform !== "win32" && (stat.mode & 0o077) !== 0)) {
+      throw new Error(`${label} must be a bounded private regular file`);
+    }
+    return fs.readFileSync(fd, "utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function consumePrivateRegularFile(file, label, maximumBytes = 16 * 1024 * 1024) {
+  const claimedFile = `${file}.consuming-${process.pid}-${crypto.randomUUID()}`;
+  fs.renameSync(file, claimedFile);
+  try {
+    return readPrivateRegularFile(claimedFile, label, maximumBytes);
+  } finally {
+    fs.unlinkSync(claimedFile);
+  }
+}
+
 function consumePrivateEnvironment(file) {
   if (typeof file !== "string" || !path.isAbsolute(file)) {
     throw new Error("runner environmentFile must be an absolute path");
   }
-  const stat = fs.lstatSync(file);
-  if (!stat.isFile() || stat.isSymbolicLink() || (process.platform !== "win32" && (stat.mode & 0o077) !== 0)) {
-    throw new Error("runner environmentFile must be a private regular file");
-  }
-  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-  let parsed;
-  try {
-    parsed = JSON.parse(fs.readFileSync(fd, "utf8"));
-  } finally {
-    fs.closeSync(fd);
-    fs.unlinkSync(file);
-  }
+  const parsed = JSON.parse(consumePrivateRegularFile(file, "runner environmentFile"));
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("runner environmentFile must contain a JSON object");
   }
@@ -262,14 +276,9 @@ export async function runClaudeWorker(spec) {
   const request = assertRequest(JSON.parse(fs.readFileSync(spec.requestFile, "utf8")));
   const childEnvironment = consumePrivateEnvironment(spec.environmentFile);
   const promptFile = path.resolve(spec.promptFile);
-  const promptStat = fs.lstatSync(promptFile);
-  if (!promptStat.isFile() || promptStat.isSymbolicLink() || promptStat.size > 16 * 1024 * 1024 ||
-      (process.platform !== "win32" && (promptStat.mode & 0o077) !== 0)) {
-    throw new Error("runner promptFile must be a bounded private regular file");
-  }
-  const prompt = fs.readFileSync(promptFile, "utf8");
+  const prompt = readPrivateRegularFile(promptFile, "runner promptFile");
   const jobDir = path.dirname(path.dirname(path.resolve(spec.requestFile)));
-  initializeBridgeInput(jobDir);
+  const inputPaths = initializeBridgeInput(jobDir);
   const stdoutFd = fs.openSync(spec.stdoutFile, "a", 0o600);
   const stderrFd = fs.openSync(spec.stderrFile, "a", 0o600);
   const startedAt = new Date().toISOString();
@@ -289,8 +298,6 @@ export async function runClaudeWorker(spec) {
     env: childEnvironment,
     stdio: ["pipe", "pipe", stderrFd]
   });
-  child.stdin.on("error", () => {});
-  child.stdout.on("error", () => {});
   let timedOut = false;
   let cancelled = false;
   let terminationError = null;
@@ -303,6 +310,8 @@ export async function runClaudeWorker(spec) {
     if (reason === "cancellation") cancelled = true;
     termination = terminateProcessTree(child, spec.timeoutGraceMs ?? 2_000);
   };
+  child.stdin.on("error", (error) => beginTermination("input", error));
+  child.stdout.on("error", (error) => beginTermination("worker-output", error));
   const hostSignalHandlers = new Map();
   for (const signal of process.platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGHUP", "SIGINT", "SIGTERM"]) {
     const handler = () => beginTermination("host-shutdown", new Error(`runner received ${signal}`));
@@ -320,35 +329,35 @@ export async function runClaudeWorker(spec) {
   let outputBuffer = "";
   let terminalResultObserved = false;
   child.stdout.on("data", (chunk) => {
-    fs.writeSync(stdoutFd, chunk);
-    outputBuffer += chunk.toString("utf8");
-    for (;;) {
-      const newline = outputBuffer.indexOf("\n");
-      if (newline < 0) break;
-      const line = outputBuffer.slice(0, newline);
-      outputBuffer = outputBuffer.slice(newline + 1);
-      const effectivePermissionMode = permissionModeFromInit(line, request);
-      if (effectivePermissionMode !== null && identity.permissionVerification === "pending") {
-        identity.claudePid = child.pid;
-        identity.effectivePermissionMode = effectivePermissionMode;
-        identity.permissionVerification = effectivePermissionMode === identity.requestedPermissionMode ? "verified" : "mismatch";
-        writeJsonAtomic(spec.identityFile, identity);
-        if (identity.permissionVerification === "mismatch") {
-          beginTermination("permission-mismatch", new Error(
-            `effective Claude permission mode ${effectivePermissionMode} does not match requested ${identity.requestedPermissionMode}`
-          ));
+    try {
+      fs.writeSync(stdoutFd, chunk);
+      outputBuffer += chunk.toString("utf8");
+      for (;;) {
+        const newline = outputBuffer.indexOf("\n");
+        if (newline < 0) break;
+        const line = outputBuffer.slice(0, newline);
+        outputBuffer = outputBuffer.slice(newline + 1);
+        const effectivePermissionMode = permissionModeFromInit(line, request);
+        if (effectivePermissionMode !== null && identity.permissionVerification === "pending") {
+          identity.claudePid = child.pid;
+          identity.effectivePermissionMode = effectivePermissionMode;
+          identity.permissionVerification = effectivePermissionMode === identity.requestedPermissionMode ? "verified" : "mismatch";
+          writeJsonAtomic(spec.identityFile, identity);
+          if (identity.permissionVerification === "mismatch") {
+            beginTermination("permission-mismatch", new Error(
+              `effective Claude permission mode ${effectivePermissionMode} does not match requested ${identity.requestedPermissionMode}`
+            ));
+          }
         }
-      }
-      if (!terminalResultObserved && isAuthoritativeResult(line, request)) {
-        // Claude Code keeps stream-json sessions open while stdin remains
-        // writable so callers can send same-session continuation messages.
-        // Once the authoritative session emits its result, the bridge job is
-        // terminal: close stdin so Claude exits and the durable runner receipt
-        // can advance to independent verification and delivery.
-        terminalResultObserved = true;
-        child.stdin.end();
-      }
-      try {
+        if (!terminalResultObserved && isAuthoritativeResult(line, request)) {
+          // Claude Code keeps stream-json sessions open while stdin remains
+          // writable so callers can send same-session continuation messages.
+          // Once the authoritative session emits its result, the bridge job is
+          // terminal: close stdin so Claude exits and the durable runner receipt
+          // can advance to independent verification and delivery.
+          terminalResultObserved = true;
+          child.stdin.end();
+        }
         for (const progress of progressFromClaudeLine(line, request)) {
           appendBridgeEvent(request.jobId, {
             type: "progress",
@@ -371,17 +380,17 @@ export async function runClaudeWorker(spec) {
             capabilityToken: spec.workerCapabilityToken
           });
         }
-      } catch (error) {
-        beginTermination("worker-event", error);
+        const messageId = replayedMessageId(line, request, submitted);
+        if (!messageId) continue;
+        const message = submitted.get(messageId);
+        writeBridgeInputAck(jobDir, message, {
+          claudeSessionId: request.execution.claudeSessionId,
+          observedEventType: "user"
+        });
+        submitted.delete(messageId);
       }
-      const messageId = replayedMessageId(line, request, submitted);
-      if (!messageId) continue;
-      const message = submitted.get(messageId);
-      writeBridgeInputAck(jobDir, message, {
-        claudeSessionId: request.execution.claudeSessionId,
-        observedEventType: "user"
-      });
-      submitted.delete(messageId);
+    } catch (error) {
+      beginTermination("worker-output", error);
     }
   });
 
@@ -390,7 +399,19 @@ export async function runClaudeWorker(spec) {
     if (pumping || child.stdin.destroyed || child.stdin.writableEnded) return;
     pumping = true;
     try {
-      for (const message of listPendingBridgeInput(jobDir, request.jobId)) {
+      const hasInputCandidate = [inputPaths.stagingDir, inputPaths.queueDir].some((directory) =>
+        fs.readdirSync(directory, { withFileTypes: true })
+          .some((entry) => entry.isFile() && !entry.isSymbolicLink() && entry.name.endsWith(".json"))
+      );
+      if (!hasInputCandidate) return;
+      const authorizedEvents = readBridgeEvents(request.jobId, {
+        stateRoot: path.dirname(path.dirname(jobDir))
+      });
+      recoverAuthorizedBridgeInput(jobDir, request.jobId, authorizedEvents);
+      for (const message of listPendingBridgeInput(jobDir, request.jobId, {
+        authorizedEvents,
+        claudeSessionId: request.execution.claudeSessionId
+      })) {
         if (submitted.has(message.messageId)) continue;
         submitted.set(message.messageId, message);
         try {
@@ -411,20 +432,25 @@ export async function runClaudeWorker(spec) {
   inputPump.unref();
   await pump();
   identity.claudePid = child.pid;
-  writeJsonAtomic(spec.identityFile, identity);
-  const heartbeat = setInterval(() => writeJsonAtomic(spec.heartbeatFile, {
-    workerPid: process.pid, claudePid: child.pid, timestamp: new Date().toISOString()
-  }), Math.max(100, spec.heartbeatIntervalMs ?? 1_000));
+  try {
+    writeJsonAtomic(spec.identityFile, identity);
+  } catch (error) {
+    beginTermination("worker-identity", error);
+  }
+  const heartbeat = setInterval(() => {
+    try {
+      writeJsonAtomic(spec.heartbeatFile, {
+        workerPid: process.pid, claudePid: child.pid, timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      beginTermination("worker-heartbeat", error);
+    }
+  }, Math.max(100, spec.heartbeatIntervalMs ?? 1_000));
   heartbeat.unref();
   const cancellation = setInterval(() => {
     if (typeof spec.cancelFile !== "string") return;
     try {
-      const stat = fs.lstatSync(spec.cancelFile);
-      if (!stat.isFile() || stat.isSymbolicLink() || (process.platform !== "win32" && (stat.mode & 0o077) !== 0)) {
-        throw new Error("runner cancelFile must be a private regular file");
-      }
-      JSON.parse(fs.readFileSync(spec.cancelFile, "utf8"));
-      fs.unlinkSync(spec.cancelFile);
+      JSON.parse(consumePrivateRegularFile(spec.cancelFile, "runner cancelFile"));
       beginTermination("cancellation");
     } catch (error) {
       if (error?.code === "ENOENT") return;
@@ -446,7 +472,15 @@ export async function runClaudeWorker(spec) {
   clearInterval(inputPump);
   clearInterval(cancellation);
   clearTimeout(timeout);
-  const treeTerminated = termination ? await termination : true;
+  let treeTerminated = true;
+  if (termination) {
+    try {
+      treeTerminated = await termination;
+    } catch (error) {
+      if (!terminationError) terminationError = String(error?.message ?? error);
+      treeTerminated = false;
+    }
+  }
   for (const fd of [stdoutFd, stderrFd]) fs.closeSync(fd);
   if (spec.requirePermissionAttestation === true && identity.permissionVerification !== "verified" && !terminationError) {
     terminationError = `Claude runtime did not attest requested permission mode ${identity.requestedPermissionMode}`;
