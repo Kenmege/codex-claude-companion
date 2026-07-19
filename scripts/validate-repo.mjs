@@ -90,11 +90,12 @@ const bridgeMigration = fs.readFileSync(path.join(root, "docs/bridge-migration.m
 if (
   !bridgeMigration.includes("Codex-Claude Bridge") ||
   !bridgeMigration.includes("target repository name is `codex-claude-bridge`") ||
-  !bridgeMigration.includes("target package name is `@kenmege/codex-claude-bridge`") ||
-  !bridgeMigration.includes("otherwise the target package name is `codex-claude-bridge`") ||
-  !bridgeMigration.includes("public npm reservation was not performed")
+  !bridgeMigration.includes("`@kenmege/codex-claude-bridge` is the only current package candidate") ||
+  !bridgeMigration.includes("unscoped\n`codex-claude-bridge` name is already occupied") ||
+  !bridgeMigration.includes("Public npm\nreservation and publication remain approval-gated") ||
+  !bridgeMigration.includes("not affiliated with or endorsed by OpenAI or\nAnthropic")
 ) {
-  throw new Error("Bridge migration documentation must preserve product identity and the approval-gated npm reservation boundary.");
+  throw new Error("Bridge migration documentation must preserve differentiated identity, compatibility, and the approval-gated scoped-package boundary.");
 }
 
 if (pluginManifest.skills !== "./skills/") {

@@ -512,7 +512,7 @@ test("migration documentation freezes bridge identity without claiming a public 
   assert.match(docs, /legacy shim/i);
   assert.match(docs, /OpenAI-derived/i);
   assert.match(docs, /target repository name is `codex-claude-bridge`/i);
-  assert.match(docs, /target package name is `@kenmege\/codex-claude-bridge` if.*verification succeeds/i);
-  assert.match(docs, /otherwise.*`codex-claude-bridge`/i);
-  assert.match(docs, /public npm reservation was not performed/i);
+  assert.match(docs, /`@kenmege\/codex-claude-bridge` is the only current package candidate/i);
+  assert.match(docs, /unscoped\s+`codex-claude-bridge` name is already occupied and is not a fallback/i);
+  assert.match(docs, /No public release, npm reservation, deployment, or external name claim/i);
 });

@@ -8,6 +8,16 @@
 > A durable Codex-to-Claude control plane with tmux process ownership, recovery,
 > collaboration, result delivery, and independent verification.
 
+> **Delegate to Claude from Codex, keep control, and get verified work back.**
+
+**Identity:** this is an independent community project by Kennedy Umege. It is
+not affiliated with or endorsed by OpenAI or Anthropic. OpenAI's
+`openai/codex-plugin-cc` is a Claude Code plugin that invokes Codex; this project
+runs in the opposite direction, letting Codex supervise durable Claude workers.
+The inherited npm name `codex-plugin-cc` remains only during the staged,
+compatibility-safe migration to the candidate scoped package
+`@kenmege/codex-claude-bridge`. See [the identity and migration contract](docs/bridge-migration.md).
+
 The bridge keeps the originating Codex task responsive while a Claude worker is
 owned by a named tmux session. A detached local broker records heartbeats,
 leases, ordered collaboration messages, recovery state, delivery acknowledgement,
@@ -27,19 +37,27 @@ structured output fails closed.
 
 ## 60-Second Quickstart
 
-Public npm is the frictionless install lane:
+The current public npm release does not yet contain the durable `delegate` and
+`bridge-doctor` commands. Until an approved bridge release is published, install
+the bridge from a source checkout that contains this README:
 
 ```bash
-npm install -g codex-plugin-cc
+git clone https://github.com/Kenmege/codex-plugin-cc.git
+cd codex-plugin-cc
+npm install -g .
 codex-claude enable
 codex-claude doctor
 codex-claude bridge-doctor --json
 ```
 
-For local development on the plugin itself, install from source:
+The existing npm package remains useful for its released review and workspace
+lanes, but it must not be presented as the durable bridge until those commands
+ship. The future scoped package name is only a candidate; no command in this
+guide assumes it has been published.
+
+For local development after the first installation:
 
 ```bash
-git clone https://github.com/Kenmege/codex-plugin-cc.git
 cd codex-plugin-cc
 npm install -g .
 codex-claude enable
@@ -383,8 +401,10 @@ codex plugin marketplace add <repo-root>
 ```
 
 This loads `.agents/plugins/marketplace.json` as the
-`codex-claude-bridge-local` marketplace. Do not install the private lane from a
-GitHub URL unless intentionally testing the public marketplace path.
+`claude-review-private` marketplace. That established key is retained only for
+local-registration compatibility; the public product name is Codex-Claude
+Bridge. Do not install the private lane from a GitHub URL unless intentionally
+testing the public marketplace path.
 
 ### GitHub Packages historical install
 

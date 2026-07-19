@@ -527,7 +527,8 @@ test("public trust metadata is attribution-safe and precise", () => {
   assert.doesNotMatch(readme, /macOS, Linux, and Windows are supported/);
   assert.equal(readme.includes("scorecard.dev"), false);
   assert.equal(readme.includes("api.scorecard.dev"), false);
-  assert.equal(readme.includes("openai/codex-plugin-cc"), false);
+  assert.match(readme, /openai\/codex-plugin-cc/);
+  assert.match(readme, /not affiliated with or endorsed by OpenAI or Anthropic/i);
   assert.match(readme, /OpenAI's Apache-2\.0 Codex plugin reference/);
   assert.equal(
     security.includes("github.com/Kenmege/codex-plugin-cc/security/advisories/new"),

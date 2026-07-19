@@ -1,7 +1,8 @@
 # Codex-Claude Bridge identity and migration
 
-This document records naming and compatibility direction for the implemented,
-unreleased bridge. It does not rename, reserve, or publish a package.
+This document records naming and compatibility direction for the implemented
+bridge. It prepares, but does not perform, a public repository rename, package
+reservation, or publication.
 
 ## Product identity
 
@@ -11,32 +12,86 @@ Its differentiated role is a durable Codex-to-Claude control plane with tmux
 process ownership, typed delegation contracts, collaboration events, delivery
 acknowledgement, recovery, and independent verification.
 
-The current npm package and plugin identity will stay `codex-plugin-cc` during the implementation and compatibility period. Existing commands will remain available. If a later approved rename occurs, `codex-plugin-cc` will become a thin legacy shim that prints a migration notice and forwards compatible arguments to the new executable. Removal of that shim will require a separately announced major-version policy.
+The current npm package stays `codex-plugin-cc` during the staged compatibility
+period. Existing commands remain available. At the coordinated cutover,
+`codex-plugin-cc` becomes a thin legacy shim that prints one migration notice and
+forwards compatible arguments, environment, standard I/O, exit status, and
+termination signals to the new package. Removal of that shim requires a
+separately announced major-version policy.
 
 The native Codex plugin ID and slash-command namespace remain `claude-review`
 for compatibility, so commands continue to appear as `/claude-review:*` even
-though the display name is Codex-Claude Bridge. The local wrapper marketplace is
-named `codex-claude-bridge-local`, but its plugin source entry also remains
-`claude-review`. Changing either compatibility identifier requires an explicit
-migration with alias and rollback tests; this release does not claim that
-identity migration is complete.
+though the product display name is Codex-Claude Bridge. The checked-in root
+manifest and generated compatibility wrapper both retain the established local
+marketplace key `claude-review-private`, with source entry `claude-review`.
+Those are compatibility identifiers, not the public product name. The separate
+Claude Code reference marketplace is `kenmege-codex-reference`, with source
+entry `codex`; it preserves the upstream Claude-to-Codex component and is not
+the bridge identity. Changing any compatibility identifier requires an explicit
+migration with alias and rollback tests.
 
 ## Name guard and attribution
 
-The bridge name must not imply that Anthropic or OpenAI endorses the project. OpenAI-derived plugin manifests, command conventions, or bundled components will retain their applicable copyright notices and attribution. The bridge will not use the same display name, package name, or logo as an official OpenAI plugin for Claude. Manifest validation will keep product-owned identity separate from upstream attribution.
+The public qualifier is **Codex-Claude Bridge by Kenmege**. It is an independent
+community project and is not affiliated with or endorsed by OpenAI or
+Anthropic. OpenAI's `openai/codex-plugin-cc` is a Claude Code-to-Codex plugin;
+this bridge is a Codex-to-Claude control plane. OpenAI-derived plugin manifests,
+command conventions, and bundled components retain their applicable copyright
+notices and attribution. Product-owned identity remains separate from upstream
+attribution.
 
 ## Target repository and package decision
 
-The target repository name is `codex-claude-bridge`. The target package name is `@kenmege/codex-claude-bridge` if registry, scope-control, and name-confusion verification succeeds at the separately approved migration time; otherwise the target package name is `codex-claude-bridge`. This is a decision rule, not an availability or reservation claim. The public npm reservation was not performed because package reservation or publication is approval-gated. A same-turn registry and trademark/name-confusion check will be required before any approved reservation.
+The target repository name is `codex-claude-bridge`. The scoped name
+`@kenmege/codex-claude-bridge` is the only current package candidate and remains
+conditional on scope-control and final registry verification. An npm `E404` is
+not a reservation or proof of scope ownership. The unscoped
+`codex-claude-bridge` name is already occupied and is not a fallback. Public npm
+reservation and publication remain approval-gated.
 
-The current `codex-plugin-cc` repository and package remain authoritative until that compatibility migration is approved and completed. They are not renamed by this contract.
+The current `codex-plugin-cc` repository and package remain authoritative until
+that compatibility migration is approved and completed. They are not renamed by
+this contract.
 
 ## Migration sequence
 
-1. The current repository adds bridge commands behind the compatible `codex-claude` entry point and `/claude-review:*` namespace; publication remains a separate approval-gated release action.
-2. Durable bridge receipts will record schema and runtime versions so mixed installations fail clearly.
-3. Documentation will mark legacy review/workspace commands as compatibility lanes, not as tmux-owned bridge jobs.
-4. Only after explicit approval may maintainers select and reserve a new package name, publish it, or change public manifests.
-5. Any approved new package will ship the legacy shim before deprecation begins.
+1. Keep `codex-plugin-cc` authoritative while bridge commands stabilize behind
+   `codex-claude` and `/claude-review:*`.
+2. Prepare and test the inert legacy-shim scaffold under
+   `packages/codex-plugin-cc-shim/`; it remains private before cutover.
+3. Release the full bridge on the existing package through a prerelease and a
+   clean-install compatibility gate.
+4. After explicit release approval and verified npm scope control, dual-publish
+   the identical full implementation under the scoped candidate.
+5. At the next synchronized stable release, make the scoped package canonical
+   and replace `codex-plugin-cc` with the tested exact-version shim. Release
+   automation must atomically replace the scaffold's `0.0.0-development`
+   version and dependency with the same approved canonical version.
+6. Preserve both executable names, `claude-review`, `/claude-review:*`, durable
+   state paths, environment variables, and receipt schemas.
+7. Rename the GitHub repository only after npm trusted-publisher, provenance,
+   badges, workflows, and redirect checks pass against the new repository.
+8. Support the shim for at least two stable releases plus an announced window;
+   removal requires a separately announced major-version policy.
 
-No public release, npm reservation, deployment, or external name claim is performed by this Phase-0 work.
+## Public cutover gate
+
+The migration is fail-closed. Every item below must have recorded evidence before
+the first scoped package release or repository rename:
+
+- verified npm authentication and control of the `@kenmege` scope;
+- final registry verification and a trusted-publisher dry run for the scoped name;
+- clean-install parity between the old and new full packages before the old name
+  becomes a shim;
+- successful trusted publisher, provenance, badges, workflows, and repository
+  redirects against the target repository;
+- review of all modified OpenAI-derived files under `plugins/codex/` against the
+  Apache-2.0 attribution requirements, including any required modification notices;
+- explicit public-release approval from Kennedy.
+
+**Release verdict: BLOCKED.** The current local preparation does not satisfy the
+authenticated npm-scope or attribution-review gates and therefore must not be
+published, renamed, or presented as reserved.
+
+No public release, npm reservation, deployment, or external name claim is
+performed by this repository preparation.
