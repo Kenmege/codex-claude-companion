@@ -635,6 +635,9 @@ test("Claude Code workflow is pinned, current, and auth-gated", () => {
   const prompt = read(".github/claude-review-prompt.md");
   const readme = read("README.md");
   const contributing = read("CONTRIBUTING.md");
+  const autoReviewJob = workflowJob(workflow, "auto-review");
+  const autoReviewOauthStep = workflowStep(workflow, "Run Claude auto review with OAuth");
+  const autoReviewApiKeyStep = workflowStep(workflow, "Run Claude auto review with API key");
   const interactiveOauthStep = workflowStep(workflow, "Run Claude interactive response with OAuth");
   const interactiveApiKeyStep = workflowStep(workflow, "Run Claude interactive response with API key");
 
@@ -647,6 +650,12 @@ test("Claude Code workflow is pinned, current, and auth-gated", () => {
   assert.match(workflow, /Run Claude auto review with API key/);
   assert.match(workflow, /Run Claude interactive response with OAuth/);
   assert.match(workflow, /Run Claude interactive response with API key/);
+  assert.match(autoReviewJob, /timeout-minutes: 30/);
+  for (const step of [autoReviewOauthStep, autoReviewApiKeyStep]) {
+    assert.match(step, /--model opus/);
+    assert.match(step, /--max-turns 80/);
+    assert.match(step, /--disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell/);
+  }
   assert.match(workflow, /anthropic_api_key: \$\{\{ secrets\.ANTHROPIC_API_KEY \}\}/);
   assert.match(workflow, /claude_code_oauth_token: \$\{\{ secrets\.CLAUDE_CODE_OAUTH_TOKEN \}\}/);
   assert.match(workflow, /Verify Claude auth secret configured/);
