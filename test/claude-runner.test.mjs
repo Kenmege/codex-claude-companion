@@ -64,9 +64,13 @@ function privateRuntimeDir(base) {
 
 function authorizeAndCommitInput(jobDir, message) {
   const eventsFile = path.join(jobDir, "events.jsonl");
-  const sequence = fs.existsSync(eventsFile)
-    ? fs.readFileSync(eventsFile, "utf8").split("\n").filter(Boolean).length + 1
-    : 1;
+  let existingEvents = "";
+  try {
+    existingEvents = fs.readFileSync(eventsFile, "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  const sequence = existingEvents.split("\n").filter(Boolean).length + 1;
   const event = {
     schemaVersion: 1,
     jobId: message.jobId,
