@@ -107,6 +107,20 @@ jobs:
           else
             npm publish --access public --provenance --tag "$PUBLISH_TAG"
           fi
+          RESOLVED_VERSION=""
+          for ATTEMPT in 1 2 3 4 5 6; do
+            RESOLVED_VERSION="$(npm view "codex-plugin-cc@${PUBLISH_TAG}" version 2>/dev/null || true)"
+            if [ "$RESOLVED_VERSION" = "$VERSION" ]; then
+              break
+            fi
+            if [ "$ATTEMPT" -lt 6 ]; then
+              sleep 5
+            fi
+          done
+          if [ "$RESOLVED_VERSION" != "$VERSION" ]; then
+            echo "::error::npm dist-tag ${PUBLISH_TAG} resolved to ${RESOLVED_VERSION:-<missing>}, expected ${VERSION}."
+            exit 1
+          fi
           printf 'publish_tag=%s\n' "$PUBLISH_TAG" >> "$GITHUB_OUTPUT"
           printf 'package_exists=%s\n' "$PACKAGE_EXISTS" >> "$GITHUB_OUTPUT"
 

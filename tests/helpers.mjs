@@ -29,7 +29,11 @@ export function cleanupLeakedBrokers(options = {}) {
   const receipt = { cleaned: 0, skippedIdentityMismatch: 0, terminatedPids: [] };
 
   for (const { cwd, pluginDataDir } of observedRunContexts.values()) {
-    if (!isRegisteredTempPath(cwd) || (pluginDataDir !== undefined && !isRegisteredTempPath(pluginDataDir))) {
+    // The workspace is the ownership boundary. CLAUDE_PLUGIN_DATA may point at
+    // an ambient directory outside the test's temp roots, but broker.json is
+    // still namespaced to this exact registered workspace and process identity.
+    // Skipping that state root would orphan the test's detached broker.
+    if (!isRegisteredTempPath(cwd)) {
       continue;
     }
     withPluginDataDir(pluginDataDir, () => {
@@ -148,9 +152,13 @@ export function writeExecutable(filePath, source) {
 
 export function run(command, args, options = {}) {
   if (options.cwd) {
-    const pluginDataDir = options.env && Object.hasOwn(options.env, "CLAUDE_PLUGIN_DATA")
-      ? options.env.CLAUDE_PLUGIN_DATA
-      : process.env.CLAUDE_PLUGIN_DATA;
+    // Record the environment the child actually receives. An explicit env
+    // object does not inherit omitted keys from the parent process.
+    const pluginDataDir = options.env === undefined
+      ? process.env.CLAUDE_PLUGIN_DATA
+      : options.env && Object.hasOwn(options.env, "CLAUDE_PLUGIN_DATA")
+        ? options.env.CLAUDE_PLUGIN_DATA
+        : undefined;
     observedRunContexts.set(`${options.cwd}\0${pluginDataDir ?? ""}`, {
       cwd: options.cwd,
       pluginDataDir

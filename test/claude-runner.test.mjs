@@ -50,6 +50,12 @@ function privateEnvironmentFile(base, values = { PATH: process.env.PATH ?? "" })
   return file;
 }
 
+function privateRuntimeDir(base) {
+  const runtimeDir = path.join(base, "job", "runtime");
+  fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
+  return runtimeDir;
+}
+
 test("runner builds exact argv while keeping the prompt out of argv", () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "ccb-runner-"));
   const value = request(workspace);
@@ -122,7 +128,7 @@ test("runner streams a private prompt on stdin and normalizes logs, heartbeat, a
   value.worker.mcpConfigPaths = [];
   value.worker.addDirs = [];
   value.worker.settingSources = [];
-  const requestFile = path.join(base, "request.json");
+  const requestFile = path.join(privateRuntimeDir(base), "request.json");
   const promptFile = path.join(base, "prompt.txt");
   const capturedPrompt = path.join(base, "captured-prompt.txt");
   const fakeClaude = path.join(base, "fake-claude");
@@ -164,7 +170,7 @@ test("runner timeout terminates the complete Claude process tree before returnin
   value.worker.addDirs = [];
   value.worker.settingSources = [];
   value.execution.timeoutSeconds = 1;
-  const requestFile = path.join(base, "request.json");
+  const requestFile = path.join(privateRuntimeDir(base), "request.json");
   const promptFile = path.join(base, "prompt.txt");
   const descendantPidFile = path.join(base, "descendant.pid");
   const fakeClaude = path.join(base, "fake-claude");
@@ -204,7 +210,7 @@ test("runner cancellation terminates and verifies its complete detached Claude p
   value.worker.mcpConfigPaths = [];
   value.worker.addDirs = [];
   value.worker.settingSources = [];
-  const requestFile = path.join(base, "request.json");
+  const requestFile = path.join(privateRuntimeDir(base), "request.json");
   const promptFile = path.join(base, "prompt.txt");
   const cancelFile = path.join(base, "cancel.json");
   const descendantPidFile = path.join(base, "descendant.pid");
@@ -247,7 +253,7 @@ test("runner forwards host shutdown signals and does not orphan its detached Cla
   value.worker.mcpConfigPaths = [];
   value.worker.addDirs = [];
   value.worker.settingSources = [];
-  const requestFile = path.join(base, "request.json");
+  const requestFile = path.join(privateRuntimeDir(base), "request.json");
   const promptFile = path.join(base, "prompt.txt");
   const fakeClaude = path.join(base, "fake-claude");
   fs.writeFileSync(requestFile, JSON.stringify(value), { mode: 0o600 });
@@ -323,7 +329,7 @@ test("runner consumes and unlinks the private current environment instead of usi
   value.worker.mcpConfigPaths = [];
   value.worker.addDirs = [];
   value.worker.settingSources = [];
-  const requestFile = path.join(base, "request.json");
+  const requestFile = path.join(privateRuntimeDir(base), "request.json");
   const promptFile = path.join(base, "prompt.txt");
   const environmentFile = path.join(base, "environment.json");
   const capturedEnvironment = path.join(base, "captured-environment.txt");

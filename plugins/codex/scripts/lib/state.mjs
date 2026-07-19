@@ -1,3 +1,4 @@
+// Modified by Kennedy Umege for Codex-Claude Bridge, 2026.
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";

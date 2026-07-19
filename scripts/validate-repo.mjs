@@ -86,7 +86,8 @@ JSON.parse(fs.readFileSync(path.join(root, "schemas/bridge-message-operation.sch
 JSON.parse(fs.readFileSync(path.join(root, "schemas/bridge-result.schema.json"), "utf8"));
 JSON.parse(fs.readFileSync(path.join(root, "schemas/bridge-receipt.schema.json"), "utf8"));
 
-const bridgeMigration = fs.readFileSync(path.join(root, "docs/bridge-migration.md"), "utf8");
+const bridgeMigration = fs.readFileSync(path.join(root, "docs/bridge-migration.md"), "utf8")
+  .replace(/\r\n/g, "\n");
 if (
   !bridgeMigration.includes("Codex-Claude Bridge") ||
   !bridgeMigration.includes("target repository name is `codex-claude-bridge`") ||
@@ -205,8 +206,12 @@ for (const file of [
   "scripts/bridge-broker.mjs",
   "scripts/bin/git-safe.mjs",
   "plugins/codex/scripts/app-server-broker.mjs",
-  ...fs.readdirSync(path.join(root, "scripts", "lib")).map((name) => path.join("scripts", "lib", name)),
-  ...fs.readdirSync(path.join(root, "plugins", "codex", "scripts", "lib")).map((name) =>
+  ...fs.readdirSync(path.join(root, "scripts", "lib"))
+    .filter((name) => name.endsWith(".mjs"))
+    .map((name) => path.join("scripts", "lib", name)),
+  ...fs.readdirSync(path.join(root, "plugins", "codex", "scripts", "lib"))
+    .filter((name) => name.endsWith(".mjs"))
+    .map((name) =>
     path.join("plugins", "codex", "scripts", "lib", name)
   )
 ]) {

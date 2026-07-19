@@ -92,6 +92,7 @@ test("modified OpenAI-derived files carry Apache-2.0 change notices", () => {
     "plugins/codex/scripts/lib/app-server.mjs",
     "plugins/codex/scripts/lib/broker-lifecycle.mjs",
     "plugins/codex/scripts/lib/codex.mjs",
+    "plugins/codex/scripts/lib/state.mjs",
     "plugins/codex/scripts/session-lifecycle-hook.mjs",
     "tests/helpers.mjs",
     "tests/runtime.test.mjs"

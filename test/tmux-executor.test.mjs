@@ -554,7 +554,7 @@ test("executor preserves pre-identity bootstrap stderr after rejecting the launc
       if (args[0] === "has-session") return { status: 1, stdout: "", stderr: "" };
       if (args[0] === "new-session") {
         launchedCommand = args.at(-1);
-        spawnSync("/bin/zsh", ["-c", launchedCommand], { cwd: workspace, encoding: "utf8" });
+        spawnSync("/bin/sh", ["-c", launchedCommand], { cwd: workspace, encoding: "utf8" });
         return { status: 0, stdout: "", stderr: "" };
       }
       if (args[0] === "kill-session") return { status: 0, stdout: "", stderr: "" };

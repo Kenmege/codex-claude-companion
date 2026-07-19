@@ -1,6 +1,7 @@
 // Modified by Kennedy Umege for Codex-Claude Bridge, 2026.
 import fs from "node:fs";
 import path from "node:path";
+import process from "node:process";
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -27,6 +28,10 @@ const PLUGIN_ROOT = path.join(ROOT, "plugins", "codex");
 const SCRIPT = path.join(PLUGIN_ROOT, "scripts", "codex-companion.mjs");
 const STOP_HOOK = path.join(PLUGIN_ROOT, "scripts", "stop-review-gate-hook.mjs");
 const SESSION_HOOK = path.join(PLUGIN_ROOT, "scripts", "session-lifecycle-hook.mjs");
+const hadPluginDataDir = Object.hasOwn(process.env, "CLAUDE_PLUGIN_DATA");
+const previousPluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
+const runtimePluginDataDir = makeTempDir("codex-plugin-runtime-data-");
+process.env.CLAUDE_PLUGIN_DATA = runtimePluginDataDir;
 
 // Several tests below exercise the real CLI against fake Codex fixtures, which
 // lazily spawns a detached app-server-broker per temp-dir repo. Individual
@@ -34,9 +39,14 @@ const SESSION_HOOK = path.join(PLUGIN_ROOT, "scripts", "session-lifecycle-hook.m
 // broker this file leaked once, after all tests finish, so none survive the
 // test run regardless of which tests happened to trigger a spawn.
 after(async () => {
-  const cleanup = cleanupLeakedBrokers();
-  assertBrokerCleanupComplete(cleanup);
-  await waitForTerminatedProcessTrees(cleanup.terminatedPids);
+  try {
+    const cleanup = cleanupLeakedBrokers();
+    assertBrokerCleanupComplete(cleanup);
+    await waitForTerminatedProcessTrees(cleanup.terminatedPids);
+  } finally {
+    if (hadPluginDataDir) process.env.CLAUDE_PLUGIN_DATA = previousPluginDataDir;
+    else delete process.env.CLAUDE_PLUGIN_DATA;
+  }
 });
 
 async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 50 } = {}) {

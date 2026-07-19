@@ -24,7 +24,8 @@ test("test teardown rejects any live broker whose identity could not be verified
 function withPluginDataDir(pluginDataDir, callback) {
   const previousValue = process.env.CLAUDE_PLUGIN_DATA;
   try {
-    process.env.CLAUDE_PLUGIN_DATA = pluginDataDir;
+    if (pluginDataDir === undefined) delete process.env.CLAUDE_PLUGIN_DATA;
+    else process.env.CLAUDE_PLUGIN_DATA = pluginDataDir;
     return callback();
   } finally {
     if (previousValue === undefined) delete process.env.CLAUDE_PLUGIN_DATA;
@@ -68,6 +69,61 @@ test("test broker cleanup reaps only an exact process identity from an observed 
   assert.equal(receipt.skippedIdentityMismatch, 0);
   assert.equal(fs.existsSync(sessionDir), false);
   assert.equal(withPluginDataDir(pluginDataDir, () => loadBrokerSession(cwd)), null);
+});
+
+test("test broker cleanup owns registered workspaces even with an external plugin data root", () => {
+  const cwd = makeTempDir();
+  const pluginDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "external-plugin-data-"));
+  const sessionDir = makeTempDir("cxc-helper-external-data-");
+  const session = brokerFixture(sessionDir, 424243);
+  run(process.execPath, ["-e", "process.exit(0)"], {
+    cwd,
+    env: { ...process.env, CLAUDE_PLUGIN_DATA: pluginDataDir }
+  });
+  withPluginDataDir(pluginDataDir, () => saveBrokerSession(cwd, session));
+
+  try {
+    const killed = [];
+    const receipt = cleanupLeakedBrokers({
+      inspectProcess: () => ({ alive: true, exact: true }),
+      killProcess: (pid) => { killed.push(pid); }
+    });
+
+    assert.deepEqual(killed, [session.pid]);
+    assert.equal(receipt.cleaned, 1);
+    assert.equal(receipt.skippedIdentityMismatch, 0);
+    assert.equal(withPluginDataDir(pluginDataDir, () => loadBrokerSession(cwd)), null);
+  } finally {
+    fs.rmSync(pluginDataDir, { recursive: true, force: true });
+  }
+});
+
+test("run records an explicit child environment without inheriting omitted plugin data", () => {
+  const cwd = makeTempDir();
+  const ambientPluginData = fs.mkdtempSync(path.join(os.tmpdir(), "ambient-plugin-data-"));
+  const sessionDir = makeTempDir("cxc-helper-explicit-env-");
+  const session = brokerFixture(sessionDir, 424244);
+
+  try {
+    withPluginDataDir(ambientPluginData, () => {
+      const childEnv = { ...process.env };
+      delete childEnv.CLAUDE_PLUGIN_DATA;
+      run(process.execPath, ["-e", "process.exit(0)"], { cwd, env: childEnv });
+      withPluginDataDir(undefined, () => saveBrokerSession(cwd, session));
+    });
+
+    const killed = [];
+    const receipt = cleanupLeakedBrokers({
+      inspectProcess: () => ({ alive: true, exact: true }),
+      killProcess: (pid) => { killed.push(pid); }
+    });
+
+    assert.deepEqual(killed, [session.pid]);
+    assert.equal(receipt.cleaned, 1);
+    assert.equal(withPluginDataDir(undefined, () => loadBrokerSession(cwd)), null);
+  } finally {
+    fs.rmSync(ambientPluginData, { recursive: true, force: true });
+  }
 });
 
 test("test broker cleanup leaves unrelated live identities and unobserved state untouched", () => {

@@ -411,6 +411,14 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.match(workflow, /PUBLISH_TAG="latest"/);
   assert.match(workflow, /if \[\[ "\$VERSION" == \*-\* \]\]; then[\s\S]{0,120}PUBLISH_TAG="next"/);
   assert.match(workflow, /npm publish --access public --provenance --tag "\$PUBLISH_TAG"/);
+  assert.match(workflow, /for ATTEMPT in 1 2 3 4 5 6/);
+  assert.match(workflow, /npm view "codex-plugin-cc@\$\{PUBLISH_TAG\}" version/);
+  assert.match(workflow, /if \[ "\$RESOLVED_VERSION" != "\$VERSION" \]; then/);
+  assert.match(workflow, /npm dist-tag \$\{PUBLISH_TAG\} resolved to \$\{RESOLVED_VERSION:-<missing>\}, expected \$\{VERSION\}/);
+  assert.ok(
+    workflow.indexOf('if [ "$RESOLVED_VERSION" != "$VERSION" ]; then') < workflow.indexOf("- name: Create GitHub Release"),
+    "npm dist-tag postcondition must fail closed before GitHub Release creation"
+  );
   assert.match(workflow, /gh release view "v\$\{VERSION\}"/);
   assert.match(workflow, /gh release edit "v\$\{VERSION\}"/);
   assert.match(workflow, /gh release create "v\$\{VERSION\}"/);
