@@ -19,12 +19,12 @@ import {
 import { buildBridgeWorkerPrompt } from "./bridge-worker-protocol.mjs";
 import { discoverBrokerProcess } from "./bridge-repair.mjs";
 import { runCommand, spawnDetached } from "./process.mjs";
+import { redact } from "./redact.mjs";
 import { acquireQueuedLock } from "./state.mjs";
 
 const BROKER_SCRIPT = fileURLToPath(new URL("../bridge-broker.mjs", import.meta.url));
 const JOB_PATTERN = /^ccb_[0-9A-HJKMNP-TV-Z]{26}$/;
 const TERMINAL = new Set(["completed", "failed", "cancelled"]);
-const REDACTION = /\b(?:sk-(?:ant|proj)-[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9._~+/-]+=*)\b/gi;
 const AUTO_RECOVERY_GUARD = "CODEX_CLAUDE_BRIDGE_AUTO_RECOVERY";
 const AUTO_RECOVERY_SCAN_LIMIT = 64;
 const AUTO_RECOVERY_START_LIMIT = 8;
@@ -125,11 +125,6 @@ function readJson(file) {
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
   }
-}
-
-function redact(value) {
-  return String(value ?? "").replace(REDACTION, "[REDACTED]")
-    .replace(/\b(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]");
 }
 
 function diagnosticMessage(error) {

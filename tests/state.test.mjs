@@ -1,11 +1,24 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 
 import { makeTempDir } from "./helpers.mjs";
 import { resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState } from "../plugins/codex/scripts/lib/state.mjs";
+
+// A live Claude Code session exports CLAUDE_PLUGIN_DATA, which resolveStateDir
+// prefers over the temp-backed default. Scrub it at module load so the default
+// case is exercised regardless of the host environment; the test that asserts
+// the CLAUDE_PLUGIN_DATA branch sets and restores it locally.
+const hadPluginDataDir = Object.hasOwn(process.env, "CLAUDE_PLUGIN_DATA");
+const previousPluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
+delete process.env.CLAUDE_PLUGIN_DATA;
+
+after(() => {
+  if (hadPluginDataDir) process.env.CLAUDE_PLUGIN_DATA = previousPluginDataDir;
+  else delete process.env.CLAUDE_PLUGIN_DATA;
+});
 
 test("resolveStateDir uses a temp-backed per-workspace directory", () => {
   const workspace = makeTempDir();

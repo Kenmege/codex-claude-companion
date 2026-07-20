@@ -4,8 +4,25 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { runCommandCapture } from "./process.mjs";
+import { redact } from "./redact.mjs";
 
-const AUTO_RECOVERY_GUARD = "CODEX_CLAUDE_BRIDGE_AUTO_RECOVERY";
+// The verifier subprocess inherits only this explicit allowlist of infrastructure
+// variables. An allowlist (rather than a secret-name denylist) guarantees that no
+// host token, session identifier, or provider credential can leak into an
+// origin-supplied verification command or the read-only Codex reviewer, and that
+// unknown future secrets stay stripped by default. Auth material (Anthropic/OpenAI
+// keys, OAuth tokens) is intentionally excluded: neither surface needs it.
+const VERIFIER_ENV_ALLOWLIST = new Set([
+  "PATH", "HOME", "SHELL", "TMPDIR", "USER", "LOGNAME", "TERM", "LANG",
+  "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"
+]);
+// Windows resolves environment variable names case-insensitively (PATH is
+// conventionally `Path`) and nested npm/git need these infrastructure vars, so
+// on win32 the base allowlist is matched case-insensitively and extended.
+const WINDOWS_VERIFIER_ENV_ALLOWLIST = new Set(
+  [...VERIFIER_ENV_ALLOWLIST, "SYSTEMROOT", "PATHEXT", "COMSPEC", "WINDIR"]
+    .map((key) => key.toUpperCase())
+);
 
 function run(binary, args, options = {}) {
   return spawnSync(binary, args, {
@@ -14,19 +31,29 @@ function run(binary, args, options = {}) {
     encoding: "utf8",
     timeout: options.timeout ?? 120_000,
     maxBuffer: 16 * 1024 * 1024,
-    env: options.env ?? process.env
+    env: options.env ?? process.env,
+    // Hard-kill on timeout so a verification command that ignores SIGTERM cannot
+    // wedge the broker while the durable job waits on its result.
+    killSignal: "SIGKILL"
   });
 }
 
-function verifierEnvironment(environment = process.env) {
-  const blocked = /(?:TOKEN|SECRET|PASSWORD|PASSWD|API[_-]?KEY|AUTH|COOKIE|CREDENTIAL|ANTHROPIC|OPENAI|AWS_|AZURE_|GITHUB_|GITLAB_)/i;
+export function verifierEnvironment(environment = process.env, platform = process.platform) {
+  const onWindows = platform === "win32";
+  const allowed = ([key, value]) => {
+    if (typeof value !== "string") return false;
+    // Preserve the original key casing in the child env; only the membership
+    // test is case-folded on Windows.
+    if (onWindows) return WINDOWS_VERIFIER_ENV_ALLOWLIST.has(key.toUpperCase());
+    return VERIFIER_ENV_ALLOWLIST.has(key) || /^LC_[A-Z]+$/.test(key);
+  };
   return Object.fromEntries(Object.entries(environment)
-    .filter(([key]) => key !== AUTO_RECOVERY_GUARD && !blocked.test(key))
+    .filter(allowed)
     .concat([["CI", "1"], ["CODEX_CLAUDE_BRIDGE_VERIFIER", "1"]]));
 }
 
 function boundedStream(value, limit = 1_800) {
-  const text = String(value ?? "").trim();
+  const text = redact(String(value ?? "")).trim();
   if (text.length <= limit) return text;
   const lines = text.split(/\r?\n/);
   const primary = lines.filter((line) =>
@@ -248,9 +275,15 @@ async function codexReview(codexBinary, { request, result, integrity, repository
         findings: [String(error?.message ?? error).slice(0, 1_000)]
       };
     }
+    const evidence = Array.isArray(parsed.evidence) && parsed.evidence.length > 0 &&
+      parsed.evidence.every((entry) => typeof entry === "string")
+      ? parsed.evidence
+      : null;
     return {
-      passed: parsed.passed === true,
-      evidence: Array.isArray(parsed.evidence) ? parsed.evidence : ["Codex verifier returned invalid evidence"],
+      // The handed schema requires a non-empty evidence array (minItems: 1). A
+      // pass claim without that evidence cannot be substantiated, so fail closed.
+      passed: parsed.passed === true && evidence !== null,
+      evidence: evidence ?? ["Codex verifier returned invalid evidence"],
       findings: Array.isArray(parsed.findings) ? parsed.findings : []
     };
   } finally {

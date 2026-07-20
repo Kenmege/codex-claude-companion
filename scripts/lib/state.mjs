@@ -162,11 +162,24 @@ export function resolveJobPromptFile(cwd, jobId, options = {}) {
 
 export function writeJsonAtomic(file, payload) {
   const tmpFile = `${file}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`;
-  fs.writeFileSync(tmpFile, `${JSON.stringify(payload, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600
-  });
+  const handle = fs.openSync(tmpFile, "wx", 0o600);
+  try {
+    fs.writeFileSync(handle, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
   fs.renameSync(tmpFile, file);
+  // Flush the rename itself so the durable snapshot survives a crash right after
+  // the swap. Directory fsync is a POSIX guarantee; skip it where it is not one.
+  if (process.platform !== "win32") {
+    const directoryHandle = fs.openSync(path.dirname(file), fs.constants.O_RDONLY);
+    try {
+      fs.fsyncSync(directoryHandle);
+    } finally {
+      fs.closeSync(directoryHandle);
+    }
+  }
 }
 
 function sleepSync(ms) {

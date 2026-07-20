@@ -33,6 +33,14 @@ const previousPluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
 const runtimePluginDataDir = makeTempDir("codex-plugin-runtime-data-");
 process.env.CLAUDE_PLUGIN_DATA = runtimePluginDataDir;
 
+// A live Claude Code session exports CODEX_COMPANION_SESSION_ID; codex-companion
+// status/result then filter jobs to that session. Tests that seed jobs without a
+// session id and expect them to surface (and those that set an explicit session
+// in a child env) must not inherit the host value, so scrub it at module load.
+const hadSessionId = Object.hasOwn(process.env, "CODEX_COMPANION_SESSION_ID");
+const previousSessionId = process.env.CODEX_COMPANION_SESSION_ID;
+delete process.env.CODEX_COMPANION_SESSION_ID;
+
 // Several tests below exercise the real CLI against fake Codex fixtures, which
 // lazily spawns a detached app-server-broker per temp-dir repo. Individual
 // tests are not required to tear that broker down themselves; reap every
@@ -46,6 +54,8 @@ after(async () => {
   } finally {
     if (hadPluginDataDir) process.env.CLAUDE_PLUGIN_DATA = previousPluginDataDir;
     else delete process.env.CLAUDE_PLUGIN_DATA;
+    if (hadSessionId) process.env.CODEX_COMPANION_SESSION_ID = previousSessionId;
+    else delete process.env.CODEX_COMPANION_SESSION_ID;
   }
 });
 
@@ -59,6 +69,23 @@ async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 50 } = {}) {
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   throw new Error("Timed out waiting for condition.");
+}
+
+// Spawn a detached process that presents the exact argv shape of a background
+// codex-companion task worker (`node .../codex-companion.mjs task-worker --cwd
+// <cwd> --job-id <jobId>`). The cancel and session-cleanup paths verify pid
+// ownership via that argv before signalling the group, so a generic sleeper is
+// (correctly) refused; this stand-in is what a real worker looks like to `ps`.
+function spawnTrackedWorker(jobId, cwd) {
+  const workerScript = path.join(makeTempDir("codex-worker-shape-"), "codex-companion.mjs");
+  fs.writeFileSync(workerScript, "setInterval(() => {}, 1000);\n", "utf8");
+  const child = spawn(process.execPath, [workerScript, "task-worker", "--cwd", cwd, "--job-id", jobId], {
+    cwd,
+    detached: true,
+    stdio: "ignore"
+  });
+  child.unref();
+  return child;
 }
 
 test("setup reports ready when fake codex is installed and authenticated", () => {
@@ -1442,12 +1469,7 @@ test("cancel stops an active background job and marks it cancelled", async (t) =
   const jobsDir = path.join(stateDir, "jobs");
   fs.mkdirSync(jobsDir, { recursive: true });
 
-  const sleeper = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-    cwd: workspace,
-    detached: true,
-    stdio: "ignore"
-  });
-  sleeper.unref();
+  const sleeper = spawnTrackedWorker("task-live", workspace);
 
   t.after(() => {
     try {
@@ -1721,12 +1743,7 @@ test("session end fully cleans up jobs for the ending session", async (t) => {
   fs.writeFileSync(completedJobFile, JSON.stringify({ id: "review-completed" }, null, 2), "utf8");
   fs.writeFileSync(otherJobFile, JSON.stringify({ id: "review-other" }, null, 2), "utf8");
 
-  const sleeper = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-    cwd: repo,
-    detached: true,
-    stdio: "ignore"
-  });
-  sleeper.unref();
+  const sleeper = spawnTrackedWorker("review-running", repo);
   fs.writeFileSync(runningJobFile, JSON.stringify({ id: "review-running" }, null, 2), "utf8");
 
   t.after(() => {

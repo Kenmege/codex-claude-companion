@@ -8,7 +8,8 @@ import { spawnSync } from "node:child_process";
 import {
   captureGitWorkspace,
   createProductionBridgeVerificationDependencies,
-  runProductionRepositoryChecks
+  runProductionRepositoryChecks,
+  verifierEnvironment
 } from "../scripts/lib/bridge-production-verifier.mjs";
 
 function git(workspace, args) {
@@ -83,6 +84,73 @@ test("repository verification does not leak the broker auto-recovery guard", (t)
       process.execPath,
       "-e",
       `process.exit(Object.hasOwn(process.env, ${JSON.stringify(guard)}) ? 7 : 0)`
+    ]]
+  });
+
+  assert.equal(result.passed, true, result.findings.join("\n"));
+});
+
+test("verifier env matches case-insensitively on Windows and keeps Path", () => {
+  const env = verifierEnvironment({
+    Path: "C:\\Windows;C:\\Windows\\System32",
+    SystemRoot: "C:\\Windows",
+    PATHEXT: ".COM;.EXE;.BAT",
+    COMSPEC: "C:\\Windows\\System32\\cmd.exe",
+    Token: "should-drop",
+    ANTHROPIC_API_KEY: "sk-ant-drop"
+  }, "win32");
+
+  assert.equal(env.Path, "C:\\Windows;C:\\Windows\\System32");
+  assert.equal(env.SystemRoot, "C:\\Windows");
+  assert.equal(env.PATHEXT, ".COM;.EXE;.BAT");
+  assert.equal(env.COMSPEC, "C:\\Windows\\System32\\cmd.exe");
+  assert.equal(Object.hasOwn(env, "Token"), false);
+  assert.equal(Object.hasOwn(env, "ANTHROPIC_API_KEY"), false);
+  assert.equal(env.CI, "1");
+});
+
+test("verifier env stays byte-identical to the POSIX allowlist off Windows", () => {
+  const env = verifierEnvironment({
+    PATH: "/usr/bin",
+    Path: "/should-drop",
+    LC_TIME: "en_GB",
+    SYSTEMROOT: "should-drop",
+    FAKE_HOST_SECRET: "xyz"
+  }, "linux");
+
+  assert.equal(env.PATH, "/usr/bin");
+  assert.equal(Object.hasOwn(env, "Path"), false);
+  assert.equal(env.LC_TIME, "en_GB");
+  assert.equal(Object.hasOwn(env, "SYSTEMROOT"), false);
+  assert.equal(Object.hasOwn(env, "FAKE_HOST_SECRET"), false);
+});
+
+test("repository verification strips host secrets to an infrastructure allowlist", (t) => {
+  const { request } = fixture(t);
+  const secrets = {
+    FAKE_HOST_SECRET: "xyz",
+    CODEX_COMPANION_SESSION_ID: "sess-host",
+    CLAUDE_PLUGIN_DATA: "/tmp/host-plugin-data",
+    ANTHROPIC_API_KEY: "sk-ant-host",
+    GITHUB_TOKEN: "ghp-host"
+  };
+  const previous = {};
+  for (const [key, value] of Object.entries(secrets)) {
+    previous[key] = process.env[key];
+    process.env[key] = value;
+  }
+  t.after(() => {
+    for (const key of Object.keys(secrets)) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+  });
+
+  const result = runProductionRepositoryChecks({ request }, {
+    verificationCommands: [[
+      process.execPath,
+      "-e",
+      `process.exit(${JSON.stringify(Object.keys(secrets))}.some((key) => Object.hasOwn(process.env, key)) ? 9 : 0)`
     ]]
   });
 
@@ -178,6 +246,26 @@ test("repository checks preserve working and staged git diff diagnostics", (t) =
   assert.match(findings, /working\.txt/);
   assert.match(findings, /staged\.txt/);
   assert.match(findings, /trailing whitespace/);
+});
+
+test("repository check findings redact JSON-form secrets from captured output", (t) => {
+  const { request } = fixture(t);
+  const script = [
+    'process.stdout.write(JSON.stringify({ token: "abc123def", note: "keep" }) + "\\n");',
+    'process.stderr.write("failed with {\\"api_key\\": \\"k-7788\\"}\\n");',
+    "process.exit(7);"
+  ].join("");
+
+  const failed = runProductionRepositoryChecks({ request }, {
+    verificationCommands: [[process.execPath, "-e", script]]
+  });
+
+  assert.equal(failed.passed, false);
+  const findings = failed.findings.join("\n");
+  assert.doesNotMatch(findings, /abc123def/);
+  assert.doesNotMatch(findings, /k-7788/);
+  assert.match(findings, /\[REDACTED\]/);
+  assert.match(findings, /"note":"keep"/);
 });
 
 test("repository checks retain verifier spawn errors", (t) => {
@@ -347,6 +435,34 @@ test("green repository gates constrain Codex review to supplied evidence", async
   assert.match(observedPrompt, /evidence-only review/i);
   assert.match(observedPrompt, /do not execute commands, tests, package managers, or tools/i);
   assert.match(observedPrompt, /independent check/);
+});
+
+test("Codex review fails closed when a pass claim omits its required evidence", async (t) => {
+  const { workspace } = fixture(t);
+  const dependencies = createProductionBridgeVerificationDependencies({
+    codexBinary: process.execPath,
+    async runProcess(_binary, args) {
+      const outputFile = args[args.indexOf("--output-last-message") + 1];
+      fs.writeFileSync(outputFile, JSON.stringify({ passed: true }));
+      return { status: 0, signal: null, stdout: "", stderr: "", error: null };
+    },
+    recordVerificationAttempts() {},
+    recordVerification() {}
+  });
+
+  const review = await dependencies.runCodexReview({
+    request: {
+      execution: { canonicalWorkspacePath: workspace },
+      task: { acceptance: ["all required checks pass"] }
+    },
+    result: { status: "completed", filesChanged: [] },
+    integrity: { changedPaths: [], unexpectedChanges: [], reportedButUnchanged: [], passed: true },
+    repository: { passed: true, evidence: ["independent check exit=0"], findings: [] },
+    attempt: 0
+  });
+
+  assert.equal(review.passed, false);
+  assert.match(review.evidence[0], /invalid evidence/i);
 });
 
 test("production verifier rejects verifier timing outside bounded contracts", () => {

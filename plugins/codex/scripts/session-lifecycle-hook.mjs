@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import process from "node:process";
 
-import { terminateProcessTree } from "./lib/process.mjs";
+import { terminateProcessTree, terminateTrackedJobProcessTree } from "./lib/process.mjs";
 import { BROKER_ENDPOINT_ENV } from "./lib/app-server.mjs";
 import {
   clearBrokerSession,
@@ -63,7 +63,7 @@ function cleanupSessionJobs(cwd, sessionId) {
       continue;
     }
     try {
-      terminateProcessTree(job.pid ?? Number.NaN);
+      terminateTrackedJobProcessTree(job);
     } catch {
       // Ignore teardown failures during session shutdown.
     }

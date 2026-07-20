@@ -147,7 +147,7 @@ codex-claude review --preset security --add-dir ../shared-libs
 Codex slash commands are available once the plugin marketplace is loaded:
 `/claude-review:delegate`, `/claude-review:wait`, `/claude-review:logs`,
 `/claude-review:send`, `/claude-review:recover`, `/claude-review:bridge-doctor`,
-`/claude-review:gc`,
+`/claude-review:gc`, `/claude-review:list`, `/claude-review:attach`,
 `/claude-review:workspace`, `/claude-review:review`,
 `/claude-review:elite-review`, `/claude-review:deep-review`,
 `/claude-review:security-review`, and `/claude-review:doctor`.
@@ -244,7 +244,7 @@ convergent control-plane issues.
 
 ## Detailed Capabilities
 
-Five review lanes, all agentic by default:
+Five review lanes plus workspace and doctor lanes, all agentic by default:
 
 - `/claude-review:workspace` — dispatch a writable Claude worker, open its
   native agent panel in another terminal, and keep the active Codex task in
