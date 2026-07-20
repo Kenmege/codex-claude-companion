@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 
 import {
+  acquireQueuedLock,
   JOB_SCHEMA_VERSION,
   appendLogLine,
   assertValidJobId,
@@ -21,7 +22,8 @@ import {
   resolveJobFile,
   updateJob,
   writeJob,
-  writeJobInput
+  writeJobInput,
+  writeJsonAtomic
 } from "../scripts/lib/state.mjs";
 
 test("resolveJobsDir fails closed instead of using a shared temp fallback", {
@@ -141,21 +143,21 @@ test("writeJobInput uses distinct atomic tmp names within the same millisecond",
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-state-"));
   const tmpFiles = [];
   const originalDateNow = Date.now;
-  const originalWriteFileSync = fs.writeFileSync;
+  const originalOpenSync = fs.openSync;
 
   Date.now = () => 1234567890;
-  fs.writeFileSync = function patchedWriteFileSync(file, ...args) {
+  fs.openSync = function patchedOpenSync(file, ...args) {
     if (typeof file === "string" && file.endsWith(".tmp")) {
       tmpFiles.push(file);
     }
-    return originalWriteFileSync.call(this, file, ...args);
+    return originalOpenSync.call(this, file, ...args);
   };
 
   try {
     writeJobInput(cwd, "review-input", { value: 1 });
     writeJobInput(cwd, "review-input", { value: 2 });
   } finally {
-    fs.writeFileSync = originalWriteFileSync;
+    fs.openSync = originalOpenSync;
     Date.now = originalDateNow;
   }
 
@@ -218,6 +220,35 @@ test("job locks use immutable per-contender entries instead of replacing a share
 
   assert.equal(renamedSharedOwner, false);
   assert.equal(readJob(cwd, jobId).status, "completed");
+});
+
+test("writeJsonAtomic flushes the snapshot before rename and the directory after", {
+  skip: process.platform === "win32"
+}, () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-atomic-"));
+  const file = path.join(cwd, "snapshot.json");
+  const originalFsyncSync = fs.fsyncSync;
+  const originalRenameSync = fs.renameSync;
+  const operations = [];
+
+  fs.fsyncSync = function patchedFsyncSync(fd, ...args) {
+    operations.push("fsync");
+    return originalFsyncSync.call(this, fd, ...args);
+  };
+  fs.renameSync = function patchedRenameSync(source, destination, ...args) {
+    operations.push("rename");
+    return originalRenameSync.call(this, source, destination, ...args);
+  };
+
+  try {
+    writeJsonAtomic(file, { value: 1 });
+  } finally {
+    fs.fsyncSync = originalFsyncSync;
+    fs.renameSync = originalRenameSync;
+  }
+
+  assert.deepEqual(operations, ["fsync", "rename", "fsync"]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { value: 1 });
 });
 
 test("state helpers recover old malformed job locks", () => {
@@ -314,4 +345,21 @@ test("state helpers lock three concurrent updateJob writers so disjoint patches 
   assert.equal(job.fieldA, "alpha");
   assert.equal(job.fieldB, "beta");
   assert.equal(job.fieldC, "gamma");
+});
+
+test("queued locks re-secure an existing permissive queue directory", {
+  skip: process.platform === "win32"
+}, () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "claude-review-lock-mode-"));
+  const lockFile = path.join(base, "state.lock");
+  const queueDir = `${lockFile}.queue`;
+  fs.mkdirSync(queueDir, { mode: 0o777 });
+  fs.chmodSync(queueDir, 0o777);
+
+  const release = acquireQueuedLock(lockFile);
+  try {
+    assert.equal(fs.statSync(queueDir).mode & 0o777, 0o700);
+  } finally {
+    release();
+  }
 });

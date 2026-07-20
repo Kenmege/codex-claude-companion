@@ -9,13 +9,50 @@
 
 ## Threat Model
 
-Claude Workspace & Review has two deliberately different trust surfaces. The
+Codex-Claude Bridge has three deliberately different trust surfaces. The bridge
+owns durable Claude jobs through tmux and a detached local broker. The legacy
 workspace command dispatches Claude Code as a writable coding worker supervised
-by the active Codex task. The review commands inspect untrusted diffs through
+by the active Codex task. Review commands inspect untrusted diffs through
 separate read-only fences. The primary risks are unintended workspace mutation,
-command execution escape, path traversal, prompt injection from review material,
-accidental MCP/tool expansion, secret leakage through prompts or process
-observability, and long-running background workers leaving stale state.
+same-user process interference, command execution escape, path traversal, prompt
+injection, accidental MCP/tool expansion, secret leakage through prompts or
+process observability, forged or stale durable state, and orphaned workers.
+
+### Durable bridge lane
+
+`codex-claude delegate` is a local orchestration boundary, not a multi-tenant
+security sandbox. It records requests, events, dispatch identity, results,
+delivery state, and verification evidence under the selected bridge state
+directory. A detached broker owns leases, cancellation and delivery claims,
+heartbeats, collaboration messages, and fallback inbox state.
+
+- `standard` uses Claude's normal permission mode. `trusted-autonomous` is an
+  explicit opt-in that passes `--permission-mode bypassPermissions` for a
+  canonical workspace within the permitted root. It bypasses Claude's prompts;
+  it does not isolate files, processes, credentials, or network access.
+- A same-UID worker can inspect or interfere with other same-user processes and
+  files. The broker authority is deliberately withheld from the worker launch
+  transport, but cooperative same-UID host trust is not cryptographic isolation.
+  Requests requiring broker-authority isolation fail before launch.
+- `sandbox-autonomous` is unavailable. The bridge rejects it until an
+  executor-owned verifier can prove a separately isolated UID, OS sandbox, or
+  container bound to the exact job and workspace.
+- tmux attachment and `send` are interactive capabilities. Confirm the job ID
+  and workspace before sending input; concurrent user and agent input can change
+  worker behavior.
+- Worker completion, result delivery, acknowledgement, and verification are
+  independent durable states. A zero worker exit code alone is not proof that
+  Codex received or verified the result.
+- Delegation requires at least one origin-supplied `--verify-command` JSON argv
+  array. Verification runs separately through ephemeral Codex with a read-only
+  sandbox, and the receipt records its outcome. Verification does not authorize
+  deployment, publication, credential changes, or destructive host actions.
+- Recovery reconciles the ledger, tmux identity, Claude session, repository
+  identity, delivery state, and broker heartbeat. Ambiguous ownership fails
+  closed for manual recovery rather than launching a duplicate worker.
+- Durable artifacts and logs may contain repository paths, task text, worker
+  output, and validation evidence. Keep the state directory private and do not
+  commit or share it without review.
 
 ### Writable workspace lane
 
@@ -80,11 +117,12 @@ Please include:
 - A minimal reproduction.
 - The command used.
 - The affected version.
-- Whether `--unrestricted`, `--inherit-mcp`, `--add-dir`, or custom MCP config was involved.
+- Whether `--unrestricted`, `--inherit-mcp`, `--add-dir`, a custom MCP config,
+  `trusted-autonomous`, tmux attachment, recovery, or bridge messaging was involved.
 
 ## Secrets And Logs
 
-Do not paste API keys, OAuth tokens, private MCP credentials, patient data, or proprietary customer data into prompts, review focus text, MCP JSON, issue reports, or job logs. Job records under `.claude-review/jobs/` are local workspace artifacts and should not be committed.
+Do not paste API keys, OAuth tokens, private MCP credentials, patient data, or proprietary customer data into prompts, review focus text, MCP JSON, bridge messages, issue reports, or job logs. Job records under `.claude-review/jobs/` and bridge state records are local artifacts and should not be committed.
 
 Review job identifiers are restricted to 1–128 ASCII letters, digits,
 underscores, and hyphens before any artifact path is resolved. Use

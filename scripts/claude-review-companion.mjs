@@ -31,6 +31,7 @@ import { chooseContextMode, collectReviewContext, resolveReviewTarget } from "./
 import { stageMcpConfigs } from "./lib/mcp-config.mjs";
 import { createDirectorySnapshot, isGitRepository } from "./lib/snapshot.mjs";
 import { runCommand, spawnDetached, terminateProcessTree } from "./lib/process.mjs";
+import { handleBridgeCommand, isBridgeJobInvocation } from "./lib/bridge-cli.mjs";
 import {
   JOB_DIR_ENV_VAR,
   appendLogLine,
@@ -224,7 +225,58 @@ function printUsage() {
       "  codex-claude status [job-id]",
       "  codex-claude result <job-id>",
       "  codex-claude cancel <job-id>",
+      "  codex-claude delegate --thread-id <id> --verify-command '[\"npm\",\"test\"]' -- <task>",
+      "  codex-claude wait|status|logs|cancel|recover|attach <ccb_job-id>",
+      "  codex-claude logs <ccb_job-id> [--stderr|--broker] [--follow --timeout <seconds>]",
+      "  codex-claude recover --all",
+      "  codex-claude send <ccb_job-id> [--question-id <id>] [--wait] --message <text>",
+      "  codex-claude list [--json]",
+      "  codex-claude gc [--older-than-days <days>] [--limit <1-64>] [--apply] [--json]",
+      "  codex-claude bridge-doctor [--json]",
+      "  --verify-command <JSON argv> repeatable; required origin-supplied independent verification command",
       "  Compatibility alias: codex-claude-review",
+      "",
+      "Flags (bridge delegate):",
+      "  --path <dir>                worker cwd (default: cwd)",
+      "  --repo-root <dir>           immutable repository origin (default: --path)",
+      "  --permitted-root <dir>      containment root (default: --repo-root)",
+      "  --profile <name>            bridge permission profile",
+      "  --agent <name>              active Claude agent; composes with one definition source",
+      "  --agents-json <JSON>        inline Claude agent definitions (exclusive with --agents-file)",
+      "  --agents-file <path>        Claude agent definitions (exclusive with --agents-json)",
+      "  --plugin-dir <dir>          repeatable Claude plugin directory",
+      "  --mcp-config <path>         repeatable MCP configuration file",
+      "  --add-dir <dir>             repeatable additional working directory",
+      "  --setting-sources <list>    opt in to user,project,local Claude settings",
+      "  --model <name>              Claude model selector (default: opus alias)",
+      "  --effort <level>            Claude effort selector",
+      "  --timeout <seconds>         bounded worker timeout",
+      "  --accept <text>             repeatable acceptance criterion",
+      "  --verify-command <JSON>     repeatable required independent argv array",
+      "  --max-repairs <0|1>         bounded production repair attempts (default: 0)",
+      "  --thread-id <id>            Codex origin (or CODEX_THREAD_ID)",
+      "  --turn-id <id>              optional Codex turn origin",
+      "  --prompt <text>             task text (or positional text)",
+      "  --state-dir <dir>           bridge state root override",
+      "  --tmux|--claude|--codex <path> executable overrides",
+      "  --interval <ms>             broker polling interval",
+      "  --wait                      wait for terminal verification and delivery",
+      "  --json                      machine-readable output",
+      "",
+      "Flags (bridge operations):",
+      "  --state-dir <dir>           bridge state root override",
+      "  --stderr|--broker           select worker stderr or broker log",
+      "  --follow                    follow logs until terminal or timeout",
+      "  --poll-interval <ms>        log follow polling interval (50-5000)",
+      "  --timeout <seconds>         bounded wait/follow/send timeout",
+      "  --reason <text>             cancellation reason",
+      "  --exec                      execute tmux attach (default: print command)",
+      "  --wait                      wait for send replay acknowledgement",
+      "  gc is a bounded dry run by default; --apply removes only listed expired terminal jobs",
+      "  --message <text>            same-session Claude input",
+      "  --question-id <id>          correlate input to a pending Claude question",
+      "  --all                       recover every unsettled durable job",
+      "  --json                      machine-readable output",
       "",
       "Flags (workspace):",
       "  --path <dir>                coding directory (default: cwd)",
@@ -274,6 +326,47 @@ function printUsage() {
       "  --probe-runtime             run a live Claude non-interactive model probe"
     ].join("\n")
   );
+}
+
+const BRIDGE_COMMAND_USAGE = Object.freeze({
+  delegate: [
+    "codex-claude delegate --thread-id <id> --verify-command '<JSON argv>' [flags] -- <task>",
+    "Create a durable Claude delegation and start its broker.",
+    "Key flags: --agent, --agents-json|--agents-file, --profile, --model, --effort, --max-repairs <0|1>, --wait, --json",
+    "With --wait: exit 0=verified+acknowledged, 3=terminal gate failure, 4=pending Claude question."
+  ],
+  result: ["codex-claude result <job-id> [--cwd <dir>] [--job-dir <dir>]", "Return the stored output for a finished review job."],
+  wait: [
+    "codex-claude wait <ccb_job-id> [--timeout <seconds>] [--state-dir <dir>] [--json]",
+    "Wait for verified terminal state and origin delivery.",
+    "Exit 0=verified+acknowledged, 3=terminal gate failure, 4=pending Claude question; timeout is exit 1."
+  ],
+  status: ["codex-claude status <ccb_job-id> [--state-dir <dir>] [--json]", "Show one durable bridge job."],
+  logs: ["codex-claude logs <ccb_job-id> [--stderr|--broker] [--follow] [--timeout <seconds>] [--state-dir <dir>]", "Read bounded worker or broker logs."],
+  cancel: ["codex-claude cancel <ccb_job-id> [--reason <text>] [--state-dir <dir>] [--json]", "Request durable cancellation through the owning broker."],
+  recover: ["codex-claude recover <ccb_job-id>|--all [--state-dir <dir>] [--json]", "Reconcile and restart unsettled durable jobs."],
+  list: ["codex-claude list [--state-dir <dir>] [--json]", "List durable bridge jobs."],
+  attach: ["codex-claude attach <ccb_job-id> [--exec] [--state-dir <dir>]", "Print or execute the exact tmux attach command."],
+  "bridge-doctor": ["codex-claude bridge-doctor [--state-dir <dir>] [--json]", "Check bridge runtime prerequisites and durable state."],
+  send: [
+    "codex-claude send <ccb_job-id> --message <text> [--question-id <id>] [--wait] [--state-dir <dir>] [--json]",
+    "Send same-session input through the durable broker inbox while the authoritative worker is live.",
+    "Without --wait, exit 0 means queued; with --wait, exit 0 requires replay acknowledgement."
+  ],
+  gc: ["codex-claude gc [--older-than-days <days>] [--limit <1-64>] [--apply] [--state-dir <dir>] [--json]", "Preview bounded terminal-job cleanup; --apply performs it."]
+});
+
+function printBridgeCommandUsage(command) {
+  const lines = BRIDGE_COMMAND_USAGE[command];
+  if (!lines) return false;
+  process.stdout.write(["Usage:", `  ${lines[0]}`, "", ...lines.slice(1), "", "Run `codex-claude --help` for the complete flag reference."].join("\n") + "\n");
+  return true;
+}
+
+function bridgeCommandHelpRequested(argv) {
+  const terminatorIndex = argv.indexOf("--");
+  const optionArguments = terminatorIndex === -1 ? argv : argv.slice(0, terminatorIndex);
+  return optionArguments.some((argument) => argument === "--help" || argument === "-h");
 }
 
 async function handleWorkspace(argv) {
@@ -2041,6 +2134,15 @@ async function main() {
       process.stdout.write(`${getPackageVersion()}\n`);
       return;
     }
+    if (bridgeCommandHelpRequested(argv) && printBridgeCommandUsage(command)) {
+      return;
+    }
+    const bridgeExclusive = new Set(["delegate", "wait", "logs", "recover", "list", "attach", "bridge-doctor", "send", "gc"]);
+    if (bridgeExclusive.has(command) || (["status", "cancel"].includes(command) && isBridgeJobInvocation(argv))) {
+      const bridgeExitCode = await handleBridgeCommand(command, argv);
+      if (typeof bridgeExitCode === "number") process.exitCode = bridgeExitCode;
+      return;
+    }
     switch (command) {
       case "enable":
         handleEnable(argv);
@@ -2100,13 +2202,14 @@ async function main() {
         process.exitCode = 2;
     }
   } catch (error) {
+    const usageOrValidationError = error.code === "USAGE_ERROR" || isUsageOrValidationError(error);
     const jsonRequested = process.argv.slice(2).includes("--json");
     if (jsonRequested) {
       // Structured error envelope — same shape Codex expects from the doctor
       // command so error handling is uniform across the CLI.
       const envelope = {
         ok: false,
-        error_code: error.code ?? (isUsageOrValidationError(error) ? "USAGE_ERROR" : "INTERNAL_ERROR"),
+        error_code: error.code ?? (usageOrValidationError ? "USAGE_ERROR" : "INTERNAL_ERROR"),
         message: error.message,
         recovery: error.recovery ?? null,
         retryable: Boolean(error.retryable ?? false)
@@ -2115,7 +2218,7 @@ async function main() {
     } else {
       process.stderr.write(`${error.message}\n`);
     }
-    process.exitCode = isUsageOrValidationError(error) ? 2 : 1;
+    process.exitCode = usageOrValidationError ? 2 : 1;
   }
 }
 

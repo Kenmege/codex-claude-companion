@@ -1,12 +1,14 @@
 #!/usr/bin/env node
+// Modified by Kennedy Umege for Codex-Claude Bridge, 2026.
 
 import fs from "node:fs";
 import process from "node:process";
 
-import { terminateProcessTree } from "./lib/process.mjs";
+import { terminateProcessTree, terminateTrackedJobProcessTree } from "./lib/process.mjs";
 import { BROKER_ENDPOINT_ENV } from "./lib/app-server.mjs";
 import {
   clearBrokerSession,
+  inspectBrokerProcessIdentity,
   LOG_FILE_ENV,
   loadBrokerSession,
   PID_FILE_ENV,
@@ -61,7 +63,7 @@ function cleanupSessionJobs(cwd, sessionId) {
       continue;
     }
     try {
-      terminateProcessTree(job.pid ?? Number.NaN);
+      terminateTrackedJobProcessTree(job);
     } catch {
       // Ignore teardown failures during session shutdown.
     }
@@ -94,21 +96,26 @@ async function handleSessionEnd(input) {
   const logFile = brokerSession?.logFile ?? null;
   const sessionDir = brokerSession?.sessionDir ?? null;
   const pid = brokerSession?.pid ?? null;
+  const brokerIdentity = brokerSession
+    ? inspectBrokerProcessIdentity(brokerSession, cwd)
+    : { alive: false, exact: false };
 
   if (brokerEndpoint) {
     await sendBrokerShutdown(brokerEndpoint);
   }
 
   cleanupSessionJobs(cwd, input.session_id || process.env[SESSION_ID_ENV]);
-  teardownBrokerSession({
-    endpoint: brokerEndpoint,
-    pidFile,
-    logFile,
-    sessionDir,
-    pid,
-    killProcess: terminateProcessTree
-  });
-  clearBrokerSession(cwd);
+  if (!brokerIdentity.alive || brokerIdentity.exact) {
+    teardownBrokerSession({
+      endpoint: brokerEndpoint,
+      pidFile,
+      logFile,
+      sessionDir,
+      pid,
+      killProcess: brokerIdentity.exact ? terminateProcessTree : null
+    });
+    clearBrokerSession(cwd);
+  }
 }
 
 async function main() {

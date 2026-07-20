@@ -22,6 +22,14 @@ const required = [
   "commands/status.md",
   "commands/result.md",
   "commands/cancel.md",
+  "commands/delegate.md",
+  "commands/wait.md",
+  "commands/logs.md",
+  "commands/recover.md",
+  "commands/list.md",
+  "commands/attach.md",
+  "commands/send.md",
+  "commands/bridge-doctor.md",
   "skills/claude-review/SKILL.md",
   "CHANGELOG.md",
   "SECURITY.md",
@@ -37,10 +45,20 @@ const required = [
   ".github/workflows/claude.yml",
   "docs/architecture.md",
   "scripts/claude-review-companion.mjs",
+  "scripts/bridge-broker.mjs",
   "scripts/bin/git-safe.mjs",
+  "plugins/codex/scripts/app-server-broker.mjs",
   "schemas/review-output.schema.json",
   "schemas/elite-review-output.schema.json",
-  "schemas/agentic-review-output.schema.json"
+  "schemas/agentic-review-output.schema.json",
+  "schemas/bridge-delegation-request.schema.json",
+  "schemas/bridge-event.schema.json",
+  "schemas/bridge-message-operation.schema.json",
+  "schemas/bridge-result.schema.json",
+  "schemas/bridge-receipt.schema.json",
+  "docs/bridge-capabilities.md",
+  "docs/bridge-migration.md",
+  "docs/bridge-runtime-compatibility.md"
 ];
 
 for (const relative of required) {
@@ -62,6 +80,26 @@ const claudeWorkflow = fs.readFileSync(path.join(root, ".github/workflows/claude
 JSON.parse(fs.readFileSync(path.join(root, "schemas/review-output.schema.json"), "utf8"));
 JSON.parse(fs.readFileSync(path.join(root, "schemas/elite-review-output.schema.json"), "utf8"));
 JSON.parse(fs.readFileSync(path.join(root, "schemas/agentic-review-output.schema.json"), "utf8"));
+JSON.parse(fs.readFileSync(path.join(root, "schemas/bridge-delegation-request.schema.json"), "utf8"));
+JSON.parse(fs.readFileSync(path.join(root, "schemas/bridge-event.schema.json"), "utf8"));
+JSON.parse(fs.readFileSync(path.join(root, "schemas/bridge-message-operation.schema.json"), "utf8"));
+JSON.parse(fs.readFileSync(path.join(root, "schemas/bridge-result.schema.json"), "utf8"));
+JSON.parse(fs.readFileSync(path.join(root, "schemas/bridge-receipt.schema.json"), "utf8"));
+
+const bridgeMigration = fs.readFileSync(path.join(root, "docs/bridge-migration.md"), "utf8")
+  .replace(/\r\n/g, "\n");
+if (
+  !bridgeMigration.includes("Codex-Claude Bridge") ||
+  !bridgeMigration.includes("target repository name is `codex-claude-bridge`") ||
+  !bridgeMigration.includes("`@kenmege/codex-claude-bridge` is the only current package candidate") ||
+  !bridgeMigration.includes("unscoped\n`codex-claude-bridge` name is already occupied") ||
+  !bridgeMigration.includes("reservation or publication of the scoped candidate remains gated on verified\nscope control and trusted-publisher evidence") ||
+  !bridgeMigration.includes("Existing-package prerelease verdict: APPROVED") ||
+  !bridgeMigration.includes("Scoped cutover verdict: BLOCKED") ||
+  !bridgeMigration.includes("not affiliated with or endorsed by OpenAI or\nAnthropic")
+) {
+  throw new Error("Bridge migration documentation must preserve differentiated identity, compatibility, and the approval-gated scoped-package boundary.");
+}
 
 if (pluginManifest.skills !== "./skills/") {
   throw new Error('plugin.json must expose bundled Codex skills through the "skills": "./skills/" field.');
@@ -165,8 +203,17 @@ if (!packageJson.files.includes("skills/")) {
 
 for (const file of [
   "scripts/claude-review-companion.mjs",
+  "scripts/bridge-broker.mjs",
   "scripts/bin/git-safe.mjs",
-  ...fs.readdirSync(path.join(root, "scripts", "lib")).map((name) => path.join("scripts", "lib", name))
+  "plugins/codex/scripts/app-server-broker.mjs",
+  ...fs.readdirSync(path.join(root, "scripts", "lib"))
+    .filter((name) => name.endsWith(".mjs"))
+    .map((name) => path.join("scripts", "lib", name)),
+  ...fs.readdirSync(path.join(root, "plugins", "codex", "scripts", "lib"))
+    .filter((name) => name.endsWith(".mjs"))
+    .map((name) =>
+    path.join("plugins", "codex", "scripts", "lib", name)
+  )
 ]) {
   const result = spawnSync("node", ["--check", path.join(root, file)], { encoding: "utf8" });
   if (result.status !== 0) {

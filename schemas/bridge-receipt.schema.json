@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Kenmege/codex-plugin-cc/schemas/bridge-receipt.schema.json",
+  "title": "Codex-Claude Bridge receipt and delivery state",
+  "description": "Auditable lifecycle receipt. Worker completion, delivery, acknowledgement, and verification are independent states.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "jobId", "createdAt", "workerState", "workerError", "delivery", "verification", "profile", "effectiveClaudePermissionArgs"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "jobId": { "type": "string", "pattern": "^ccb_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "workerState": { "enum": ["accepted", "running", "stalled", "completed", "failed", "cancelled"] },
+    "workerError": { "type": ["string", "null"], "minLength": 1 },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "attempts", "deliveredAt", "acknowledgedAt", "lastError"],
+      "properties": {
+        "state": { "enum": ["pending", "delivered", "acknowledged", "failed"] },
+        "attempts": { "type": "integer", "minimum": 0 },
+        "deliveredAt": { "type": ["string", "null"], "format": "date-time" },
+        "acknowledgedAt": { "type": ["string", "null"], "format": "date-time" },
+        "lastError": { "type": ["string", "null"], "minLength": 1 }
+      },
+      "allOf": [
+        { "if": { "properties": { "state": { "const": "pending" } }, "required": ["state"] }, "then": { "properties": { "deliveredAt": { "type": "null" }, "acknowledgedAt": { "type": "null" }, "lastError": { "type": "null" } } } },
+        { "if": { "properties": { "state": { "const": "delivered" } }, "required": ["state"] }, "then": { "properties": { "attempts": { "type": "integer", "minimum": 1 }, "deliveredAt": { "type": "string", "format": "date-time" }, "acknowledgedAt": { "type": "null" }, "lastError": { "type": "null" } } } },
+        { "if": { "properties": { "state": { "const": "acknowledged" } }, "required": ["state"] }, "then": { "properties": { "attempts": { "type": "integer", "minimum": 1 }, "deliveredAt": { "type": "string", "format": "date-time" }, "acknowledgedAt": { "type": "string", "format": "date-time" }, "lastError": { "type": "null" } } } },
+        { "if": { "properties": { "state": { "const": "failed" } }, "required": ["state"] }, "then": { "properties": { "attempts": { "type": "integer", "minimum": 1 }, "deliveredAt": { "type": "null" }, "acknowledgedAt": { "type": "null" }, "lastError": { "type": "string", "minLength": 1 } } } }
+      ]
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "verifiedAt", "evidence"],
+      "properties": {
+        "state": { "enum": ["pending", "passed", "failed", "skipped"] },
+        "verifiedAt": { "type": ["string", "null"], "format": "date-time" },
+        "evidence": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      },
+      "allOf": [
+        { "if": { "properties": { "state": { "const": "pending" } }, "required": ["state"] }, "then": { "properties": { "verifiedAt": { "type": "null" }, "evidence": { "type": "array", "maxItems": 0 } } } },
+        { "if": { "properties": { "state": { "enum": ["passed", "failed"] } }, "required": ["state"] }, "then": { "properties": { "verifiedAt": { "type": "string", "format": "date-time" }, "evidence": { "type": "array", "minItems": 1 } } } },
+        { "if": { "properties": { "state": { "const": "skipped" } }, "required": ["state"] }, "then": { "properties": { "verifiedAt": { "type": "string", "format": "date-time" }, "evidence": { "type": "array", "minItems": 1 } } } }
+      ]
+    },
+    "profile": { "enum": ["review-readonly", "standard", "trusted-autonomous", "sandbox-autonomous"] },
+    "effectiveClaudePermissionArgs": { "type": "array", "items": { "type": "string" } }
+  },
+  "allOf": [
+    { "if": { "properties": { "workerState": { "const": "failed" } }, "required": ["workerState"] }, "then": { "properties": { "workerError": { "type": "string", "minLength": 1 } } }, "else": { "properties": { "workerError": { "type": "null" } } } },
+    { "if": { "properties": { "workerState": { "enum": ["accepted", "running", "stalled"] } }, "required": ["workerState"] }, "then": { "properties": { "delivery": { "type": "object", "properties": { "state": { "enum": ["pending", "failed"] } } } } } },
+    { "if": { "properties": { "verification": { "type": "object", "properties": { "state": { "enum": ["passed", "failed"] } }, "required": ["state"] } }, "required": ["verification"] }, "then": { "properties": { "workerState": { "const": "completed" } } } },
+    { "if": { "properties": { "profile": { "const": "review-readonly" } }, "required": ["profile"] }, "then": { "properties": { "effectiveClaudePermissionArgs": { "$ref": "#/$defs/reviewReadonlyArgs" } } } },
+    { "if": { "properties": { "profile": { "const": "standard" } }, "required": ["profile"] }, "then": { "properties": { "effectiveClaudePermissionArgs": { "$ref": "#/$defs/standardArgs" } } } },
+    { "if": { "properties": { "profile": { "enum": ["trusted-autonomous", "sandbox-autonomous"] } }, "required": ["profile"] }, "then": { "properties": { "effectiveClaudePermissionArgs": { "$ref": "#/$defs/autonomousArgs" } } } }
+  ],
+  "$defs": {
+    "settingSourcesArg": {
+      "type": "string",
+      "pattern": "^--setting-sources=(?:(?:user|project|local)(?:,(?:user|project|local))*)?$"
+    },
+    "standardArgs": {
+      "type": "array",
+      "prefixItems": [
+        { "$ref": "#/$defs/settingSourcesArg" },
+        { "const": "--permission-mode" },
+        { "const": "default" }
+      ],
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "autonomousArgs": {
+      "type": "array",
+      "prefixItems": [
+        { "$ref": "#/$defs/settingSourcesArg" },
+        { "const": "--permission-mode" },
+        { "const": "bypassPermissions" }
+      ],
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "reviewReadonlyArgs": {
+      "type": "array",
+      "prefixItems": [
+        { "$ref": "#/$defs/settingSourcesArg" },
+        { "const": "--tools" }, { "const": "Read" }, { "const": "Glob" }, { "const": "Grep" },
+        { "const": "Task" }, { "const": "WebFetch" }, { "const": "WebSearch" },
+        { "const": "--allowedTools" }, { "const": "Read" }, { "const": "Glob" }, { "const": "Grep" },
+        { "const": "Task" }, { "const": "WebSearch" },
+        { "const": "WebFetch(https://docs.anthropic.com/*)" }, { "const": "WebFetch(https://nvd.nist.gov/*)" },
+        { "const": "WebFetch(https://cve.mitre.org/*)" }, { "const": "WebFetch(https://github.com/*)" },
+        { "const": "WebFetch(https://raw.githubusercontent.com/*)" }, { "const": "WebFetch(https://api.github.com/*)" },
+        { "const": "WebFetch(https://gist.github.com/*)" }, { "const": "WebFetch(https://developer.mozilla.org/*)" },
+        { "const": "WebFetch(https://nodejs.org/api/*)" }, { "const": "WebFetch(https://nodejs.org/dist/*)" },
+        { "const": "WebFetch(https://registry.npmjs.org/*)" }, { "const": "WebFetch(https://www.npmjs.com/package/*)" },
+        { "const": "WebFetch(https://pypi.org/project/*)" }, { "const": "WebFetch(https://crates.io/crates/*)" },
+        { "const": "WebFetch(https://docs.python.org/*)" }, { "const": "WebFetch(https://owasp.org/*)" },
+        { "const": "WebFetch(https://cwe.mitre.org/*)" }, { "const": "WebFetch(https://www.rfc-editor.org/*)" },
+        { "const": "WebFetch(https://datatracker.ietf.org/*)" }, { "const": "WebFetch(https://www.w3.org/TR/*)" },
+        { "const": "WebFetch(https://www.nice.org.uk/*)" }, { "const": "WebFetch(https://bnf.nice.org.uk/*)" },
+        { "const": "WebFetch(https://www.bmj.com/*)" }, { "const": "WebFetch(https://www.thelancet.com/*)" },
+        { "const": "WebFetch(https://www.nejm.org/*)" }, { "const": "WebFetch(https://jamanetwork.com/*)" },
+        { "const": "WebFetch(https://www.cochranelibrary.com/*)" }, { "const": "WebFetch(https://www.who.int/*)" },
+        { "const": "WebFetch(https://www.gov.uk/government/*)" }, { "const": "WebFetch(https://www.ukhsa.gov.uk/*)" },
+        { "const": "WebFetch(https://www.nhs.uk/*)" }, { "const": "--disallowedTools" },
+        { "const": "Edit" }, { "const": "Write" }, { "const": "NotebookEdit" },
+        { "const": "--permission-mode" }, { "const": "default" }, { "const": "--strict-mcp-config" }
+      ],
+      "minItems": 52,
+      "maxItems": 52
+    }
+  }
+}

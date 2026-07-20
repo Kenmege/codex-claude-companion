@@ -1,5 +1,5 @@
 ---
-description: Cancel an active background Claude review job.
+description: Request cancellation of a durable bridge job by ccb_ ID, or cancel a background Claude review job.
 ---
 
 # /claude-review:cancel
@@ -13,7 +13,8 @@ description: Cancel an active background Claude review job.
 
 ## Plan
 
-Run the helper in cancel mode once and return the result.
+Run the helper in cancel mode once and return the result. A `ccb_...` ID selects
+two-phase bridge cancellation; other IDs use the legacy review-job route.
 
 ## Commands
 
@@ -25,6 +26,8 @@ Use the exact argument tail the user supplied after `/claude-review:cancel`.
 ## Verification
 
 Trust the helper's before-and-after state, not assumptions about process exit.
+For bridge jobs, `cancel_requested` records intent and only a later `cancelled`
+event confirms that the worker stopped and its lease was released.
 
 ## Summary
 
@@ -32,4 +35,5 @@ Return the helper stdout verbatim.
 
 ## Next Steps
 
-If the user still wants a review, suggest starting a fresh background job.
+If a bridge cancellation is still pending, use `status`, `wait`, or `recover`.
+Do not launch a replacement while ownership is ambiguous.

@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A practical initiation guide for Codex-Claude Bridge by Kenmege, an independent Codex-to-Claude orchestration system.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%236d5dfc'/%3E%3Cpath d='M18 22h28M18 32h18M18 42h28' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
+  <title>Codex-Claude Bridge by Kenmege - Launch Guide</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #f8fbff;
+      --muted: #b9c6de;
+      --canvas: #07101f;
+      --panel: rgba(15, 28, 53, 0.78);
+      --panel-strong: #101d36;
+      --line: rgba(196, 216, 255, 0.16);
+      --cyan: #56e0ff;
+      --violet: #a985ff;
+      --pink: #ff72b6;
+      --yellow: #ffd166;
+      --green: #63efb1;
+      --red: #ff8092;
+      --shadow: 0 24px 70px rgba(0, 0, 0, 0.36);
+      --radius: 24px;
+      --code: #07111f;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 5%, rgba(86, 224, 255, 0.18), transparent 28rem),
+        radial-gradient(circle at 92% 12%, rgba(255, 114, 182, 0.14), transparent 30rem),
+        radial-gradient(circle at 68% 70%, rgba(169, 133, 255, 0.13), transparent 34rem),
+        var(--canvas);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.62;
+      min-height: 100vh;
+    }
+
+    a { color: var(--cyan); text-underline-offset: 0.22em; }
+    a:hover { color: white; }
+    code, pre, kbd { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    :focus-visible { outline: 3px solid var(--yellow); outline-offset: 4px; }
+
+    .skip-link {
+      position: fixed;
+      left: 1rem;
+      top: -5rem;
+      z-index: 100;
+      padding: .75rem 1rem;
+      color: #07101f;
+      background: var(--yellow);
+      border-radius: 10px;
+      font-weight: 800;
+    }
+    .skip-link:focus { top: 1rem; }
+
+    .progress {
+      position: fixed;
+      inset: 0 0 auto;
+      z-index: 90;
+      height: 4px;
+      background: rgba(255,255,255,.05);
+    }
+    .progress span {
+      display: block;
+      width: 0;
+      height: 100%;
+      background: linear-gradient(90deg, var(--cyan), var(--violet), var(--pink));
+      box-shadow: 0 0 22px rgba(86, 224, 255, .65);
+    }
+
+    .shell { width: min(1180px, calc(100% - 2rem)); margin: 0 auto; }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: clamp(5.6rem, 12vw, 9.4rem) 0 4.4rem;
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      width: 25rem;
+      height: 25rem;
+      right: -12rem;
+      top: 4rem;
+      border: 1px solid rgba(86, 224, 255, .28);
+      border-radius: 50%;
+      box-shadow: 0 0 0 3rem rgba(169,133,255,.04), 0 0 0 7rem rgba(255,114,182,.025);
+      pointer-events: none;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: .65rem;
+      margin-bottom: 1.25rem;
+      color: var(--cyan);
+      font-size: .78rem;
+      font-weight: 900;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    .pulse {
+      width: .72rem;
+      height: .72rem;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 .38rem rgba(99, 239, 177, .13), 0 0 22px var(--green);
+    }
+    h1, h2, h3 { margin: 0; line-height: 1.08; letter-spacing: -.035em; }
+    h1 {
+      max-width: 980px;
+      font-size: clamp(3rem, 8.3vw, 7.2rem);
+      text-wrap: balance;
+    }
+    .gradient-text {
+      color: transparent;
+      background: linear-gradient(105deg, var(--cyan), #95f3df 34%, var(--violet) 67%, var(--pink));
+      background-clip: text;
+      -webkit-background-clip: text;
+    }
+    .lede {
+      max-width: 760px;
+      margin: 1.6rem 0 0;
+      color: var(--muted);
+      font-size: clamp(1.05rem, 2vw, 1.35rem);
+    }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: .8rem; margin-top: 2rem; }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 48px;
+      padding: .8rem 1.15rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: white;
+      background: rgba(255,255,255,.05);
+      font-weight: 800;
+      text-decoration: none;
+      transition: transform .2s ease, border-color .2s ease, background .2s ease;
+    }
+    .button:hover { transform: translateY(-2px); border-color: var(--cyan); background: rgba(86,224,255,.08); }
+    .button.primary { color: #07101f; border: 0; background: linear-gradient(105deg, var(--cyan), var(--green)); }
+
+    .signal-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      margin-top: 3.1rem;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--line);
+      box-shadow: var(--shadow);
+    }
+    .signal { padding: 1.1rem; background: rgba(8, 18, 35, .92); }
+    .signal strong { display: block; color: white; font-size: 1rem; }
+    .signal span { color: var(--muted); font-size: .82rem; }
+
+    .sticky-nav {
+      position: sticky;
+      top: 0;
+      z-index: 70;
+      border-block: 1px solid var(--line);
+      background: rgba(7, 16, 31, .82);
+      -webkit-backdrop-filter: blur(18px);
+      backdrop-filter: blur(18px);
+    }
+    .nav-row { display: flex; gap: .4rem; overflow-x: auto; padding: .75rem 0; scrollbar-width: none; }
+    .nav-row::-webkit-scrollbar { display: none; }
+    .nav-row a {
+      flex: 0 0 auto;
+      padding: .5rem .8rem;
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: .83rem;
+      font-weight: 750;
+      text-decoration: none;
+    }
+    .nav-row a:hover { color: white; background: rgba(255,255,255,.07); }
+
+    main { padding: 4.5rem 0 7rem; }
+    section { scroll-margin-top: 5rem; margin-top: 6.2rem; }
+    section:first-child { margin-top: 0; }
+    .section-kicker { color: var(--pink); font-size: .74rem; font-weight: 900; letter-spacing: .18em; text-transform: uppercase; }
+    h2 { max-width: 820px; margin-top: .65rem; font-size: clamp(2rem, 5vw, 4rem); }
+    .section-intro { max-width: 780px; color: var(--muted); font-size: 1.08rem; }
+
+    .map {
+      display: grid;
+      grid-template-columns: repeat(9, minmax(0, 1fr));
+      align-items: stretch;
+      gap: .6rem;
+      margin-top: 2rem;
+    }
+    .map-card {
+      grid-column: span 2;
+      min-height: 152px;
+      padding: 1.2rem;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: linear-gradient(145deg, rgba(255,255,255,.065), rgba(255,255,255,.025));
+    }
+    .map-card:last-child { grid-column: span 2; }
+    .map-arrow { display: grid; place-items: center; color: var(--cyan); font-size: 1.4rem; }
+    .map-card .number { color: var(--cyan); font-size: .72rem; font-weight: 900; letter-spacing: .14em; }
+    .map-card h3 { margin: .6rem 0; font-size: 1.15rem; }
+    .map-card p { margin: 0; color: var(--muted); font-size: .88rem; }
+
+    .callout {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 1rem;
+      align-items: start;
+      margin-top: 1.5rem;
+      padding: 1.2rem;
+      border: 1px solid rgba(86, 224, 255, .22);
+      border-radius: 18px;
+      background: rgba(86, 224, 255, .065);
+    }
+    .callout .icon { font-size: 1.45rem; }
+    .callout p { margin: 0; color: var(--muted); }
+    .callout strong { color: white; }
+
+    .steps { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.15rem; margin-top: 2rem; }
+    .step {
+      position: relative;
+      display: grid;
+      grid-template-columns: 76px minmax(0, 1fr);
+      gap: 1.2rem;
+      min-width: 0;
+      padding: clamp(1.2rem, 3vw, 2rem);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: 0 15px 45px rgba(0, 0, 0, .18);
+    }
+    .step > * { min-width: 0; }
+    .step-no {
+      display: grid;
+      place-items: center;
+      width: 58px;
+      height: 58px;
+      border-radius: 18px;
+      color: #07101f;
+      background: linear-gradient(135deg, var(--yellow), var(--pink));
+      font-size: 1.25rem;
+      font-weight: 950;
+      transform: rotate(-3deg);
+    }
+    .step:nth-child(2n) .step-no { background: linear-gradient(135deg, var(--cyan), var(--green)); transform: rotate(3deg); }
+    .step h3 { margin-top: .25rem; font-size: clamp(1.35rem, 2.5vw, 1.9rem); }
+    .step p { max-width: 790px; color: var(--muted); }
+    .step ul { padding-left: 1.2rem; color: var(--muted); }
+
+    .code-card {
+      position: relative;
+      overflow: hidden;
+      margin-top: 1rem;
+      border: 1px solid rgba(86, 224, 255, .18);
+      border-radius: 17px;
+      background: var(--code);
+    }
+    .code-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: .65rem .75rem .65rem 1rem;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      background: rgba(255,255,255,.025);
+      font-size: .75rem;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .dots { display: inline-flex; gap: .35rem; }
+    .dots i { display: block; width: .55rem; height: .55rem; border-radius: 50%; background: var(--pink); }
+    .dots i:nth-child(2) { background: var(--yellow); }
+    .dots i:nth-child(3) { background: var(--green); }
+    .copy {
+      min-height: 34px;
+      padding: .35rem .65rem;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: var(--cyan);
+      background: transparent;
+      font: inherit;
+      font-size: .72rem;
+      font-weight: 850;
+      cursor: pointer;
+    }
+    .copy:hover { border-color: var(--cyan); background: rgba(86,224,255,.06); }
+    pre { margin: 0; padding: 1.15rem; overflow: auto; color: #d9e7ff; font-size: .88rem; line-height: 1.65; tab-size: 2; }
+    .cmd { color: var(--cyan); }
+    .flag { color: #d7b9ff; }
+    .string { color: #a6f7d4; }
+    .comment { color: #7184a4; }
+
+    .choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-top: 1.5rem; }
+    .choice {
+      padding: 1.35rem;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(255,255,255,.035);
+    }
+    .choice.featured { border-color: rgba(255, 209, 102, .38); background: rgba(255, 209, 102, .055); }
+    .badge {
+      display: inline-flex;
+      padding: .3rem .58rem;
+      border-radius: 999px;
+      color: var(--canvas);
+      background: var(--cyan);
+      font-size: .68rem;
+      font-weight: 950;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .choice.featured .badge { background: var(--yellow); }
+    .choice h3 { margin-top: .85rem; }
+    .choice p { margin-bottom: 0; color: var(--muted); }
+
+    .command-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 1rem; margin-top: 1.5rem; }
+    .mini-card { padding: 1.2rem; border: 1px solid var(--line); border-radius: 18px; background: rgba(255,255,255,.035); }
+    .mini-card h3 { font-size: 1.05rem; }
+    .mini-card p { color: var(--muted); font-size: .9rem; }
+    .mini-card code { color: var(--green); font-size: .82rem; word-break: break-word; }
+
+    .status-table { width: 100%; margin-top: 1.5rem; border-collapse: separate; border-spacing: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; }
+    .status-table th, .status-table td { padding: .95rem 1rem; border-bottom: 1px solid var(--line); text-align: left; }
+    .status-table tr:last-child td { border-bottom: 0; }
+    .status-table th { color: var(--canvas); background: linear-gradient(90deg, var(--cyan), #8eefd9); font-size: .78rem; letter-spacing: .05em; text-transform: uppercase; }
+    .status-table td { color: var(--muted); background: rgba(10, 21, 40, .72); }
+    .status-table td:first-child { color: white; font-weight: 900; }
+
+    .checklist { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: .8rem; margin-top: 1.5rem; }
+    .check {
+      display: flex;
+      align-items: flex-start;
+      gap: .75rem;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      color: var(--muted);
+      background: rgba(255,255,255,.03);
+    }
+    .check-mark {
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      width: 1.45rem;
+      height: 1.45rem;
+      border-radius: 50%;
+      color: #07101f;
+      background: var(--green);
+      font-weight: 950;
+    }
+
+    .launch-strip {
+      margin-top: 6rem;
+      padding: clamp(1.5rem, 5vw, 3.6rem);
+      border: 1px solid rgba(169,133,255,.35);
+      border-radius: 30px;
+      background:
+        linear-gradient(125deg, rgba(86,224,255,.11), rgba(169,133,255,.13), rgba(255,114,182,.1)),
+        var(--panel-strong);
+      box-shadow: var(--shadow);
+      text-align: center;
+    }
+    .launch-strip h2 { margin-inline: auto; }
+    .launch-strip p { max-width: 680px; margin: 1rem auto 0; color: var(--muted); }
+
+    footer { padding: 2rem 0 3rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .83rem; }
+    .footer-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; }
+
+    @media (max-width: 820px) {
+      .signal-grid { grid-template-columns: repeat(2, 1fr); }
+      .map { grid-template-columns: 1fr; }
+      .map-card, .map-card:last-child { grid-column: auto; min-height: auto; }
+      .map-arrow { transform: rotate(90deg); }
+      .choice-grid, .command-grid, .checklist { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 560px) {
+      .shell { width: min(100% - 1.2rem, 1180px); }
+      .hero { padding-top: 4.8rem; }
+      .signal-grid { grid-template-columns: 1fr; }
+      .step { grid-template-columns: 1fr; }
+      .step-no { width: 48px; height: 48px; }
+      .status-table { display: block; overflow-x: auto; white-space: nowrap; }
+      pre { font-size: .78rem; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+    @media print {
+      :root { color-scheme: light; --ink: #10203b; --muted: #40516d; --canvas: white; --panel: #f4f7fc; --line: #d7dfec; --code: #0d1728; }
+      body { background: white; }
+      .progress, .sticky-nav, .copy, .hero-actions { display: none !important; }
+      .hero { padding: 2rem 0; }
+      .gradient-text { color: #1d4a72; background: none; -webkit-text-fill-color: currentColor; }
+      .status-table th { background: #dff7f7; }
+      .status-table th, .badge, .choice.featured .badge, .callout strong { color: #10203b; }
+      .badge { border: 1px solid #789; }
+      section { margin-top: 3rem; break-inside: avoid; }
+      .step, .choice, .mini-card, .launch-strip { box-shadow: none; break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to launch guide</a>
+  <div class="progress" aria-hidden="true"><span id="read-progress"></span></div>
+
+  <header class="hero">
+    <div class="shell">
+      <div class="eyebrow"><span class="pulse"></span> Orchestration launch protocol</div>
+      <h1>Initiate the <span class="gradient-text">Codex → Claude Bridge</span></h1>
+      <p class="lede">A practical field guide for launching <strong>Codex-Claude Bridge by Kenmege</strong>: prove readiness, dispatch a durable Claude worker from Codex, steer it live, and close only on independently verified evidence.</p>
+      <div class="hero-actions">
+        <a class="button primary" href="#launch">Launch in five steps</a>
+        <a class="button" href="#command-deck">Open command deck</a>
+      </div>
+      <div class="signal-grid" aria-label="Codex-Claude bridge operating principles">
+        <div class="signal"><strong>Codex originates</strong><span>Task, scope, acceptance</span></div>
+        <div class="signal"><strong>Claude executes</strong><span>Durable tmux worker</span></div>
+        <div class="signal"><strong>Codex verifies</strong><span>Independent command evidence</span></div>
+        <div class="signal"><strong>Receipt closes</strong><span>Delivered and acknowledged</span></div>
+      </div>
+    </div>
+  </header>
+
+  <nav class="sticky-nav" aria-label="Guide sections">
+    <div class="shell nav-row">
+      <a href="#system">System map</a>
+      <a href="#launch">Launch</a>
+      <a href="#profiles">Profiles</a>
+      <a href="#supervise">Supervise</a>
+      <a href="#completion">Completion</a>
+      <a href="#command-deck">Command deck</a>
+      <a href="#troubleshoot">Troubleshoot</a>
+    </div>
+  </nav>
+
+  <main id="main" class="shell">
+    <section aria-labelledby="identity-title">
+      <div class="section-kicker">Identity checkpoint</div>
+      <h2 id="identity-title">The direction is the product.</h2>
+      <p class="section-intro">OpenAI's <code>openai/codex-plugin-cc</code> lets Claude Code invoke Codex. This bridge runs in the opposite direction: Codex supervises Claude through a durable control plane. It is an independent community project by Kennedy Umege and is not affiliated with or endorsed by OpenAI or Anthropic.</p>
+      <div class="callout">
+        <span class="icon" aria-hidden="true">↗</span>
+        <p><strong>Separate system, separate purpose.</strong> This bridge is separate from CAMPUS. CAMPUS is not required to install, launch, supervise, recover, or verify a bridge job.</p>
+      </div>
+    </section>
+
+    <section id="system">
+      <div class="section-kicker">System map</div>
+      <h2>One mission. Four durable hand-offs.</h2>
+      <p class="section-intro">Codex-Claude Bridge adds a durable orchestration layer to the Codex-to-Claude workflow. Initiation happens through the current source build's <code>codex-claude</code> command surface. The repository and npm package are temporarily named <code>codex-plugin-cc</code> during the compatibility-safe migration; that legacy identifier is not the product name.</p>
+      <div class="map" role="list" aria-label="Orchestration flow">
+        <div class="map-card" role="listitem"><span class="number">01 / ORIGIN</span><h3>Codex task</h3><p>Defines the request, acceptance criteria, workspace and independent checks.</p></div>
+        <div class="map-arrow" aria-hidden="true">→</div>
+        <div class="map-card" role="listitem"><span class="number">02 / CONTROL</span><h3>Bridge broker</h3><p>Creates the durable job ledger, owns coordination and records every lifecycle state.</p></div>
+        <div class="map-arrow" aria-hidden="true">→</div>
+        <div class="map-card" role="listitem"><span class="number">03 / EXECUTION</span><h3>Claude in tmux</h3><p>Runs the implementation in a durable session that can be observed, steered or recovered.</p></div>
+        <div class="map-arrow" aria-hidden="true">→</div>
+        <div class="map-card" role="listitem"><span class="number">04 / PROOF</span><h3>Independent gate</h3><p>The broker runs bounded origin-supplied argv checks; an ephemeral read-only Codex process reviews the recorded outcome before broker delivery.</p></div>
+      </div>
+      <div class="callout">
+        <span class="icon" aria-hidden="true">✦</span>
+        <p><strong>The job ID is your control handle.</strong> Capture the returned <code>ccb_...</code> identifier immediately. Every supervision and recovery command uses it.</p>
+      </div>
+    </section>
+
+    <section id="launch">
+      <div class="section-kicker">Initiation sequence</div>
+      <h2>Launch the bridge in five deliberate steps.</h2>
+      <p class="section-intro">Run these steps from the machine hosting Codex, Claude Code and tmux. Replace the example test command and acceptance criteria with the target repository's real gates.</p>
+
+      <div class="steps">
+        <article class="step">
+          <div class="step-no">1</div>
+          <div>
+            <h3>Install the public bridge release candidate</h3>
+            <p>The stable <code>latest</code> release remains <code>1.1.1</code>. Install the approved bridge RC from npm dist-tag <code>next</code>; it contains <code>delegate</code> and <code>bridge-doctor</code> without moving stable users automatically.</p>
+            <div class="code-card">
+              <div class="code-head"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Terminal - one-time setup</span><button class="copy" type="button" aria-label="Copy one-time setup commands" aria-live="polite">Copy</button></div>
+              <pre><code><span class="cmd">npm</span> install -g codex-plugin-cc@next
+<span class="cmd">codex-claude</span> enable
+<span class="comment"># Restart Codex CLI after enable completes.</span></code></pre>
+            </div>
+            <p>Confirm the installed build reports <code>1.2.0-rc.1</code> and exposes the new surface with <code>codex-claude --help</code>. The package is still named <code>codex-plugin-cc</code> during the staged migration. Do not treat OpenAI's repository of the same name as this bridge, and do not install the proposed scoped package until a separately verified release publishes it.</p>
+          </div>
+        </article>
+
+        <article class="step">
+          <div class="step-no">2</div>
+          <div>
+            <h3>Prove the control plane is ready</h3>
+            <p>Run both diagnostics. The first checks the full installation and registration path; the second checks the durable bridge primitives and executable compatibility.</p>
+            <div class="code-card">
+              <div class="code-head"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Terminal - readiness gate</span><button class="copy" type="button" aria-label="Copy readiness commands" aria-live="polite">Copy</button></div>
+              <pre><code><span class="cmd">codex-claude</span> doctor
+<span class="cmd">codex-claude</span> bridge-doctor <span class="flag">--json</span>
+
+<span class="comment"># Optional: include a live non-interactive Claude probe.</span>
+<span class="cmd">codex-claude</span> doctor <span class="flag">--probe-runtime</span></code></pre>
+            </div>
+            <p>Continue only when the required checks report ready. A green doctor proves local readiness; the actual mission still has to complete, verify and deliver.</p>
+          </div>
+        </article>
+
+        <article class="step">
+          <div class="step-no">3</div>
+          <div>
+            <h3>Enter the target workspace</h3>
+            <p>Start from the repository to be changed. Preserve its existing worktree state and choose a repository-native verification command before dispatch.</p>
+            <div class="code-card">
+              <div class="code-head"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Terminal - mission context</span><button class="copy" type="button" aria-label="Copy mission context commands" aria-live="polite">Copy</button></div>
+              <pre><code><span class="cmd">cd</span> /absolute/path/to/project
+<span class="cmd">git</span> status --short
+
+<span class="comment"># Confirm Codex supplied the origin thread ID.</span>
+<span class="cmd">printf</span> <span class="string">'%s\n'</span> <span class="string">"$CODEX_THREAD_ID"</span></code></pre>
+            </div>
+            <p>If <code>CODEX_THREAD_ID</code> is not present, pass the originating Codex task ID explicitly with <code>--thread-id</code>.</p>
+          </div>
+        </article>
+
+        <article class="step">
+          <div class="step-no">4</div>
+          <div>
+            <h3>Dispatch the implementation mission</h3>
+            <p>This write-capable template gives the worker the current repository, explicit acceptance criteria, one bounded repair attempt and a real independent verification command. Remove <code>--wait</code> when you want the job ID returned immediately for live supervision.</p>
+            <div class="code-card">
+              <div class="code-head"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Terminal - durable delegation</span><button class="copy" type="button" aria-label="Copy durable delegation command" aria-live="polite">Copy</button></div>
+              <pre><code><span class="cmd">codex-claude</span> delegate \
+  <span class="flag">--thread-id</span> <span class="string">"$CODEX_THREAD_ID"</span> \
+  <span class="flag">--profile</span> trusted-autonomous \
+  <span class="flag">--path</span> <span class="string">"$PWD"</span> \
+  <span class="flag">--repo-root</span> <span class="string">"$PWD"</span> \
+  <span class="flag">--permitted-root</span> <span class="string">"$PWD"</span> \
+  <span class="flag">--model</span> opus \
+  <span class="flag">--effort</span> xhigh \
+  <span class="flag">--accept</span> <span class="string">"The requested behavior is implemented"</span> \
+  <span class="flag">--accept</span> <span class="string">"Relevant tests pass with evidence"</span> \
+  <span class="flag">--verify-command</span> <span class="string">'["npm","test"]'</span> \
+  <span class="flag">--max-repairs</span> 1 \
+  <span class="flag">--wait</span> \
+  -- <span class="string">"Implement the requested change, preserve existing work, run the relevant tests, and report exact evidence."</span></code></pre>
+            </div>
+            <p><strong>Important:</strong> <code>--verify-command</code> is a JSON argument array, not a shell string. Use the target project's true test entry point, for example <code>["go","test","./..."]</code> or <code>["pytest","-q"]</code>.</p>
+          </div>
+        </article>
+
+        <article class="step">
+          <div class="step-no">5</div>
+          <div>
+            <h3>Record the job ID and supervise</h3>
+            <p>For a background dispatch, copy the returned <code>ccb_...</code> ID into the commands below. Follow logs, steer the same live session, and then wait for the verified delivery result.</p>
+            <div class="code-card">
+              <div class="code-head"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Terminal - control loop</span><button class="copy" type="button" aria-label="Copy control loop commands" aria-live="polite">Copy</button></div>
+              <pre><code><span class="cmd">codex-claude</span> status &lt;ccb_job-id&gt; <span class="flag">--json</span>
+<span class="cmd">codex-claude</span> logs &lt;ccb_job-id&gt; <span class="flag">--follow --timeout</span> 1800
+<span class="cmd">codex-claude</span> send &lt;ccb_job-id&gt; <span class="flag">--wait --message</span> <span class="string">"Focus on the failing integration test."</span>
+<span class="cmd">codex-claude</span> wait &lt;ccb_job-id&gt;
+<span class="cmd">codex-claude</span> status &lt;ccb_job-id&gt; <span class="flag">--json</span></code></pre>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="profiles">
+      <div class="section-kicker">Execution profile</div>
+      <h2>Choose the lane that matches the mission.</h2>
+      <p class="section-intro">The profile controls Claude's interactive permission behavior. It does not replace the task's repository scope, acceptance criteria or independent checks.</p>
+      <div class="choice-grid">
+        <article class="choice">
+          <span class="badge">Default</span>
+          <h3>Standard</h3>
+          <p>Omit <code>--profile</code> or pass <code>--profile standard</code>. Best for non-writing headless work or jobs that should retain ordinary permission behavior.</p>
+        </article>
+        <article class="choice featured">
+          <span class="badge">Write-capable</span>
+          <h3>Trusted autonomous</h3>
+          <p>Pass <code>--profile trusted-autonomous</code> to run without interactive Claude permission prompts on the same user account. Use it only for a workspace you deliberately trust; it is host trust, not OS isolation.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="supervise">
+      <div class="section-kicker">Live operations</div>
+      <h2>Observe, steer, recover - without losing the job.</h2>
+      <p class="section-intro">The bridge is valuable because execution survives outside the initiating Codex turn. The durable ledger and tmux session remain addressable through the job ID.</p>
+      <div class="command-grid">
+        <article class="mini-card"><h3>See every job</h3><p>Inspect active and terminal durable jobs.</p><code>codex-claude list --json</code></article>
+        <article class="mini-card"><h3>Inspect one state</h3><p>Read its worker, verification and delivery state.</p><code>codex-claude status &lt;ccb_job-id&gt; --json</code></article>
+        <article class="mini-card"><h3>Follow execution</h3><p>Stream the worker log until terminal or timeout.</p><code>codex-claude logs &lt;ccb_job-id&gt; --follow --timeout 1800</code></article>
+        <article class="mini-card"><h3>Attach to tmux</h3><p>Print the attach command, or attach directly with <code>--exec</code>.</p><code>codex-claude attach &lt;ccb_job-id&gt; --exec</code></article>
+        <article class="mini-card"><h3>Steer the same session</h3><p>Queue guidance and wait for its replay acknowledgement.</p><code>codex-claude send &lt;ccb_job-id&gt; --wait --message "..."</code></article>
+        <article class="mini-card"><h3>Recover supervision</h3><p>Resume the broker for one unsettled job or all of them.</p><code>codex-claude recover &lt;ccb_job-id&gt;</code></article>
+        <article class="mini-card"><h3>Answer a question</h3><p>Correlate the reply when the status contains a pending question ID.</p><code>codex-claude send &lt;id&gt; --question-id &lt;q-id&gt; --wait --message "..."</code></article>
+        <article class="mini-card"><h3>Cancel deliberately</h3><p>Record a human-readable cancellation reason in the durable lifecycle.</p><code>codex-claude cancel &lt;ccb_job-id&gt; --reason "Scope changed"</code></article>
+      </div>
+      <div class="callout">
+        <span class="icon" aria-hidden="true">↗</span>
+        <p><strong>Live steering has a clear window.</strong> Use <code>send</code> while the authoritative Claude worker is running. Once the first authoritative result closes the input window, start a new delegated job for follow-up work. <code>recover</code> restores supervision only for an unsettled job.</p>
+      </div>
+    </section>
+
+    <section id="completion">
+      <div class="section-kicker">Completion contract</div>
+      <h2>Process exit is not the finish line.</h2>
+      <p class="section-intro">A bridge mission is successful only after the worker completes, the origin's independent verification passes, and the result is delivered and acknowledged.</p>
+      <table class="status-table">
+        <thead><tr><th scope="col">Wait exit</th><th scope="col">Meaning</th><th scope="col">Operator action</th></tr></thead>
+        <tbody>
+          <tr><td>0 - Complete</td><td>Worker completed, verification passed, and origin delivery was acknowledged.</td><td>Review the receipt and changed files; the mission can close.</td></tr>
+          <tr><td>3 - Terminal non-success</td><td>The job failed, or verification/delivery did not satisfy the completion gate.</td><td>Inspect <code>status --json</code> and <code>logs</code>; dispatch a bounded repair if appropriate.</td></tr>
+          <tr><td>4 - Question pending</td><td>Claude needs operator input before it can continue.</td><td>Read the pending question and reply with <code>send --question-id ... --wait</code>.</td></tr>
+          <tr><td>Other nonzero</td><td>An operational error occurred, such as a wait timeout or invalid input.</td><td>Use the diagnostic output and <code>bridge-doctor --json</code> to isolate the control-plane issue.</td></tr>
+        </tbody>
+      </table>
+      <div class="checklist" aria-label="Mission closeout checklist">
+        <div class="check"><span class="check-mark" aria-hidden="true">✓</span>The receipt names the expected workspace and origin.</div>
+        <div class="check"><span class="check-mark" aria-hidden="true">✓</span>The worker outcome is terminal and explained.</div>
+        <div class="check"><span class="check-mark" aria-hidden="true">✓</span>Independent verification reports its exact command and evidence.</div>
+        <div class="check"><span class="check-mark" aria-hidden="true">✓</span>Delivery is acknowledged by the originating Codex task.</div>
+        <div class="check"><span class="check-mark" aria-hidden="true">✓</span>Changed files match the requested scope.</div>
+        <div class="check"><span class="check-mark" aria-hidden="true">✓</span>Remaining risks or follow-up work are explicit.</div>
+      </div>
+    </section>
+
+    <section id="command-deck">
+      <div class="section-kicker">Operator reference</div>
+      <h2>The compact bridge command deck.</h2>
+      <p class="section-intro">Keep this block beside the task. Substitute the job ID and target-specific verification command.</p>
+      <div class="code-card">
+        <div class="code-head"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Terminal - complete reference</span><button class="copy" type="button" aria-label="Copy complete command reference" aria-live="polite">Copy</button></div>
+        <pre><code><span class="comment"># One-time source installation and registration (pre-release bridge)</span>
+<span class="cmd">cd</span> /absolute/path/to/codex-plugin-cc
+<span class="cmd">npm</span> install -g .
+<span class="cmd">codex-claude</span> enable
+
+<span class="comment"># Readiness</span>
+<span class="cmd">codex-claude</span> doctor
+<span class="cmd">codex-claude</span> bridge-doctor <span class="flag">--json</span>
+
+<span class="comment"># Enter the target repository; this example returns immediately for background control.</span>
+<span class="cmd">cd</span> /absolute/path/to/project
+<span class="cmd">git</span> status --short
+
+<span class="comment"># Dispatch (add --wait for synchronous completion)</span>
+<span class="cmd">codex-claude</span> delegate \
+  <span class="flag">--thread-id</span> <span class="string">"$CODEX_THREAD_ID"</span> \
+  <span class="flag">--profile</span> trusted-autonomous \
+  <span class="flag">--path</span> <span class="string">"$PWD"</span> \
+  <span class="flag">--repo-root</span> <span class="string">"$PWD"</span> \
+  <span class="flag">--permitted-root</span> <span class="string">"$PWD"</span> \
+  <span class="flag">--verify-command</span> <span class="string">'["npm","test"]'</span> \
+  <span class="flag">--accept</span> <span class="string">"Requested behavior works and tests pass"</span> \
+  <span class="flag">--max-repairs</span> 1 \
+  -- <span class="string">"Implement the requested change and report exact validation evidence."</span>
+
+<span class="comment"># Supervise with the returned ccb_... ID</span>
+<span class="cmd">codex-claude</span> list <span class="flag">--json</span>
+<span class="cmd">codex-claude</span> status &lt;ccb_job-id&gt; <span class="flag">--json</span>
+<span class="cmd">codex-claude</span> logs &lt;ccb_job-id&gt; <span class="flag">--follow --timeout</span> 1800
+<span class="cmd">codex-claude</span> send &lt;ccb_job-id&gt; <span class="flag">--wait --message</span> <span class="string">"Your guidance"</span>
+<span class="cmd">codex-claude</span> wait &lt;ccb_job-id&gt;
+<span class="cmd">codex-claude</span> status &lt;ccb_job-id&gt; <span class="flag">--json</span>
+
+<span class="comment"># Recovery and controlled stop</span>
+<span class="cmd">codex-claude</span> recover &lt;ccb_job-id&gt;
+<span class="cmd">codex-claude</span> cancel &lt;ccb_job-id&gt; <span class="flag">--reason</span> <span class="string">"Reason"</span></code></pre>
+      </div>
+    </section>
+
+    <section id="troubleshoot">
+      <div class="section-kicker">Fast recovery</div>
+      <h2>When launch does not go green.</h2>
+      <table class="status-table">
+        <thead><tr><th scope="col">Signal</th><th scope="col">First check</th><th scope="col">Next move</th></tr></thead>
+        <tbody>
+          <tr><td>Command not found</td><td>Run <code>npm prefix -g</code> and confirm its bin directory is on <code>PATH</code>.</td><td>Reinstall globally, then open a fresh terminal.</td></tr>
+          <tr><td>Plugin not registered</td><td>Run <code>codex-claude enable --json</code>.</td><td>Restart Codex CLI and re-run <code>doctor</code>.</td></tr>
+          <tr><td>Bridge not ready</td><td>Inspect <code>codex-claude bridge-doctor --json</code>.</td><td>Repair only the named missing dependency or incompatible executable.</td></tr>
+          <tr><td>No origin thread ID</td><td>Check <code>CODEX_THREAD_ID</code> in the initiating Codex task.</td><td>Pass the task ID explicitly with <code>--thread-id</code>.</td></tr>
+          <tr><td>Question pending</td><td>Read <code>status &lt;id&gt; --json</code> for the question ID.</td><td>Reply through <code>send --question-id ... --wait</code>.</td></tr>
+          <tr><td>Broker interrupted</td><td>Confirm the job remains unsettled with <code>status</code>.</td><td>Run <code>recover &lt;id&gt;</code>, or <code>recover --all</code> for every unsettled job.</td></tr>
+          <tr><td>Verification failed</td><td>Inspect the exact command and receipt evidence in <code>status &lt;id&gt; --json</code>.</td><td>Correct the defect or the target-specific verification argv; do not declare success from worker exit.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <div class="launch-strip">
+      <div class="section-kicker">Ready state</div>
+      <h2>Define. Dispatch. Direct. Prove.</h2>
+      <p>The Codex-Claude bridge is initiated when the plugin is registered and healthy, the mission is dispatched with a real verification command, and the returned job ID is under active supervision.</p>
+      <div class="hero-actions" style="justify-content:center">
+        <a class="button primary" href="#launch">Return to launch sequence</a>
+        <a class="button" href="#command-deck">Copy the command deck</a>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="shell footer-row">
+      <span>Codex-Claude Bridge by Kenmege · Launch Guide</span>
+      <span>Codex → Claude · legacy package currently <code>codex-plugin-cc</code> · Command surface verified 19 July 2026</span>
+    </div>
+  </footer>
+
+  <script>
+    const progress = document.getElementById('read-progress');
+    const updateProgress = () => {
+      const total = document.documentElement.scrollHeight - window.innerHeight;
+      const percent = total > 0 ? Math.min(100, (window.scrollY / total) * 100) : 0;
+      progress.style.width = percent + '%';
+    };
+    addEventListener('scroll', updateProgress, { passive: true });
+    updateProgress();
+
+    document.querySelectorAll('.copy').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const codeNode = button.closest('.code-card').querySelector('code');
+        const code = codeNode.innerText;
+        const original = button.textContent;
+        const originalLabel = button.getAttribute('aria-label');
+        let copied = false;
+        try {
+          await navigator.clipboard.writeText(code);
+          copied = true;
+        } catch {}
+        if (!copied) {
+          const fallback = document.createElement('textarea');
+          fallback.value = code;
+          fallback.setAttribute('readonly', '');
+          fallback.style.position = 'fixed';
+          fallback.style.opacity = '0';
+          document.body.appendChild(fallback);
+          fallback.focus();
+          fallback.select();
+          copied = document.execCommand('copy');
+          fallback.remove();
+        }
+        if (!copied) {
+          const range = document.createRange();
+          range.selectNodeContents(codeNode);
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+        const status = copied ? 'Copied' : 'Press Command-C';
+        button.textContent = status;
+        button.setAttribute('aria-label', status);
+        button.focus();
+        setTimeout(() => {
+          button.textContent = original;
+          button.setAttribute('aria-label', originalLabel);
+          if (!copied) window.getSelection().removeAllRanges();
+        }, 1800);
+      });
+    });
+  </script>
+</body>
+</html>

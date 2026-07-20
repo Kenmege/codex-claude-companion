@@ -1,5 +1,28 @@
 # Architecture
 
+The implemented request, event, result, trust-profile, and delivery-state
+contracts are documented in [Codex-Claude Bridge contracts](bridge-capabilities.md),
+with naming and compatibility direction in [Bridge identity and migration](bridge-migration.md).
+
+## Durable Bridge
+
+```text
+active Codex task
+  -> codex-claude delegate --verify-command <JSON argv> -- <task>
+  -> detached local broker: ledger, heartbeats, leases, messages, recovery
+  -> named tmux session -> Claude worker
+  -> result normalization -> delivery / acknowledgement
+  -> separate ephemeral Codex verifier (read-only sandbox)
+  -> durable receipt or fallback inbox
+```
+
+The broker, not the caller or worker, owns lifecycle transitions and claims.
+Worker completion, delivery, acknowledgement, and verification remain separate
+states. Recovery reconciles the ledger with exact tmux and repository identity;
+ambiguous ownership blocks duplicate launch. See
+[runtime compatibility](bridge-runtime-compatibility.md) for the mechanical and
+security readiness boundaries.
+
 ## Split-Terminal Coding Workspace
 
 ```text
@@ -19,9 +42,9 @@ The dispatch returns immediately, and the helper parses the authoritative short
 session ID printed by Claude Code. It fails closed instead of inventing an ID
 when that receipt is absent. A 30-second startup bound terminates the dispatch
 process tree if Claude's native background handoff stalls. The current Codex
-task stays responsive and is the
-only GPT-side process; model routing therefore inherits the active Codex
-selection without a hardcoded ID or nested `codex` invocation. Claude's normal
+task stays responsive. This legacy lane does not launch a nested Codex process;
+model routing therefore inherits the active Codex selection without a hardcoded
+ID. Claude's normal
 workspace lane uses native coding permissions and approval prompts. The
 coding request is piped over stdin rather than included in process arguments.
 The separate review pipeline below retains its read-only tool fences.

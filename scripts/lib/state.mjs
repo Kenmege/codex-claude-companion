@@ -13,7 +13,7 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function ensurePrivateDirectory(dir) {
+export function ensurePrivateDirectory(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   if (process.platform === "win32") {
     const currentStat = fs.lstatSync(dir);
@@ -160,13 +160,26 @@ export function resolveJobPromptFile(cwd, jobId, options = {}) {
   return resolveJobArtifact(cwd, jobId, ".prompt.md", options);
 }
 
-function writeJsonAtomic(file, payload) {
+export function writeJsonAtomic(file, payload) {
   const tmpFile = `${file}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`;
-  fs.writeFileSync(tmpFile, `${JSON.stringify(payload, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600
-  });
+  const handle = fs.openSync(tmpFile, "wx", 0o600);
+  try {
+    fs.writeFileSync(handle, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
   fs.renameSync(tmpFile, file);
+  // Flush the rename itself so the durable snapshot survives a crash right after
+  // the swap. Directory fsync is a POSIX guarantee; skip it where it is not one.
+  if (process.platform !== "win32") {
+    const directoryHandle = fs.openSync(path.dirname(file), fs.constants.O_RDONLY);
+    try {
+      fs.fsyncSync(directoryHandle);
+    } finally {
+      fs.closeSync(directoryHandle);
+    }
+  }
 }
 
 function sleepSync(ms) {
@@ -292,7 +305,7 @@ function listLiveContenders(queueDir, prefix) {
   return names.sort();
 }
 
-function acquireLock(lockFile, options = {}) {
+export function acquireQueuedLock(lockFile, options = {}) {
   const timeoutMs = options.timeoutMs ?? 5_000;
   const startedAt = Date.now();
   let delayMs = 5;
@@ -302,11 +315,7 @@ function acquireLock(lockFile, options = {}) {
   const owner = `${process.pid}:${nonce}\n`;
   let contenderDir = path.join(queueDir, `choosing-${token}`);
 
-  fs.mkdirSync(queueDir, { recursive: true, mode: 0o700 });
-  const queueStat = fs.lstatSync(queueDir);
-  if (queueStat.isSymbolicLink() || !queueStat.isDirectory()) {
-    throw new Error(`Unsafe job state lock queue ${queueDir}`);
-  }
+  ensurePrivateDirectory(queueDir);
   fs.mkdirSync(contenderDir, { mode: 0o700 });
   fs.writeFileSync(path.join(contenderDir, "owner"), owner, { encoding: "utf8", mode: 0o600, flag: "wx" });
 
@@ -390,7 +399,7 @@ export function createJob(cwd, jobId, payload, options = {}) {
 
 export function updateJob(cwd, jobId, patch, options = {}) {
   const jobFile = resolveJobFile(cwd, jobId, options);
-  const releaseLock = acquireLock(`${jobFile}.lock`);
+  const releaseLock = acquireQueuedLock(`${jobFile}.lock`);
   try {
     const current = readJob(cwd, jobId, options);
     if (!current) {

@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Kenmege/codex-plugin-cc/schemas/bridge-delegation-request.schema.json",
+  "title": "Codex-Claude Bridge delegation request",
+  "description": "Immutable request envelope persisted before a Claude worker is dispatched.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "jobId", "origin", "worker", "execution", "task"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "jobId": { "$ref": "#/$defs/jobId" },
+    "origin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codexThreadId", "codexTurnId", "cwd", "repoRoot", "branch", "head"],
+      "properties": {
+        "codexThreadId": { "type": "string", "minLength": 1 },
+        "codexTurnId": { "type": ["string", "null"], "minLength": 1 },
+        "cwd": { "$ref": "#/$defs/absolutePath" },
+        "repoRoot": { "$ref": "#/$defs/absolutePath" },
+        "branch": { "type": ["string", "null"], "minLength": 1 },
+        "head": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40,64}$" }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider", "model", "agent", "inlineAgents", "customAgentsFile", "pluginDirs",
+        "mcpConfigPaths", "addDirs", "settingSources", "effort", "resolvedRuntimeVersion"
+      ],
+      "properties": {
+        "provider": { "const": "anthropic" },
+        "model": { "type": "string", "minLength": 1, "description": "Caller-supplied Claude model selector or model ID." },
+        "agent": { "type": ["string", "null"], "minLength": 1 },
+        "inlineAgents": { "type": ["object", "null"] },
+        "customAgentsFile": { "anyOf": [{ "$ref": "#/$defs/absolutePath" }, { "type": "null" }] },
+        "pluginDirs": { "$ref": "#/$defs/pathArray" },
+        "mcpConfigPaths": { "$ref": "#/$defs/pathArray" },
+        "addDirs": { "$ref": "#/$defs/pathArray" },
+        "settingSources": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["user", "project", "local"] }
+        },
+        "effort": { "type": "string", "minLength": 1 },
+        "resolvedRuntimeVersion": { "type": "string", "minLength": 1 }
+      },
+      "oneOf": [
+        { "properties": { "agent": { "type": ["string", "null"], "minLength": 1 }, "inlineAgents": { "type": "object", "minProperties": 1 }, "customAgentsFile": { "type": "null" } } },
+        { "properties": { "agent": { "type": ["string", "null"], "minLength": 1 }, "inlineAgents": { "type": "null" }, "customAgentsFile": { "$ref": "#/$defs/absolutePath" } } },
+        { "properties": { "agent": { "type": ["string", "null"], "minLength": 1 }, "inlineAgents": { "type": "null" }, "customAgentsFile": { "type": "null" } } }
+      ]
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile", "executor", "tmuxSession", "workspaceMode", "requestedWorkspacePath",
+        "canonicalWorkspacePath", "permittedRoot", "claudeSessionId", "sandboxAttestation",
+        "timeoutSeconds", "effectiveClaudePermissionArgs"
+      ],
+      "properties": {
+        "profile": { "enum": ["review-readonly", "standard", "trusted-autonomous", "sandbox-autonomous"] },
+        "executor": { "enum": ["tmux", "native-background"] },
+        "tmuxSession": { "type": ["string", "null"], "pattern": "^ccb-[A-Za-z0-9_-]+$" },
+        "workspaceMode": { "enum": ["current", "worktree"] },
+        "requestedWorkspacePath": { "$ref": "#/$defs/absolutePath" },
+        "canonicalWorkspacePath": { "$ref": "#/$defs/absolutePath" },
+        "permittedRoot": { "anyOf": [{ "$ref": "#/$defs/absolutePath" }, { "type": "null" }] },
+        "claudeSessionId": { "type": "string", "format": "uuid" },
+        "sandboxAttestation": { "anyOf": [{ "$ref": "#/$defs/sandboxAttestation" }, { "type": "null" }] },
+        "timeoutSeconds": { "type": "integer", "minimum": 1 },
+        "effectiveClaudePermissionArgs": { "type": "array", "items": { "type": "string" } }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "executor": { "const": "tmux" } }, "required": ["executor"] },
+          "then": { "properties": { "tmuxSession": { "type": "string", "pattern": "^ccb-[A-Za-z0-9_-]+$" } } },
+          "else": { "properties": { "tmuxSession": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "profile": { "const": "review-readonly" } }, "required": ["profile"] },
+          "then": { "properties": { "effectiveClaudePermissionArgs": { "$ref": "#/$defs/reviewReadonlyArgs" }, "sandboxAttestation": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "profile": { "const": "standard" } }, "required": ["profile"] },
+          "then": { "properties": { "effectiveClaudePermissionArgs": { "$ref": "#/$defs/standardArgs" }, "sandboxAttestation": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "profile": { "const": "trusted-autonomous" } }, "required": ["profile"] },
+          "then": { "properties": { "effectiveClaudePermissionArgs": { "$ref": "#/$defs/autonomousArgs" }, "sandboxAttestation": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "profile": { "const": "sandbox-autonomous" } }, "required": ["profile"] },
+          "then": { "properties": { "effectiveClaudePermissionArgs": { "$ref": "#/$defs/autonomousArgs" }, "sandboxAttestation": { "$ref": "#/$defs/sandboxAttestation" } } }
+        }
+      ]
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["promptFile", "acceptance"],
+      "properties": {
+        "promptFile": { "type": "string", "minLength": 1 },
+        "acceptance": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  },
+  "$defs": {
+    "jobId": { "type": "string", "pattern": "^ccb_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "absolutePath": { "type": "string", "pattern": "^/" },
+    "pathArray": { "type": "array", "items": { "$ref": "#/$defs/absolutePath" } },
+    "sandboxAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jobId", "executor", "canonicalWorkspacePath", "issuedAt", "authority"],
+      "properties": {
+        "jobId": { "$ref": "#/$defs/jobId" },
+        "executor": { "enum": ["tmux", "native-background"] },
+        "canonicalWorkspacePath": { "$ref": "#/$defs/absolutePath" },
+        "issuedAt": { "type": "string", "format": "date-time" },
+        "authority": { "type": "string", "minLength": 1 }
+      }
+    },
+    "settingSourcesArg": { "type": "string", "pattern": "^--setting-sources=(?:(?:user|project|local)(?:,(?:user|project|local))*)?$" },
+    "standardArgs": { "type": "array", "prefixItems": [{ "$ref": "#/$defs/settingSourcesArg" }, { "const": "--permission-mode" }, { "const": "default" }], "minItems": 3, "maxItems": 3 },
+    "autonomousArgs": { "type": "array", "prefixItems": [{ "$ref": "#/$defs/settingSourcesArg" }, { "const": "--permission-mode" }, { "const": "bypassPermissions" }], "minItems": 3, "maxItems": 3 },
+    "reviewReadonlyArgs": {
+      "type": "array",
+      "prefixItems": [
+        { "$ref": "#/$defs/settingSourcesArg" }, { "const": "--tools" }, { "const": "Read" }, { "const": "Glob" }, { "const": "Grep" }, { "const": "Task" }, { "const": "WebFetch" }, { "const": "WebSearch" },
+        { "const": "--allowedTools" }, { "const": "Read" }, { "const": "Glob" }, { "const": "Grep" }, { "const": "Task" }, { "const": "WebSearch" },
+        { "const": "WebFetch(https://docs.anthropic.com/*)" }, { "const": "WebFetch(https://nvd.nist.gov/*)" },
+        { "const": "WebFetch(https://cve.mitre.org/*)" }, { "const": "WebFetch(https://github.com/*)" },
+        { "const": "WebFetch(https://raw.githubusercontent.com/*)" }, { "const": "WebFetch(https://api.github.com/*)" },
+        { "const": "WebFetch(https://gist.github.com/*)" }, { "const": "WebFetch(https://developer.mozilla.org/*)" },
+        { "const": "WebFetch(https://nodejs.org/api/*)" }, { "const": "WebFetch(https://nodejs.org/dist/*)" },
+        { "const": "WebFetch(https://registry.npmjs.org/*)" }, { "const": "WebFetch(https://www.npmjs.com/package/*)" },
+        { "const": "WebFetch(https://pypi.org/project/*)" }, { "const": "WebFetch(https://crates.io/crates/*)" },
+        { "const": "WebFetch(https://docs.python.org/*)" }, { "const": "WebFetch(https://owasp.org/*)" },
+        { "const": "WebFetch(https://cwe.mitre.org/*)" }, { "const": "WebFetch(https://www.rfc-editor.org/*)" },
+        { "const": "WebFetch(https://datatracker.ietf.org/*)" }, { "const": "WebFetch(https://www.w3.org/TR/*)" },
+        { "const": "WebFetch(https://www.nice.org.uk/*)" }, { "const": "WebFetch(https://bnf.nice.org.uk/*)" },
+        { "const": "WebFetch(https://www.bmj.com/*)" }, { "const": "WebFetch(https://www.thelancet.com/*)" },
+        { "const": "WebFetch(https://www.nejm.org/*)" }, { "const": "WebFetch(https://jamanetwork.com/*)" },
+        { "const": "WebFetch(https://www.cochranelibrary.com/*)" }, { "const": "WebFetch(https://www.who.int/*)" },
+        { "const": "WebFetch(https://www.gov.uk/government/*)" }, { "const": "WebFetch(https://www.ukhsa.gov.uk/*)" },
+        { "const": "WebFetch(https://www.nhs.uk/*)" }, { "const": "--disallowedTools" }, { "const": "Edit" }, { "const": "Write" }, { "const": "NotebookEdit" },
+        { "const": "--permission-mode" }, { "const": "default" }, { "const": "--strict-mcp-config" }
+      ],
+      "minItems": 52,
+      "maxItems": 52
+    }
+  }
+}

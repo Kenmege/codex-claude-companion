@@ -1,13 +1,26 @@
+// Modified by Kennedy Umege for Codex-Claude Bridge, 2026.
 import fs from "node:fs";
 import path from "node:path";
-import test from "node:test";
+import process from "node:process";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
-import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
-import { loadBrokerSession, saveBrokerSession } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
+import {
+  assertBrokerCleanupComplete,
+  cleanupLeakedBrokers,
+  initGitRepo,
+  makeTempDir,
+  run,
+  waitForTerminatedProcessTrees
+} from "./helpers.mjs";
+import {
+  clearBrokerSession,
+  loadBrokerSession,
+  saveBrokerSession
+} from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
 import { resolveStateDir } from "../plugins/codex/scripts/lib/state.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -15,6 +28,36 @@ const PLUGIN_ROOT = path.join(ROOT, "plugins", "codex");
 const SCRIPT = path.join(PLUGIN_ROOT, "scripts", "codex-companion.mjs");
 const STOP_HOOK = path.join(PLUGIN_ROOT, "scripts", "stop-review-gate-hook.mjs");
 const SESSION_HOOK = path.join(PLUGIN_ROOT, "scripts", "session-lifecycle-hook.mjs");
+const hadPluginDataDir = Object.hasOwn(process.env, "CLAUDE_PLUGIN_DATA");
+const previousPluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
+const runtimePluginDataDir = makeTempDir("codex-plugin-runtime-data-");
+process.env.CLAUDE_PLUGIN_DATA = runtimePluginDataDir;
+
+// A live Claude Code session exports CODEX_COMPANION_SESSION_ID; codex-companion
+// status/result then filter jobs to that session. Tests that seed jobs without a
+// session id and expect them to surface (and those that set an explicit session
+// in a child env) must not inherit the host value, so scrub it at module load.
+const hadSessionId = Object.hasOwn(process.env, "CODEX_COMPANION_SESSION_ID");
+const previousSessionId = process.env.CODEX_COMPANION_SESSION_ID;
+delete process.env.CODEX_COMPANION_SESSION_ID;
+
+// Several tests below exercise the real CLI against fake Codex fixtures, which
+// lazily spawns a detached app-server-broker per temp-dir repo. Individual
+// tests are not required to tear that broker down themselves; reap every
+// broker this file leaked once, after all tests finish, so none survive the
+// test run regardless of which tests happened to trigger a spawn.
+after(async () => {
+  try {
+    const cleanup = cleanupLeakedBrokers();
+    assertBrokerCleanupComplete(cleanup);
+    await waitForTerminatedProcessTrees(cleanup.terminatedPids);
+  } finally {
+    if (hadPluginDataDir) process.env.CLAUDE_PLUGIN_DATA = previousPluginDataDir;
+    else delete process.env.CLAUDE_PLUGIN_DATA;
+    if (hadSessionId) process.env.CODEX_COMPANION_SESSION_ID = previousSessionId;
+    else delete process.env.CODEX_COMPANION_SESSION_ID;
+  }
+});
 
 async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 50 } = {}) {
   const start = Date.now();
@@ -26,6 +69,23 @@ async function waitFor(predicate, { timeoutMs = 5000, intervalMs = 50 } = {}) {
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   throw new Error("Timed out waiting for condition.");
+}
+
+// Spawn a detached process that presents the exact argv shape of a background
+// codex-companion task worker (`node .../codex-companion.mjs task-worker --cwd
+// <cwd> --job-id <jobId>`). The cancel and session-cleanup paths verify pid
+// ownership via that argv before signalling the group, so a generic sleeper is
+// (correctly) refused; this stand-in is what a real worker looks like to `ps`.
+function spawnTrackedWorker(jobId, cwd) {
+  const workerScript = path.join(makeTempDir("codex-worker-shape-"), "codex-companion.mjs");
+  fs.writeFileSync(workerScript, "setInterval(() => {}, 1000);\n", "utf8");
+  const child = spawn(process.execPath, [workerScript, "task-worker", "--cwd", cwd, "--job-id", jobId], {
+    cwd,
+    detached: true,
+    stdio: "ignore"
+  });
+  child.unref();
+  return child;
 }
 
 test("setup reports ready when fake codex is installed and authenticated", () => {
@@ -1409,12 +1469,7 @@ test("cancel stops an active background job and marks it cancelled", async (t) =
   const jobsDir = path.join(stateDir, "jobs");
   fs.mkdirSync(jobsDir, { recursive: true });
 
-  const sleeper = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-    cwd: workspace,
-    detached: true,
-    stdio: "ignore"
-  });
-  sleeper.unref();
+  const sleeper = spawnTrackedWorker("task-live", workspace);
 
   t.after(() => {
     try {
@@ -1688,12 +1743,7 @@ test("session end fully cleans up jobs for the ending session", async (t) => {
   fs.writeFileSync(completedJobFile, JSON.stringify({ id: "review-completed" }, null, 2), "utf8");
   fs.writeFileSync(otherJobFile, JSON.stringify({ id: "review-other" }, null, 2), "utf8");
 
-  const sleeper = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-    cwd: repo,
-    detached: true,
-    stdio: "ignore"
-  });
-  sleeper.unref();
+  const sleeper = spawnTrackedWorker("review-running", repo);
   fs.writeFileSync(runningJobFile, JSON.stringify({ id: "review-running" }, null, 2), "utf8");
 
   t.after(() => {
@@ -1785,6 +1835,52 @@ test("session end fully cleans up jobs for the ending session", async (t) => {
   assert.deepEqual(state.jobs.map((job) => job.id), ["review-other"]);
   const otherJob = state.jobs[0];
   assert.equal(otherJob.logFile, otherSessionLog);
+});
+
+test("session end preserves a live process whose persisted broker identity does not match", async (t) => {
+  const repo = makeTempDir();
+  initGitRepo(repo);
+  const sessionDir = makeTempDir();
+  const sleeper = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    cwd: repo,
+    detached: true,
+    stdio: "ignore"
+  });
+  sleeper.unref();
+
+  t.after(() => {
+    clearBrokerSession(repo);
+    try {
+      process.kill(-sleeper.pid, "SIGTERM");
+    } catch {
+      try {
+        process.kill(sleeper.pid, "SIGTERM");
+      } catch {
+        // Ignore missing process.
+      }
+    }
+  });
+
+  saveBrokerSession(repo, {
+    endpoint: `unix:${path.join(sessionDir, "missing.sock")}`,
+    pidFile: path.join(sessionDir, "broker.pid"),
+    logFile: path.join(sessionDir, "broker.log"),
+    sessionDir,
+    pid: sleeper.pid,
+    scriptPath: path.join(sessionDir, "not-the-broker.mjs"),
+    identityToken: "f".repeat(64)
+  });
+
+  const result = run("node", [SESSION_HOOK, "SessionEnd"], {
+    cwd: repo,
+    env: process.env,
+    input: JSON.stringify({ hook_event_name: "SessionEnd", cwd: repo })
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.doesNotThrow(() => process.kill(sleeper.pid, 0));
+  assert.equal(loadBrokerSession(repo)?.pid, sleeper.pid);
 });
 
 test("stop hook runs a stop-time review task and blocks on findings when the review gate is enabled", () => {

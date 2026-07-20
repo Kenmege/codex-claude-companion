@@ -1,0 +1,24 @@
+{
+  "name": "codex-plugin-cc",
+  "version": "0.0.0-development",
+  "private": true,
+  "type": "module",
+  "description": "Compatibility shim that forwards legacy codex-plugin-cc commands to Codex-Claude Bridge by Kenmege.",
+  "license": "Apache-2.0",
+  "bin": {
+    "codex-claude": "bin/codex-claude.mjs",
+    "codex-claude-review": "bin/codex-claude.mjs"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "dependencies": {
+    "@kenmege/codex-claude-bridge": "0.0.0-development"
+  }
+}

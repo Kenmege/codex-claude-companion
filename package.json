@@ -1,8 +1,9 @@
 {
+  "x-modification-notice": "Modified by Kennedy Umege for Codex-Claude Bridge, 2026.",
   "name": "codex-plugin-cc",
-  "version": "1.1.1",
+  "version": "1.2.0-rc.1",
   "type": "module",
-  "description": "Codex-supervised Claude coding workspace plus isolated agentic review, adversarial review, deep review, and security review lanes.",
+  "description": "Durable Codex-to-Claude delegation with tmux ownership, recovery, collaboration, independent verification, and isolated review lanes.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -23,16 +24,23 @@
     "schemas/",
     "skills/",
     "scripts/claude-review-companion.mjs",
+    "scripts/bridge-broker.mjs",
     "scripts/validate-repo.mjs",
     "scripts/bin/",
     "scripts/lib/",
+    "plugins/codex/.claude-plugin/plugin.json",
+    "plugins/codex/scripts/app-server-broker.mjs",
+    "plugins/codex/scripts/lib/",
     "README.md",
     "CHANGELOG.md",
     "SECURITY.md",
     "CONTRIBUTING.md",
     "LICENSE",
     "NOTICE",
-    "docs/architecture.md"
+    "docs/architecture.md",
+    "docs/bridge-capabilities.md",
+    "docs/bridge-migration.md",
+    "docs/bridge-runtime-compatibility.md"
   ],
   "engines": {
     "node": ">=18.18.0"
@@ -40,7 +48,7 @@
   "scripts": {
     "lint": "node scripts/validate-repo.mjs",
     "test": "node --test",
-    "test:windows": "node --test test/args.test.mjs test/mcp-config.test.mjs test/release-docs.test.mjs test/render.test.mjs",
+    "test:windows": "node --test test/args.test.mjs test/mcp-config.test.mjs test/release-docs.test.mjs test/render.test.mjs tests/broker-lifecycle.test.mjs tests/helpers.test.mjs tests/process.test.mjs",
     "check": "npm run lint && npm test",
     "pack:check": "npm pack --dry-run"
   },
@@ -51,6 +59,10 @@
     "claude-code",
     "coding-agent",
     "orchestration",
+    "delegation",
+    "tmux",
+    "durable-agent",
+    "agent-bridge",
     "review",
     "opus",
     "sonnet",
@@ -58,5 +70,9 @@
     "adversarial-review",
     "deep-review",
     "security-review"
-  ]
+  ],
+  "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1"
+  }
 }

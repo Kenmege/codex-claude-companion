@@ -1,3 +1,4 @@
+// Modified by Kennedy Umege for Codex-Claude Bridge, 2026.
 /**
  * @typedef {import("./app-server-protocol").AppServerNotification} AppServerNotification
  * @typedef {import("./app-server-protocol").ReviewTarget} ReviewTarget
@@ -604,11 +605,32 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
   }
 }
 
-async function withAppServer(cwd, fn) {
+async function withDeadline(operation, timeoutMs) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return operation;
+  let timeout;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => {
+          const error = new Error(`Codex app-server operation timed out after ${timeoutMs}ms`);
+          error.code = "ETIMEDOUT";
+          reject(error);
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function withAppServer(cwd, fn, options = {}) {
   let client = null;
   try {
-    client = await CodexAppServerClient.connect(cwd);
-    const result = await fn(client);
+    client = await CodexAppServerClient.connect(cwd, {
+      disableBroker: options.disableBroker === true
+    });
+    const result = await withDeadline(fn(client), options.timeoutMs);
     await client.close();
     return result;
   } catch (error) {
@@ -628,7 +650,7 @@ async function withAppServer(cwd, fn) {
 
     const directClient = await CodexAppServerClient.connect(cwd, { disableBroker: true });
     try {
-      return await fn(directClient);
+      return await withDeadline(fn(directClient), options.timeoutMs);
     } finally {
       await directClient.close();
     }
@@ -1025,6 +1047,9 @@ export async function runAppServerTurn(cwd, options = {}) {
       touchedFiles: collectTouchedFiles(turnState.fileChanges),
       commandExecutions: turnState.commandExecutions
     };
+  }, {
+    disableBroker: options.disableBroker,
+    timeoutMs: options.timeoutMs
   });
 }
 

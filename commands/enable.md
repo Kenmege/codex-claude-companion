@@ -38,5 +38,9 @@ codex-claude enable --config /path/to/config.toml
 ## After Running
 
 Restart Codex CLI to load the plugin. Slash commands then available:
-`/claude-review:review`, `/claude-review:elite-review`, `/claude-review:deep-review`,
-`/claude-review:security-review`, `/claude-review:setup`.
+`/claude-review:delegate`, `/claude-review:wait`, `/claude-review:logs`,
+`/claude-review:send`, `/claude-review:recover`,
+`/claude-review:bridge-doctor`, `/claude-review:workspace`,
+`/claude-review:review`, `/claude-review:elite-review`,
+`/claude-review:deep-review`, `/claude-review:security-review`, and
+`/claude-review:setup`.

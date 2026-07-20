@@ -133,3 +133,58 @@ export function formatCommandFailure(result) {
   }
   return parts.join(": ");
 }
+
+const PROCESS_INSPECTION_TIMEOUT_MS = 2_000;
+
+function inspectProcessCommandLine(pid, options = {}) {
+  const platform = options.platform ?? process.platform;
+  const inspectProcess = options.inspectProcess ?? spawnSync;
+  const inspection = {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: options.processInspectionTimeoutMs ?? PROCESS_INSPECTION_TIMEOUT_MS
+  };
+  const result = platform === "win32"
+    ? inspectProcess("powershell.exe", [
+        "-NoProfile", "-NonInteractive", "-Command",
+        `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CommandLine`
+      ], inspection)
+    : inspectProcess("ps", ["-ww", "-p", String(pid), "-o", "command="], inspection);
+  if (!result || result.status !== 0 || typeof result.stdout !== "string") {
+    return null;
+  }
+  const command = result.stdout.trim();
+  return command || null;
+}
+
+// Confirm the process still at `pid` is the detached background worker launched
+// for exactly this job before signalling its group. Without this, a job whose
+// worker already exited can have its recorded pid reused by an unrelated
+// same-user process, and a blind process-group kill would take that process
+// (and its children) down. The background worker is spawned as
+// `node .../codex-companion.mjs task-worker --cwd <cwd> --job-id <jobId>`, so its
+// argv carries a job-unique identity to match against — mirroring the durable
+// bridge's ps/argv ownership checks.
+export function processTreeOwnsJob(pid, jobId, options = {}) {
+  if (!Number.isInteger(pid) || pid <= 0 || typeof jobId !== "string" || jobId.length === 0) {
+    return false;
+  }
+  const command = inspectProcessCommandLine(pid, options);
+  if (!command) {
+    return false;
+  }
+  const escapedJobId = jobId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Tolerate a closing quote after the script name so a quoted argv path
+  // (`"C:\\...\\codex-companion.mjs" task-worker ...`) still matches.
+  return /(?:^|[/\\])codex-companion\.mjs(?=["']?(?:\s|$))/.test(command) &&
+    /(?:^|\s)task-worker(?=\s)/.test(command) &&
+    new RegExp(`(?:^|\\s)--job-id(?:=|\\s+)["']?${escapedJobId}["']?(?=\\s|$)`).test(command);
+}
+
+export function terminateTrackedJobProcessTree(job, options = {}) {
+  const pid = job?.pid;
+  if (!Number.isInteger(pid) || pid <= 0 || !processTreeOwnsJob(pid, job?.id, options)) {
+    return { attempted: false, delivered: false, method: null };
+  }
+  return (options.terminate ?? terminateProcessTree)(pid, options);
+}

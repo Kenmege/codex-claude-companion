@@ -1,7 +1,7 @@
 {
   "name": "claude-review",
-  "version": "1.1.1",
-  "description": "Open a full Claude coding workspace supervised by Codex, or run agentic Claude Opus-alias review passes with isolated read-only tool access.",
+  "version": "1.2.0-rc.1",
+  "description": "Delegate durable Claude coding jobs from Codex with tmux ownership, recovery, collaboration, and independent verification, or run isolated read-only review lanes.",
   "author": {
     "name": "Kennedy Umege"
   },
@@ -22,9 +22,9 @@
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Claude Workspace & Review",
-    "shortDescription": "Full Claude coding workspace with inherited Codex supervision plus isolated review lanes",
-    "longDescription": "Use Claude Workspace & Review to open Claude Code as a full interactive coding worker while the active Codex model supervises, verifies, and reviews the result. The workspace can edit files, run commands, and execute tests under Claude's native permission prompts. Separate high-scrutiny, adversarial, deep multi-agent, and security review commands retain their read-only tool fences.",
+    "displayName": "Codex-Claude Bridge",
+    "shortDescription": "Durable Claude delegation from Codex with recovery and independent verification",
+    "longDescription": "Use Codex-Claude Bridge to delegate Claude coding work to a tmux-owned worker while Codex remains responsive, monitors durable state, exchanges messages, recovers interrupted jobs, and runs an independent verification command. Legacy workspace and isolated high-scrutiny, adversarial, deep multi-agent, and security review lanes remain available for compatibility.",
     "developerName": "Kennedy Umege",
     "category": "Coding",
     "capabilities": [
@@ -34,7 +34,7 @@
     ],
     "websiteURL": "https://github.com/Kenmege/codex-plugin-cc",
     "defaultPrompt": [
-      "Open a full Claude coding workspace and supervise the implementation with the active Codex model.",
+      "Delegate this implementation to Claude, monitor it durably, and independently verify the result.",
       "Run an exhaustive deep adversarial review with sub-agent dispatch on the current diff.",
       "Run a security-focused Claude review on the current diff and map findings to OWASP/CWE."
     ],
