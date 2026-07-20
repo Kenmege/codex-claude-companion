@@ -108,7 +108,7 @@ The default review lanes are read-only:
 ## Reporting
 
 Report vulnerabilities through GitHub Security Advisories:
-https://github.com/Kenmege/codex-plugin-cc/security/advisories/new
+https://github.com/Kenmege/codex-claude-companion/security/advisories/new
 
 Do not open a public issue containing exploit details, tokens, patient data, or workspace paths.
 

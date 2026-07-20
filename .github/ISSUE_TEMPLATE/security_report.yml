@@ -11,7 +11,7 @@ body:
         Do not include exploit details in a public issue.
 
         Use GitHub private vulnerability reporting instead:
-        https://github.com/Kenmege/codex-plugin-cc/security/advisories/new
+        https://github.com/Kenmege/codex-claude-companion/security/advisories/new
 
         Include the affected version, impact, reproduction outline, and any suggested fix in the private advisory. Public security issues may be closed without discussion to protect users while a fix is prepared.
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Kenmege/codex-plugin-cc/schemas/bridge-result.schema.json",
+  "$id": "https://github.com/Kenmege/codex-claude-companion/schemas/bridge-result.schema.json",
   "title": "Codex-Claude Bridge result",
   "description": "Structured worker outcome. Completion here does not imply delivery, acknowledgement, or verification.",
   "type": "object",

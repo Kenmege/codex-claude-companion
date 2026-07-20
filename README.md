@@ -1,7 +1,7 @@
 # Codex-Claude Bridge
 
-[![CI](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/pull-request-ci.yml/badge.svg)](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/pull-request-ci.yml)
-[![CodeQL](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/codeql.yml/badge.svg)](https://github.com/Kenmege/codex-plugin-cc/actions/workflows/codeql.yml)
+[![CI](https://github.com/Kenmege/codex-claude-companion/actions/workflows/pull-request-ci.yml/badge.svg)](https://github.com/Kenmege/codex-claude-companion/actions/workflows/pull-request-ci.yml)
+[![CodeQL](https://github.com/Kenmege/codex-claude-companion/actions/workflows/codeql.yml/badge.svg)](https://github.com/Kenmege/codex-claude-companion/actions/workflows/codeql.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18.18-brightgreen.svg)](#requirements)
 
@@ -14,9 +14,10 @@
 not affiliated with or endorsed by OpenAI or Anthropic. OpenAI's
 `openai/codex-plugin-cc` is a Claude Code plugin that invokes Codex; this project
 runs in the opposite direction, letting Codex supervise durable Claude workers.
-The inherited npm name `codex-plugin-cc` remains only during the staged,
-compatibility-safe migration to the candidate scoped package
-`@kenmege/codex-claude-bridge`. See [the identity and migration contract](docs/bridge-migration.md).
+This project was renamed from `codex-plugin-cc` to `codex-claude-companion` to
+avoid confusion with OpenAI's plugin of that name; the legacy `codex-plugin-cc`
+npm package is deprecated and forwards here. See
+[the identity and migration contract](docs/bridge-migration.md).
 
 The bridge keeps the originating Codex task responsive while a Claude worker is
 owned by a named tmux session. A detached local broker records heartbeats,
@@ -37,26 +38,27 @@ structured output fails closed.
 
 ## 60-Second Quickstart
 
-The stable `latest` release remains `1.1.1`. The approved public bridge release
-candidate is `codex-plugin-cc@next` (`1.2.0-rc.1`), so installing the RC does not
+The stable `latest` release remains `1.1.1` (the legacy `codex-plugin-cc`
+package). The approved public bridge release candidate is
+`codex-claude-companion@next` (`1.2.0-rc.1`), so installing the RC does not
 move existing stable users automatically:
 
 ```bash
-npm install -g codex-plugin-cc@next
+npm install -g codex-claude-companion@next
 codex-claude enable
 codex-claude doctor
 codex-claude bridge-doctor --json
 ```
 
 `codex-plugin-cc@1.1.1` remains useful for its stable review and workspace lanes,
-but it does not contain the durable bridge. The future scoped package name is
-only a candidate; no command in this guide assumes it has been published.
+but it does not contain the durable bridge. The `codex-claude-companion` stable
+`latest` cut comes in a later synchronized release.
 
 For source development or an unpublished-commit test:
 
 ```bash
-git clone https://github.com/Kenmege/codex-plugin-cc.git
-cd codex-plugin-cc
+git clone https://github.com/Kenmege/codex-claude-companion.git
+cd codex-claude-companion
 npm install -g .
 codex-claude enable
 codex-claude doctor
@@ -357,7 +359,7 @@ you know up-front whether the budget cap will apply.
 Install from npmjs:
 
 ```bash
-npm install -g codex-plugin-cc
+npm install -g codex-claude-companion
 codex-claude enable
 codex-claude doctor --probe-runtime
 ```
@@ -368,7 +370,7 @@ package first:
 
 ```bash
 npm uninstall -g @kenmege/codex-plugin-cc codex-plugin-cc
-npm install -g codex-plugin-cc
+npm install -g codex-claude-companion
 codex-claude enable
 codex-claude doctor
 ```
@@ -632,7 +634,7 @@ npm run pack:check
 The npm package intentionally omits `package.json.private` so npmjs publishing
 can run when explicitly enabled. The release workflow validates tags and only
 publishes when repository variable `NPMJS_PUBLISH_ENABLED=true` and the npm
-trusted publisher for the `Kenmege/codex-plugin-cc` `release.yml` workflow is
+trusted publisher for the `Kenmege/codex-claude-companion` `release.yml` workflow is
 configured. GitHub OIDC supplies short-lived publishing access; the workflow
 does not use a long-lived npm publishing secret. Release tags must match the
 package version exactly:

@@ -5,8 +5,8 @@
   "author": {
     "name": "Kennedy Umege"
   },
-  "homepage": "https://github.com/Kenmege/codex-plugin-cc",
-  "repository": "https://github.com/Kenmege/codex-plugin-cc",
+  "homepage": "https://github.com/Kenmege/codex-claude-companion",
+  "repository": "https://github.com/Kenmege/codex-claude-companion",
   "license": "Apache-2.0",
   "keywords": [
     "claude-review",
@@ -32,7 +32,7 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/Kenmege/codex-plugin-cc",
+    "websiteURL": "https://github.com/Kenmege/codex-claude-companion",
     "defaultPrompt": [
       "Delegate this implementation to Claude, monitor it durably, and independently verify the result.",
       "Run an exhaustive deep adversarial review with sub-agent dispatch on the current diff.",

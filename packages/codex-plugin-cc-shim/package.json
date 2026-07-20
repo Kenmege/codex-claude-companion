@@ -19,6 +19,6 @@
     "node": ">=18.18.0"
   },
   "dependencies": {
-    "@kenmege/codex-claude-bridge": "0.0.0-development"
+    "codex-claude-companion": "0.0.0-development"
   }
 }

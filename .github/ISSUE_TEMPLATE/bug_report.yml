@@ -14,7 +14,7 @@ body:
     id: plugin_version
     attributes:
       label: Plugin version
-      description: Run `npm ls -g codex-plugin-cc` or `codex-claude-review --version`, or paste the value from `package.json` of this repo at the SHA you tested.
+      description: Run `npm ls -g codex-claude-companion` or `codex-claude-review --version`, or paste the value from `package.json` of this repo at the SHA you tested.
       placeholder: "Run `codex-claude-review --version`"
     validations:
       required: true

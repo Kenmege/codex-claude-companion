@@ -8,7 +8,7 @@ description: Verify that the local Claude review runtime is installed and authen
 
 1. Prefer the helper binary `codex-claude` if it is available on PATH.
 2. If it is not available, tell the user to install the helper with
-   `npm install -g codex-plugin-cc` after npmjs publish, or from a cloned
+   `npm install -g codex-claude-companion` after npmjs publish, or from a cloned
    checkout with `npm install -g .`.
 
 ## Plan

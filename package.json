@@ -1,13 +1,13 @@
 {
   "x-modification-notice": "Modified by Kennedy Umege for Codex-Claude Bridge, 2026.",
-  "name": "codex-plugin-cc",
+  "name": "codex-claude-companion",
   "version": "1.2.0-rc.1",
   "type": "module",
   "description": "Durable Codex-to-Claude delegation with tmux ownership, recovery, collaboration, independent verification, and isolated review lanes.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Kenmege/codex-plugin-cc.git"
+    "url": "git+https://github.com/Kenmege/codex-claude-companion.git"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
