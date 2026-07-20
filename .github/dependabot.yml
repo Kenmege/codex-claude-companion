@@ -1,4 +1,4 @@
-# Dependabot config for Kenmege/codex-plugin-cc.
+# Dependabot config for Kenmege/codex-claude-companion.
 #
 # Scope: keep direct + transitive npm deps and pinned-by-SHA GitHub Actions current.
 # Security advisories are emitted by Dependabot independent of the weekly schedule.

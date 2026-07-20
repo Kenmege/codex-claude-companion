@@ -16,12 +16,12 @@ function read(relativePath) {
 function installShimFixture(targetSource) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-plugin-cc-shim-"));
   const binRoot = path.join(tempRoot, "bin");
-  const targetRoot = path.join(tempRoot, "node_modules/@kenmege/codex-claude-bridge");
+  const targetRoot = path.join(tempRoot, "node_modules/codex-claude-companion");
   fs.mkdirSync(binRoot, { recursive: true });
   fs.mkdirSync(path.join(targetRoot, "scripts"), { recursive: true });
   fs.copyFileSync(path.join(shimRoot, "bin/codex-claude.mjs"), path.join(binRoot, "codex-claude.mjs"));
   fs.writeFileSync(path.join(targetRoot, "package.json"), JSON.stringify({
-    name: "@kenmege/codex-claude-bridge",
+    name: "codex-claude-companion",
     version: "0.0.0-development",
     type: "module",
     bin: { "codex-claude": "scripts/target.mjs" }
@@ -41,10 +41,11 @@ test("identity documentation distinguishes the two product directions", () => {
   assert.match(readme, /this project[\s\S]{0,80}Codex[\s\S]{0,40}Claude/i);
   assert.match(readme, /Delegate to Claude from Codex, keep control, and get verified work back/i);
   assert.match(readme, /stable `latest` release remains `1\.1\.1`[\s\S]{0,180}`1\.2\.0-rc\.1`/i);
-  assert.match(readme, /npm install -g codex-plugin-cc@next/i);
+  assert.match(readme, /npm install -g codex-claude-companion@next/i);
   assert.doesNotMatch(readme, /Public npm is the frictionless install lane/i);
-  assert.match(migration, /unscoped\s+`codex-claude-bridge`[^\n]*already occupied/i);
-  assert.match(migration, /`@kenmege\/codex-claude-bridge`[^\n]*candidate/i);
+  assert.match(migration, /canonical repository and npm package name is `codex-claude-companion`/i);
+  assert.match(migration, /SUPERSEDED[\s\S]{0,120}`@kenmege\/codex-claude-bridge`/i);
+  assert.match(migration, /`codex-claude-bridge` name is already occupied/i);
   assert.doesNotMatch(migration, /otherwise the target package name is `codex-claude-bridge`/i);
   assert.match(launchGuide, /Codex-Claude Bridge by Kenmege/i);
   assert.match(launchGuide, /not affiliated with or endorsed by OpenAI or Anthropic/i);
@@ -70,17 +71,17 @@ test("established plugin and marketplace identifiers remain aligned", () => {
   assert.doesNotMatch(readme, /`codex-claude-bridge-local` marketplace/i);
 });
 
-test("existing-package RC is approved while scoped cutover remains fail-closed", () => {
+test("existing-package RC is approved and the unscoped cutover is ready", () => {
   const migration = read("docs/bridge-migration.md");
 
-  assert.match(migration, /verified npm authentication and control of the `@kenmege` scope/i);
+  assert.match(migration, /verified npmjs authentication and trusted-publisher control for\s+`codex-claude-companion`/i);
   assert.match(migration, /clean-install parity/i);
   assert.match(migration, /trusted publisher, provenance, badges, workflows, and repository\s+redirects/i);
   assert.match(migration, /OpenAI-derived files[\s\S]{0,180}Apache-2\.0[\s\S]{0,180}modification notices/i);
   assert.match(migration, /explicit public-release approval/i);
   assert.match(migration, /existing-package prerelease verdict:\s*approved/i);
-  assert.match(migration, /codex-plugin-cc@1\.2\.0-rc\.1[\s\S]{0,80}dist-tag `next`/i);
-  assert.match(migration, /scoped cutover verdict:\s*blocked/i);
+  assert.match(migration, /codex-claude-companion@1\.2\.0-rc\.1[\s\S]{0,80}dist-tag `next`/i);
+  assert.match(migration, /unscoped cutover verdict:\s*ready/i);
 });
 
 test("modified OpenAI-derived files carry Apache-2.0 change notices", () => {
@@ -117,7 +118,7 @@ test("legacy package scaffold is inert until the coordinated cutover", () => {
     "codex-claude": "bin/codex-claude.mjs",
     "codex-claude-review": "bin/codex-claude.mjs"
   });
-  assert.equal(shimPackage.dependencies["@kenmege/codex-claude-bridge"], "0.0.0-development");
+  assert.equal(shimPackage.dependencies["codex-claude-companion"], "0.0.0-development");
   assert.match(shimPackage.description, /compatibility shim/i);
   assert.match(read("packages/codex-plugin-cc-shim/README.md"), /non-publishable placeholder/i);
   assert.match(read("docs/bridge-migration.md"), /atomically replace[^\n]*`0\.0\.0-development`/i);
@@ -145,7 +146,7 @@ test("legacy shim prints one migration notice and preserves process I/O, argumen
       marker: "preserved"
     });
     assert.equal((result.stderr.match(/codex-plugin-cc has moved/g) || []).length, 1);
-    assert.match(result.stderr, /npm install -g @kenmege\/codex-claude-bridge/);
+    assert.match(result.stderr, /npm install -g codex-claude-companion/);
     assert.match(result.stderr, /target-stderr/);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -165,9 +166,9 @@ test("legacy shim preserves target termination signals", () => {
 
 test("legacy shim fails closed instead of recursively invoking itself", () => {
   const { tempRoot, shim } = installShimFixture("process.exitCode = 0;");
-  const manifestPath = path.join(tempRoot, "node_modules/@kenmege/codex-claude-bridge/package.json");
+  const manifestPath = path.join(tempRoot, "node_modules/codex-claude-companion/package.json");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-  manifest.bin["codex-claude"] = "../../../bin/codex-claude.mjs";
+  manifest.bin["codex-claude"] = "../../bin/codex-claude.mjs";
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
   try {
     const result = spawnSync(process.execPath, [shim], { cwd: tempRoot, encoding: "utf8" });

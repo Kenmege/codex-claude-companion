@@ -13,14 +13,14 @@ its live agent panel opens in another terminal.
 
 No nested Codex. No hardcoded GPT model. Read-only review lanes stay isolated.
 
-Repo: https://github.com/Kenmege/codex-plugin-cc
+Repo: https://github.com/Kenmege/codex-claude-companion
 
 ## After npmjs Publish
 
-Use this only after `npm view codex-plugin-cc version` returns `1.1.0`.
+Use this only after `npm view codex-claude-companion version` returns `1.1.0`.
 
 ```text
-npm install -g codex-plugin-cc
+npm install -g codex-claude-companion
 codex-claude enable
 codex-claude doctor --probe-runtime
 codex-claude workspace --path . -- "implement the feature and run the full test suite"
@@ -54,4 +54,4 @@ codex-claude workspace --path . -- "implement the feature and run the full test 
    MCP snapshots, packed-install tests, and a minimum-Node Windows portability
    smoke lane. Full runtime support remains macOS and Linux for v1.
 
-   https://github.com/Kenmege/codex-plugin-cc
+   https://github.com/Kenmege/codex-claude-companion

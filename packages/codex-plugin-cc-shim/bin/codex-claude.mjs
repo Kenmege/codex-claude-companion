@@ -6,7 +6,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-const TARGET_PACKAGE = "@kenmege/codex-claude-bridge";
+const TARGET_PACKAGE = "codex-claude-companion";
 const require = createRequire(import.meta.url);
 const thisFile = fs.realpathSync(fileURLToPath(import.meta.url));
 

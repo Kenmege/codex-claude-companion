@@ -3,7 +3,7 @@
 This package is the staged compatibility shim for **Codex-Claude Bridge by
 Kenmege**. It preserves the `codex-claude` and `codex-claude-review` executable
 names while forwarding arguments, environment, standard I/O, exit status, and
-termination signals to `@kenmege/codex-claude-bridge`.
+termination signals to `codex-claude-companion`.
 
 The scaffold is intentionally marked `private` until the coordinated migration
 release. It must not be published independently of the canonical package.

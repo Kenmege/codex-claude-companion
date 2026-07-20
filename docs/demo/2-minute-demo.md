@@ -5,7 +5,7 @@ Use this script for a terminal recording after npmjs publish is live.
 ## Scene 1: Install And Diagnose
 
 ```bash
-npm install -g codex-plugin-cc
+npm install -g codex-claude-companion
 codex-claude enable
 codex-claude doctor --probe-runtime
 ```
@@ -59,6 +59,6 @@ folders, and keeps long work in background jobs.
 
 - Keep the terminal font large.
 - Show the command, output, and one finding.
-- Do not claim npm install is live until `npm view codex-plugin-cc version`
+- Do not claim npm install is live until `npm view codex-claude-companion version`
   returns the published version.
 - Do not paste tokens, local auth details, or private repo names.

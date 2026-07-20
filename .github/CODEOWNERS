@@ -1,4 +1,4 @@
-# Code Owners for codex-plugin-cc
+# Code Owners for codex-claude-companion
 #
 # This file declares who is automatically requested for review on PRs that
 # touch matching paths. CODEOWNERS only auto-requests humans/teams with

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Kenmege/codex-plugin-cc/schemas/bridge-delegation-request.schema.json",
+  "$id": "https://github.com/Kenmege/codex-claude-companion/schemas/bridge-delegation-request.schema.json",
   "title": "Codex-Claude Bridge delegation request",
   "description": "Immutable request envelope persisted before a Claude worker is dispatched.",
   "type": "object",

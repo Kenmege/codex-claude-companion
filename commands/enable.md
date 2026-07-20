@@ -10,7 +10,7 @@ Safe to re-run: native installs are refreshed idempotently, and legacy config wr
 
 ## Preflight
 
-- Plugin installed via `npm install -g codex-plugin-cc` after npmjs publish, or `npm install -g .` from a cloned checkout.
+- Plugin installed via `npm install -g codex-claude-companion` after npmjs publish, or `npm install -g .` from a cloned checkout.
 - Codex CLI installed and `~/.codex/` directory exists (created automatically if absent).
 
 ## Commands

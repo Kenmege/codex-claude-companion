@@ -36,7 +36,7 @@ intended for high-scrutiny code review rather than casual lint commentary.
 This is the first public v1 release. There is no migration step for new users:
 
 ```bash
-git clone https://github.com/Kenmege/codex-plugin-cc.git
+git clone https://github.com/Kenmege/codex-claude-companion.git
 cd codex-plugin-cc
 npm install -g .
 codex-claude-review setup

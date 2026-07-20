@@ -386,12 +386,12 @@ test("package.json shape supports public npm publish", () => {
 
   assert.notEqual(packageJson.private, true);
   assert.notEqual(packageJson.private, "true");
-  assert.equal(packageJson.name, "codex-plugin-cc");
+  assert.equal(packageJson.name, "codex-claude-companion");
   assert.match(packageJson.version, /^\d+\.\d+\.\d+/);
   assert.ok(Array.isArray(packageJson.files));
   assert.ok(packageJson.files.length > 0);
   assert.equal(typeof packageJson.repository?.url, "string");
-  assert.match(packageJson.repository.url, /Kenmege\/codex-plugin-cc/);
+  assert.match(packageJson.repository.url, /Kenmege\/codex-claude-companion/);
 });
 
 test("npmjs release configuration is public and trusted-publisher safe", () => {
@@ -401,10 +401,10 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   const publishJob = workflowJob(workflow, "publish_npm");
   const githubReleaseJob = workflowJob(workflow, "github_release");
 
-  assert.equal(packageJson.name, "codex-plugin-cc");
+  assert.equal(packageJson.name, "codex-claude-companion");
   assert.match(
     packageJson.repository.url,
-    /^(git\+)?https:\/\/github\.com\/Kenmege\/codex-plugin-cc\.git$/
+    /^(git\+)?https:\/\/github\.com\/Kenmege\/codex-claude-companion\.git$/
   );
   assert.deepEqual(packageJson.publishConfig, {
     registry: "https://registry.npmjs.org",
@@ -586,11 +586,11 @@ test("public trust metadata is attribution-safe and precise", () => {
   assert.match(readme, /not affiliated with or endorsed by OpenAI or Anthropic/i);
   assert.match(readme, /OpenAI's Apache-2\.0 Codex plugin reference/);
   assert.equal(
-    security.includes("github.com/Kenmege/codex-plugin-cc/security/advisories/new"),
+    security.includes("github.com/Kenmege/codex-claude-companion/security/advisories/new"),
     true
   );
   assert.equal(
-    bug.includes("npm ls -g codex-plugin-cc") || bug.includes("codex-claude-review --version"),
+    bug.includes("npm ls -g codex-claude-companion") || bug.includes("codex-claude-review --version"),
     true
   );
   assert.doesNotMatch(bug, /@kenmege\/codex-plugin-cc/);

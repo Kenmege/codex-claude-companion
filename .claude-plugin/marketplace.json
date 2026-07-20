@@ -4,7 +4,7 @@
     "name": "Kennedy Umege"
   },
   "metadata": {
-    "description": "Upstream-derived Codex reference plugin kept for Claude Code compatibility while codex-plugin-cc is maintained by Kenmege.",
+    "description": "Upstream-derived Codex reference plugin kept for Claude Code compatibility while codex-claude-companion is maintained by Kenmege.",
     "version": "1.0.4"
   },
   "plugins": [

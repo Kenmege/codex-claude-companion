@@ -1,4 +1,4 @@
-name: codex-plugin-cc-codeql
+name: codex-claude-companion-codeql
 
 # Keep CodeQL focused on the code that ships in the npm package and the release
 # automation that protects it. The upstream Codex reference subtree and test

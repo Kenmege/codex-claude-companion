@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security report
-    url: https://github.com/Kenmege/codex-plugin-cc/security/advisories/new
+    url: https://github.com/Kenmege/codex-claude-companion/security/advisories/new
     about: Report a security vulnerability privately. Do NOT open a public issue.
   - name: Question or discussion
-    url: https://github.com/Kenmege/codex-plugin-cc/discussions
+    url: https://github.com/Kenmege/codex-claude-companion/discussions
     about: Open a thread instead of an issue for usage questions, design discussion, or "how do I..." questions.

@@ -345,7 +345,7 @@ test("bridge agent preset registry exposes the six promised roles without hard-c
 test("bridge capability documentation contrasts the three product generations and defines trusted autonomy", () => {
   const docs = fs.readFileSync(path.join(ROOT, "docs", "bridge-capabilities.md"), "utf8");
   assert.match(docs, /\| Capability \| Direct `claude` CLI \| Legacy workspace\/review lanes \| Durable bridge \|/);
-  assert.match(docs, /`codex-plugin-cc@1\.2\.0-rc\.1` public release candidate/i);
+  assert.match(docs, /`codex-claude-companion@1\.2\.0-rc\.1` public release candidate/i);
   assert.match(docs, /stable\s+`codex-plugin-cc@1\.1\.1` package does not contain this work/i);
   assert.match(docs, /## Exact meaning of `trusted-autonomous`/);
   assert.match(docs, /`--permission-mode bypassPermissions`/);
@@ -513,16 +513,16 @@ test("Draft 2020-12 schemas compile and accept or reject representative contract
   );
 });
 
-test("migration documentation allows the existing-package RC without claiming a scoped reservation", () => {
+test("migration documentation allows the existing-package RC and the unscoped cutover", () => {
   const docs = fs.readFileSync(path.join(ROOT, "docs", "bridge-migration.md"), "utf8");
   assert.match(docs, /Codex-Claude Bridge/);
   assert.match(docs, /codex-claude/);
   assert.match(docs, /legacy shim/i);
   assert.match(docs, /OpenAI-derived/i);
-  assert.match(docs, /target repository name is `codex-claude-bridge`/i);
-  assert.match(docs, /`@kenmege\/codex-claude-bridge` is the only current package candidate/i);
-  assert.match(docs, /unscoped\s+`codex-claude-bridge` name is already occupied and is not a fallback/i);
+  assert.match(docs, /canonical repository and npm package name is `codex-claude-companion`/i);
+  assert.match(docs, /`@kenmege\/codex-claude-bridge` as the candidate\. It is SUPERSEDED/i);
+  assert.match(docs, /unscoped\s+`codex-claude-bridge` name is already occupied/i);
   assert.match(docs, /existing-package prerelease verdict:\s*approved/i);
-  assert.match(docs, /scoped cutover verdict:\s*blocked/i);
-  assert.match(docs, /scoped\s+package must not be presented as reserved or published/i);
+  assert.match(docs, /unscoped cutover verdict:\s*ready/i);
+  assert.match(docs, /GitHub repository rename to `codex-claude-companion` is complete/i);
 });

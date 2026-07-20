@@ -90,15 +90,14 @@ const bridgeMigration = fs.readFileSync(path.join(root, "docs/bridge-migration.m
   .replace(/\r\n/g, "\n");
 if (
   !bridgeMigration.includes("Codex-Claude Bridge") ||
-  !bridgeMigration.includes("target repository name is `codex-claude-bridge`") ||
-  !bridgeMigration.includes("`@kenmege/codex-claude-bridge` is the only current package candidate") ||
+  !bridgeMigration.includes("canonical repository and npm package name is `codex-claude-companion`") ||
+  !bridgeMigration.includes("`@kenmege/codex-claude-bridge` as the candidate. It is SUPERSEDED") ||
   !bridgeMigration.includes("unscoped\n`codex-claude-bridge` name is already occupied") ||
-  !bridgeMigration.includes("reservation or publication of the scoped candidate remains gated on verified\nscope control and trusted-publisher evidence") ||
   !bridgeMigration.includes("Existing-package prerelease verdict: APPROVED") ||
-  !bridgeMigration.includes("Scoped cutover verdict: BLOCKED") ||
+  !bridgeMigration.includes("Unscoped cutover verdict: READY") ||
   !bridgeMigration.includes("not affiliated with or endorsed by OpenAI or\nAnthropic")
 ) {
-  throw new Error("Bridge migration documentation must preserve differentiated identity, compatibility, and the approval-gated scoped-package boundary.");
+  throw new Error("Bridge migration documentation must preserve differentiated identity, compatibility, and the superseded-scoped-package boundary.");
 }
 
 if (pluginManifest.skills !== "./skills/") {
@@ -117,12 +116,12 @@ if (packageJson.version !== pluginManifest.version) {
   throw new Error("package.json and .codex-plugin/plugin.json versions must match.");
 }
 
-if (packageJson.name !== "codex-plugin-cc") {
-  throw new Error("package.json name must be the public npm package name: codex-plugin-cc.");
+if (packageJson.name !== "codex-claude-companion") {
+  throw new Error("package.json name must be the public npm package name: codex-claude-companion.");
 }
 
 const repositoryUrl = packageJson.repository?.url?.replace(/^git\+/, "");
-if (repositoryUrl !== "https://github.com/Kenmege/codex-plugin-cc.git") {
+if (repositoryUrl !== "https://github.com/Kenmege/codex-claude-companion.git") {
   throw new Error(
     "package.json repository.url must point at the canonical GitHub repository (with or without the git+ prefix)."
   );

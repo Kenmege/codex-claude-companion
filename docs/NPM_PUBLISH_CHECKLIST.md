@@ -4,7 +4,7 @@ This checklist is the controlled path for making the public install command
 real:
 
 ```bash
-npm install -g codex-plugin-cc
+npm install -g codex-claude-companion
 ```
 
 Kennedy approved the `1.2.0-rc.1` npmjs prerelease on 2026-07-19. Future stable
@@ -14,7 +14,7 @@ or scoped-package releases require their own recorded release decision.
 
 Checked on 2026-07-19:
 
-- `npm view codex-plugin-cc --registry=https://registry.npmjs.org` returned
+- `npm view codex-claude-companion --registry=https://registry.npmjs.org` returned
   `1.1.1` as the current stable version at check time.
 - The repo is configured for npmjs publishing through `publishConfig.registry`
   and `.github/workflows/release.yml`.
@@ -31,7 +31,7 @@ Registry state can change. Re-run the checks immediately before publishing.
    ```
 
 2. In the npm package settings, add an npm trusted publisher for GitHub Actions
-   with owner `Kenmege`, repository `codex-plugin-cc`, workflow filename
+   with owner `Kenmege`, repository `codex-claude-companion`, workflow filename
    `release.yml`, and allowed action `npm publish`. Leave the environment blank
    unless the workflow is updated to use that exact GitHub environment.
 
@@ -42,7 +42,7 @@ Registry state can change. Re-run the checks immediately before publishing.
 4. Enable the publish gate only when the next tag should publish:
 
    ```bash
-   gh variable set NPMJS_PUBLISH_ENABLED --body true --repo Kenmege/codex-plugin-cc
+   gh variable set NPMJS_PUBLISH_ENABLED --body true --repo Kenmege/codex-claude-companion
    ```
 
 ## Pre-Publish Verification
@@ -52,16 +52,16 @@ Run locally:
 ```bash
 npm run check
 npm run pack:check
-npm view codex-plugin-cc --registry=https://registry.npmjs.org
-npm view codex-plugin-cc@<version> version --registry=https://registry.npmjs.org
+npm view codex-claude-companion --registry=https://registry.npmjs.org
+npm view codex-claude-companion@<version> version --registry=https://registry.npmjs.org
 ```
 
 Expected before publishing a new version:
 
 - `npm run check` passes.
 - `npm run pack:check` shows only intended package files.
-- `npm view codex-plugin-cc` returns the currently published version.
-- `npm view codex-plugin-cc@<version>` returns `E404`, proving the immutable
+- `npm view codex-claude-companion` returns the currently published version.
+- `npm view codex-claude-companion@<version>` returns `E404`, proving the immutable
   target version has not already been published.
 
 In addition to the dry run, create and inspect a real tarball in a throwaway
@@ -111,20 +111,20 @@ Use a throwaway workspace:
 ```bash
 tmpdir="$(mktemp -d)"
 cd "$tmpdir"
-npm install codex-plugin-cc@<version> --registry=https://registry.npmjs.org
+npm install codex-claude-companion@<version> --registry=https://registry.npmjs.org
 ./node_modules/.bin/codex-claude --version
 ./node_modules/.bin/codex-claude --help
 ./node_modules/.bin/codex-claude doctor --json
 ./node_modules/.bin/codex-claude bridge-doctor --json
-node --check node_modules/codex-plugin-cc/scripts/bridge-broker.mjs
-node --check node_modules/codex-plugin-cc/plugins/codex/scripts/app-server-broker.mjs
+node --check node_modules/codex-claude-companion/scripts/bridge-broker.mjs
+node --check node_modules/codex-claude-companion/plugins/codex/scripts/app-server-broker.mjs
 ```
 
 For `1.2.0-rc.1`, also verify the dist-tags explicitly:
 
 ```bash
-npm view codex-plugin-cc version --registry=https://registry.npmjs.org
-npm view codex-plugin-cc@next version --registry=https://registry.npmjs.org
+npm view codex-claude-companion version --registry=https://registry.npmjs.org
+npm view codex-claude-companion@next version --registry=https://registry.npmjs.org
 ```
 
 The expected values are `1.1.1` and `1.2.0-rc.1`, respectively.
@@ -132,7 +132,7 @@ The expected values are `1.1.1` and `1.2.0-rc.1`, respectively.
 Then verify the global install path:
 
 ```bash
-npm install -g codex-plugin-cc@<version> --registry=https://registry.npmjs.org
+npm install -g codex-claude-companion@<version> --registry=https://registry.npmjs.org
 codex-claude --version
 codex-claude doctor
 ```
@@ -144,7 +144,7 @@ npm package versions cannot be overwritten. If a bad version is published:
 1. Deprecate the version with a clear message:
 
    ```bash
-   npm deprecate codex-plugin-cc@<bad-version> "Use <fixed-version>; this version has a release issue."
+   npm deprecate codex-claude-companion@<bad-version> "Use <fixed-version>; this version has a release issue."
    ```
 
 2. Publish a fixed patch version.

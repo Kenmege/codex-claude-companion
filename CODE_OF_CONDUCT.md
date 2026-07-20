@@ -2,7 +2,7 @@
 
 ## Our Pledge
 
-We want `codex-plugin-cc` to be a practical, respectful, security-conscious
+We want `codex-claude-companion` to be a practical, respectful, security-conscious
 open source project. Contributors and maintainers are expected to participate
 with care, clarity, and professional judgment.
 

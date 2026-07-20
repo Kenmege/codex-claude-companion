@@ -30,7 +30,7 @@ Anthropic. OpenAI's similarly named plugin runs in the opposite direction.
 ## Install the release candidate
 
 ```bash
-npm install -g codex-plugin-cc@next
+npm install -g codex-claude-companion@next
 codex-claude enable
 codex-claude doctor
 codex-claude bridge-doctor --json

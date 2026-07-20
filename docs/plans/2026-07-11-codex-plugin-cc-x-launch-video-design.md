@@ -112,7 +112,7 @@ Motion remains deterministic and seekable. Generated camera movement is reserved
 
 ## Current-source basis
 
-The public release and tagged package both identify v1.1.1: <https://github.com/Kenmege/codex-plugin-cc/releases/tag/v1.1.1> and <https://github.com/Kenmege/codex-plugin-cc/blob/v1.1.1/package.json>.
+The public release and tagged package both identify v1.1.1: <https://github.com/Kenmege/codex-claude-companion/releases/tag/v1.1.1> and <https://github.com/Kenmege/codex-claude-companion/blob/v1.1.1/package.json>.
 
 HeyGen’s current API supports presenter video from an avatar or image with script or audio input: <https://developers.heygen.com/reference/create-video>.
 

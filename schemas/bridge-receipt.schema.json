@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Kenmege/codex-plugin-cc/schemas/bridge-receipt.schema.json",
+  "$id": "https://github.com/Kenmege/codex-claude-companion/schemas/bridge-receipt.schema.json",
   "title": "Codex-Claude Bridge receipt and delivery state",
   "description": "Auditable lifecycle receipt. Worker completion, delivery, acknowledgement, and verification are independent states.",
   "type": "object",
