@@ -254,7 +254,7 @@ test("git-safe status does not refresh or rewrite the index", () => {
 test("git-safe accepts git rev-parse --show-toplevel", () => {
   const result = runWrapper(["rev-parse", "--show-toplevel"]);
   assert.equal(result.status, 0);
-  assert.equal(path.resolve(result.stdout.trim()), ROOT);
+  assert.equal(fs.realpathSync.native(result.stdout.trim()), fs.realpathSync.native(ROOT));
 });
 
 test("git-safe scrubs GIT_DIR / GIT_WORK_TREE env vars", () => {
