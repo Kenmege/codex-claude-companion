@@ -328,7 +328,27 @@ function printUsage() {
   );
 }
 
-const BRIDGE_COMMAND_USAGE = Object.freeze({
+// This registry is intentionally consulted before any command-specific parser or
+// handler. Help must be a pure read of static CLI metadata: it cannot snapshot a
+// workspace, probe credentials, create state, or start a provider/runtime.
+const COMMAND_USAGE = Object.freeze({
+  enable: ["codex-claude enable [--config <path>] [--dry-run] [--json]", "Register the local Codex plugin without changing configuration when --dry-run is set."],
+  setup: ["codex-claude setup [--cwd <dir>] [--json]", "Report local helper setup and Claude authentication readiness."],
+  doctor: ["codex-claude doctor [--cwd <dir>] [--config <path>] [--job-dir <dir>] [--json] [--probe-runtime]", "Inspect local runtime readiness. --probe-runtime performs a live Claude probe; help never does."],
+  folder: ["codex-claude folder <path> [review flags] [focus text]", "Review a directory through the review lane."],
+  review: ["codex-claude review [review flags] [focus text]", "Run the standard read-only review lane."],
+  version: ["codex-claude version", "Print the installed companion version."],
+  "--version": ["codex-claude --version", "Print the installed companion version."],
+  "-v": ["codex-claude -v", "Print the installed companion version."],
+  "adversarial-review": ["codex-claude adversarial-review [review flags] [focus text]", "Run the skeptical challenge review lane."],
+  "elite-review": ["codex-claude elite-review [review flags] [focus text]", "Run the exhaustive ship/no-ship review lane."],
+  "deep-review": ["codex-claude deep-review [review flags] [focus text]", "Run the deep evidence and architecture review lane."],
+  "security-review": ["codex-claude security-review [review flags] [focus text]", "Run the OWASP/CWE-focused review lane."],
+  workspace: ["codex-claude workspace [--path <dir>] [--model <name>] [--plan|--panel-only|--no-panel] [--json-events] -- <coding request>", "Start a writable Claude workspace worker."],
+  "workspace-status": ["codex-claude workspace-status [--path <dir>] [--all] [--json]", "Show Claude workspace sessions."],
+  "workspace-logs": ["codex-claude workspace-logs <session-id>", "Read a Claude workspace session log."],
+  "workspace-stop": ["codex-claude workspace-stop <session-id>", "Stop a Claude workspace session."],
+  "run-job": ["codex-claude run-job <review-job-id> [--cwd <dir>] [--job-dir <dir>]", "Run a persisted local review job; this is the internal background-worker entry point."],
   delegate: [
     "codex-claude delegate --thread-id <id> --verify-command '<JSON argv>' [flags] -- <task>",
     "Create a durable Claude delegation and start its broker.",
@@ -341,9 +361,17 @@ const BRIDGE_COMMAND_USAGE = Object.freeze({
     "Wait for verified terminal state and origin delivery.",
     "Exit 0=verified+acknowledged, 3=terminal gate failure, 4=pending Claude question; timeout is exit 1."
   ],
-  status: ["codex-claude status <ccb_job-id> [--state-dir <dir>] [--json]", "Show one durable bridge job."],
+  status: [
+    "codex-claude status [review-job-id] [--cwd <dir>] [--job-dir <dir>]",
+    "Show local review jobs or one local review job.",
+    "Bridge form: codex-claude status <ccb_job-id> [--state-dir <dir>] [--json]"
+  ],
   logs: ["codex-claude logs <ccb_job-id> [--stderr|--broker] [--follow] [--timeout <seconds>] [--state-dir <dir>]", "Read bounded worker or broker logs."],
-  cancel: ["codex-claude cancel <ccb_job-id> [--reason <text>] [--state-dir <dir>] [--json]", "Request durable cancellation through the owning broker."],
+  cancel: [
+    "codex-claude cancel <review-job-id> [--cwd <dir>] [--job-dir <dir>]",
+    "Cancel a local review job.",
+    "Bridge form: codex-claude cancel <ccb_job-id> [--reason <text>] [--state-dir <dir>] [--json]"
+  ],
   recover: ["codex-claude recover <ccb_job-id>|--all [--state-dir <dir>] [--json]", "Reconcile and restart unsettled durable jobs."],
   list: ["codex-claude list [--state-dir <dir>] [--json]", "List durable bridge jobs."],
   attach: ["codex-claude attach <ccb_job-id> [--exec] [--state-dir <dir>]", "Print or execute the exact tmux attach command."],
@@ -353,20 +381,27 @@ const BRIDGE_COMMAND_USAGE = Object.freeze({
     "Send same-session input through the durable broker inbox while the authoritative worker is live.",
     "Without --wait, exit 0 means queued; with --wait, exit 0 requires replay acknowledgement."
   ],
-  gc: ["codex-claude gc [--older-than-days <days>] [--limit <1-64>] [--apply] [--state-dir <dir>] [--json]", "Preview bounded terminal-job cleanup; --apply performs it."]
+  gc: ["codex-claude gc [--older-than-days <days>] [--limit <1-64>] [--apply] [--state-dir <dir>] [--json]", "Preview bounded terminal-job cleanup; --apply performs it."],
+  version: ["codex-claude version", "Print the installed helper version."]
 });
 
-function printBridgeCommandUsage(command) {
-  const lines = BRIDGE_COMMAND_USAGE[command];
+function printCommandUsage(command) {
+  const lines = COMMAND_USAGE[command];
   if (!lines) return false;
   process.stdout.write(["Usage:", `  ${lines[0]}`, "", ...lines.slice(1), "", "Run `codex-claude --help` for the complete flag reference."].join("\n") + "\n");
   return true;
 }
 
-function bridgeCommandHelpRequested(argv) {
+function inspectCommandHelp(argv) {
   const terminatorIndex = argv.indexOf("--");
   const optionArguments = terminatorIndex === -1 ? argv : argv.slice(0, terminatorIndex);
-  return optionArguments.some((argument) => argument === "--help" || argument === "-h");
+  const invalid = optionArguments.find((argument) =>
+    typeof argument === "string" && (argument.startsWith("--help=") || argument.startsWith("-h="))
+  );
+  return {
+    requested: optionArguments.some((argument) => argument === "--help" || argument === "-h"),
+    invalid: invalid ?? null
+  };
 }
 
 async function handleWorkspace(argv) {
@@ -2130,11 +2165,17 @@ async function main() {
       printUsage();
       return;
     }
-    if (command === "--version" || command === "-v" || command === "version") {
-      process.stdout.write(`${getPackageVersion()}\n`);
+    const help = inspectCommandHelp(argv);
+    if (help.invalid) {
+      const error = new Error(`Invalid help option ${help.invalid}; use --help or -h`);
+      error.code = "USAGE_ERROR";
+      throw error;
+    }
+    if (help.requested && printCommandUsage(command)) {
       return;
     }
-    if (bridgeCommandHelpRequested(argv) && printBridgeCommandUsage(command)) {
+    if (command === "--version" || command === "-v" || command === "version") {
+      process.stdout.write(`${getPackageVersion()}\n`);
       return;
     }
     const bridgeExclusive = new Set(["delegate", "wait", "logs", "recover", "list", "attach", "bridge-doctor", "send", "gc"]);
