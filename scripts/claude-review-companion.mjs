@@ -381,8 +381,7 @@ const COMMAND_USAGE = Object.freeze({
     "Send same-session input through the durable broker inbox while the authoritative worker is live.",
     "Without --wait, exit 0 means queued; with --wait, exit 0 requires replay acknowledgement."
   ],
-  gc: ["codex-claude gc [--older-than-days <days>] [--limit <1-64>] [--apply] [--state-dir <dir>] [--json]", "Preview bounded terminal-job cleanup; --apply performs it."],
-  version: ["codex-claude version", "Print the installed helper version."]
+  gc: ["codex-claude gc [--older-than-days <days>] [--limit <1-64>] [--apply] [--state-dir <dir>] [--json]", "Preview bounded terminal-job cleanup; --apply performs it."]
 });
 
 function printCommandUsage(command) {
