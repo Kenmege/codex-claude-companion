@@ -14,6 +14,7 @@
  *   threadIds: Set<string>,
  *   threadTurnIds: Map<string, string>,
  *   threadLabels: Map<string, string>,
+ *   pendingThreadMetadata: Map<string, { threadName?: string, name?: string, agentNickname?: string, agentRole?: string }>,
  *   turnId: string | null,
  *   bufferedNotifications: AppServerNotification[],
  *   completion: Promise<TurnCaptureState>,
@@ -233,6 +234,58 @@ function registerThread(state, threadId, options = {}) {
   }
 }
 
+function threadMetadata(message) {
+  if (message.method === "thread/started") {
+    const thread = message.params.thread;
+    if (!thread?.id) return null;
+    return {
+      threadId: thread.id,
+      options: {
+        threadName: thread.name,
+        name: thread.name,
+        agentNickname: thread.agentNickname,
+        agentRole: thread.agentRole
+      }
+    };
+  }
+
+  if (message.method === "thread/name/updated" && message.params.threadId) {
+    return {
+      threadId: message.params.threadId,
+      options: { threadName: message.params.threadName ?? null }
+    };
+  }
+
+  return null;
+}
+
+function applyPendingThreadMetadata(state, threadId) {
+  const pending = state.pendingThreadMetadata.get(threadId);
+  if (!pending || !state.threadIds.has(threadId)) {
+    return;
+  }
+  state.pendingThreadMetadata.delete(threadId);
+  registerThread(state, threadId, pending);
+}
+
+function captureThreadMetadata(state, message) {
+  const metadata = threadMetadata(message);
+  if (!metadata) {
+    return false;
+  }
+
+  if (state.threadIds.has(metadata.threadId)) {
+    applyTurnNotification(state, message);
+    return true;
+  }
+
+  state.pendingThreadMetadata.set(metadata.threadId, {
+    ...(state.pendingThreadMetadata.get(metadata.threadId) ?? {}),
+    ...metadata.options
+  });
+  return false;
+}
+
 function describeStartedItem(state, item) {
   switch (item.type) {
     case "enteredReviewMode":
@@ -309,6 +362,7 @@ function createTurnCaptureState(threadId, options = {}) {
     threadIds: new Set([threadId]),
     threadTurnIds: new Map(),
     threadLabels: new Map(),
+    pendingThreadMetadata: new Map(),
     turnId: null,
     bufferedNotifications: [],
     completion,
@@ -410,6 +464,7 @@ function recordItem(state, item, lifecycle, threadId = null) {
     }
     for (const receiverThreadId of item.receiverThreadIds ?? []) {
       registerThread(state, receiverThreadId);
+      applyPendingThreadMetadata(state, receiverThreadId);
     }
   }
 
@@ -561,8 +616,10 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
       return;
     }
 
-    if (message.method === "thread/started" || message.method === "thread/name/updated") {
-      applyTurnNotification(state, message);
+    if (threadMetadata(message)) {
+      if (!captureThreadMetadata(state, message) && previousHandler) {
+        previousHandler(message);
+      }
       return;
     }
 
@@ -584,6 +641,12 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
       state.threadTurnIds.set(state.threadId, state.turnId);
     }
     for (const message of state.bufferedNotifications) {
+      if (threadMetadata(message)) {
+        if (!captureThreadMetadata(state, message) && previousHandler) {
+          previousHandler(message);
+        }
+        continue;
+      }
       if (belongsToTurn(state, message)) {
         applyTurnNotification(state, message);
       } else {
@@ -601,6 +664,7 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
     return await state.completion;
   } finally {
     clearCompletionTimer(state);
+    state.pendingThreadMetadata.clear();
     client.setNotificationHandler(previousHandler ?? null);
   }
 }
@@ -960,7 +1024,8 @@ export async function runAppServerReview(cwd, options = {}) {
         onProgress: options.onProgress,
         onResponse(response, state) {
           if (response.reviewThreadId) {
-            state.threadIds.add(response.reviewThreadId);
+            registerThread(state, response.reviewThreadId);
+            applyPendingThreadMetadata(state, response.reviewThreadId);
             if (delivery === "detached") {
               state.threadId = response.reviewThreadId;
             }

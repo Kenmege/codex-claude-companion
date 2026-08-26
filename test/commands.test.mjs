@@ -54,6 +54,40 @@ function withFakeClaudeForReview(stdout, { version = "2.1.183" } = {}) {
   };
 }
 
+function withPoisonedHelpExecutables(base) {
+  const binDir = path.join(base, "bin");
+  const marker = path.join(base, "forbidden-help-spawn.log");
+  const home = path.join(base, "home");
+  const codexHome = path.join(base, "codex-home");
+  const reviewJobs = path.join(base, "review-jobs");
+  const bridgeState = path.join(base, "bridge-state");
+  fs.mkdirSync(binDir);
+  const poison = [
+    "#!/bin/sh",
+    'printf "%s\\n" "$0 $*" >> "$CODEX_CLAUDE_HELP_SPAWN_MARKER"',
+    "exit 91"
+  ].join("\n");
+  for (const executable of ["claude", "codex", "tmux"]) {
+    fs.writeFileSync(path.join(binDir, executable), poison, { mode: 0o700 });
+  }
+  return {
+    marker,
+    home,
+    codexHome,
+    reviewJobs,
+    bridgeState,
+    env: {
+      ...process.env,
+      PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      HOME: home,
+      CODEX_HOME: codexHome,
+      CODEX_CLAUDE_REVIEW_JOB_DIR: reviewJobs,
+      CODEX_CLAUDE_BRIDGE_STATE_DIR: bridgeState,
+      CODEX_CLAUDE_HELP_SPAWN_MARKER: marker
+    }
+  };
+}
+
 function validBasicStructuredStream() {
   return JSON.stringify({
     type: "result",
@@ -141,6 +175,110 @@ test("helper help exits successfully while unknown commands remain usage errors"
   });
   assert.equal(unknown.status, 2);
   assert.match(unknown.stdout, /Usage:/);
+});
+
+test("every public subcommand help exits before provider, runtime, credential, or job side effects", () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccb-subcommand-help-"));
+  const sandbox = withPoisonedHelpExecutables(base);
+  const commands = [
+    "enable",
+    "setup",
+    "doctor",
+    "folder",
+    "review",
+    "adversarial-review",
+    "elite-review",
+    "deep-review",
+    "security-review",
+    "workspace",
+    "workspace-status",
+    "workspace-logs",
+    "workspace-stop",
+    "run-job",
+    "status",
+    "result",
+    "cancel",
+    "delegate",
+    "wait",
+    "logs",
+    "recover",
+    "list",
+    "attach",
+    "bridge-doctor",
+    "send",
+    "gc",
+    "version"
+  ];
+
+  for (const command of commands) {
+    for (const helpFlag of ["--help", "-h"]) {
+      const result = spawnSync(process.execPath, [helper, command, helpFlag], {
+        cwd: root,
+        encoding: "utf8",
+        env: sandbox.env
+      });
+      assert.equal(result.status, 0, `${command} ${helpFlag}: ${result.stderr}\n${result.stdout}`);
+      assert.match(result.stdout, /^Usage:\n/);
+      assert.match(result.stdout, new RegExp(`codex-claude ${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`));
+      assert.equal(result.stderr, "", `${command} ${helpFlag} must not write an error`);
+      assert.equal(fs.existsSync(sandbox.marker), false, `${command} ${helpFlag} must not spawn Claude, Codex, or tmux`);
+      assert.equal(fs.existsSync(sandbox.reviewJobs), false, `${command} ${helpFlag} must not create review job artifacts`);
+      assert.equal(fs.existsSync(sandbox.bridgeState), false, `${command} ${helpFlag} must not create bridge state`);
+      assert.equal(fs.existsSync(sandbox.codexHome), false, `${command} ${helpFlag} must not write Codex configuration`);
+      assert.equal(fs.existsSync(path.join(sandbox.home, ".claude")), false, `${command} ${helpFlag} must not access Claude credentials`);
+    }
+  }
+
+  for (const helpFlag of ["--help", "-h"]) {
+    const unknown = spawnSync(process.execPath, [helper, "not-a-command", helpFlag], {
+      cwd: root,
+      encoding: "utf8",
+      env: sandbox.env
+    });
+    assert.equal(unknown.status, 2, `unknown ${helpFlag}: ${unknown.stderr}\n${unknown.stdout}`);
+    assert.match(unknown.stdout, /^Usage:\n/);
+    assert.equal(fs.existsSync(sandbox.marker), false, `unknown ${helpFlag} must not spawn a runtime`);
+    assert.equal(fs.existsSync(sandbox.reviewJobs), false, `unknown ${helpFlag} must not create review job artifacts`);
+    assert.equal(fs.existsSync(sandbox.bridgeState), false, `unknown ${helpFlag} must not create bridge state`);
+  }
+
+  for (const malformedFlag of ["--help=unexpected", "-h=unexpected"]) {
+    const malformed = spawnSync(process.execPath, [helper, "review", malformedFlag], {
+      cwd: root,
+      encoding: "utf8",
+      env: sandbox.env
+    });
+    assert.equal(malformed.status, 2, `${malformedFlag}: ${malformed.stderr}\n${malformed.stdout}`);
+    assert.match(malformed.stderr, /Invalid help option/);
+    assert.equal(fs.existsSync(sandbox.marker), false, `${malformedFlag} must not spawn a runtime`);
+    assert.equal(fs.existsSync(sandbox.reviewJobs), false, `${malformedFlag} must not create review job artifacts`);
+    assert.equal(fs.existsSync(sandbox.bridgeState), false, `${malformedFlag} must not create bridge state`);
+  }
+});
+
+test("review-like help does not snapshot a non-Git target before printing usage", () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccb-review-help-snapshot-"));
+  const sandbox = withPoisonedHelpExecutables(base);
+  const target = path.join(base, "non-git-target");
+  const snapshotRoot = path.join(base, "snapshots");
+  fs.mkdirSync(target);
+  fs.writeFileSync(path.join(target, "notes.txt"), "do not snapshot for help\n", "utf8");
+
+  for (const command of ["folder", "review", "adversarial-review", "elite-review", "deep-review", "security-review"]) {
+    const args = command === "folder"
+      ? [helper, command, target, "--snapshot-temp-root", snapshotRoot, "--help"]
+      : [helper, command, "--path", target, "--snapshot-temp-root", snapshotRoot, "--help"];
+    const result = spawnSync(process.execPath, args, {
+      cwd: root,
+      encoding: "utf8",
+      env: sandbox.env
+    });
+    assert.equal(result.status, 0, `${command}: ${result.stderr}\n${result.stdout}`);
+    assert.match(result.stdout, /^Usage:\n/);
+    assert.equal(fs.existsSync(snapshotRoot), false, `${command} --help must not create a directory snapshot`);
+    assert.equal(fs.existsSync(sandbox.marker), false, `${command} --help must not spawn a runtime`);
+    assert.equal(fs.existsSync(sandbox.reviewJobs), false, `${command} --help must not create review job artifacts`);
+  }
 });
 
 test("helper usage advertises folder subcommand and --path flag", () => {
@@ -620,6 +758,7 @@ test("review command preserves positional focus text in the job snapshot", () =>
 
 test("review focus text is never reinterpreted as privileged review flags", () => {
   for (const focusText of [
+    "--help",
     "--unrestricted audit permission handling",
     "--mcp-config config must remain focus text",
     "--add-dir linked path must remain focus text",

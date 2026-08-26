@@ -392,8 +392,25 @@ rl.on("line", (line) => {
         if (
           BEHAVIOR === "with-subagent" ||
           BEHAVIOR === "with-late-subagent-message" ||
-          BEHAVIOR === "with-subagent-no-main-turn-completed"
+          BEHAVIOR === "with-subagent-no-main-turn-completed" ||
+          BEHAVIOR === "with-unrelated-buffered-thread"
         ) {
+          if (BEHAVIOR === "with-unrelated-buffered-thread") {
+            const unrelatedThread = nextThread(state, thread.cwd, true);
+            const unrelatedTurnId = nextTurnId(state);
+            send({ method: "thread/started", params: { thread: { ...buildThread(unrelatedThread), name: "unrelated-worker", agentNickname: "unrelated-worker" } } });
+            send({ method: "turn/started", params: { threadId: unrelatedThread.id, turn: buildTurn(unrelatedTurnId) } });
+            send({
+              method: "item/completed",
+              params: {
+                threadId: unrelatedThread.id,
+                turnId: unrelatedTurnId,
+                item: { type: "agentMessage", id: "msg_" + unrelatedTurnId, text: "Unrelated sibling activity must not be captured.", phase: "analysis" }
+              }
+            });
+            send({ method: "turn/completed", params: { threadId: unrelatedThread.id, turn: buildTurn(unrelatedTurnId, "completed") } });
+          }
+
           const subThread = nextThread(state, thread.cwd, true);
           const subThreadRecord = ensureThread(state, subThread.id);
           subThreadRecord.name = "design-challenger";
