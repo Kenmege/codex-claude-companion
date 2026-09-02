@@ -47,24 +47,27 @@ test("pull request workflow cancels superseded matrix runs", () => {
   assert.match(source, /cancel-in-progress: true/);
 });
 
-test("pull request workflow proves the platform-neutral surface on minimum Node for Windows", () => {
+test("pull request workflow covers the platform-neutral surface on supported Node versions", () => {
   const source = read(".github/workflows/pull-request-ci.yml");
-  assert.match(source, /windows-test:/);
-  assert.match(source, /runs-on: windows-latest/);
-  assert.match(source, /node-version: 18\.18\.0/);
-  assert.match(source, /run: npm run lint/);
-  assert.match(source, /run: npm run test:windows/);
-  assert.match(source, /run: npm run pack:check/);
+  const checkJob = workflowJob(source, "check");
+
+  assert.match(checkJob, /runs-on: ubuntu-latest/);
+  assert.match(checkJob, /18\.18\.0/);
+  assert.match(checkJob, /20/);
+  assert.match(checkJob, /22/);
+  assert.match(checkJob, /run: npm run check/);
+  assert.match(checkJob, /run: npm run pack:check/);
+  assert.doesNotMatch(source, /windows-test:|macos-tmux:/);
 });
 
-test("pull request workflow runs the real tmux executor on macOS", () => {
+test("pull request workflow runs the real tmux executor on Linux", () => {
   const source = read(".github/workflows/pull-request-ci.yml").replaceAll("\r\n", "\n");
-  const macosJob = source.match(/\n  macos-tmux:\n([\s\S]*?)(?=\n  [a-z][a-z0-9-]*:\n|$)/)?.[0] ?? "";
+  const tmuxJob = workflowJob(source, "tmux-integration");
 
-  assert.match(macosJob, /runs-on: macos-latest/);
-  assert.match(macosJob, /brew install tmux/);
-  assert.match(macosJob, /run: npm ci/);
-  assert.match(macosJob, /node --test test\/tmux-executor\.test\.mjs/);
+  assert.match(tmuxJob, /runs-on: ubuntu-latest/);
+  assert.match(tmuxJob, /run: npm ci/);
+  assert.match(tmuxJob, /node --test test\/tmux-executor\.test\.mjs/);
+  assert.doesNotMatch(tmuxJob, /brew install tmux/);
 });
 
 test("release workflow binds manual recovery to the triggering tag for accurate OIDC provenance", () => {
