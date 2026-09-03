@@ -2,6 +2,7 @@
 
 This file is the canonical project instruction for coding agents.
 These instructions apply to every agent and automation path operating on this repository.
+These requirements apply to every pull request, including dependency-only and automation-authored changes.
 
 ## Pull request integrity
 
