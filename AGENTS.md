@@ -1,4 +1,4 @@
-# Project instructions
+# Repository agent instructions
 
 This file is the canonical project instruction for coding agents.
 These instructions apply to every agent and automation path operating on this repository.
