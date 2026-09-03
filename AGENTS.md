@@ -5,6 +5,7 @@ This file is the canonical project instruction for coding agents.
 ## Pull request integrity
 
 - Never merge or recommend merging while any required status check or required review is absent, pending, failing, stale, or bypassed.
+- The final-head approving reviewer must be different from the actor who made the most recent reviewable push.
 - Administrative merge bypass, direct push to a protected branch, temporary branch-protection changes, force-push, dismissal of reviews to unblock a merge, and fabricated approvals are prohibited.
 - A pull request may merge only after all required checks pass and the final head commit has the repository's required approving review through the normal review mechanism.
 - Security dependency updates must remain minimal and must preserve or strengthen existing test and cross-platform CI coverage.
