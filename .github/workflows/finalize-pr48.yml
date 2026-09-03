@@ -12,6 +12,8 @@ permissions:
 
 jobs:
   finalize:
+    # Every dynamic identity is compared to an exact repository, PR, branch,
+    # and owner value. The checkout ref below is hard-coded, not interpolated.
     if: >-
       github.repository == 'Kenmege/codex-claude-companion' &&
       github.event.pull_request.number == 48 &&
@@ -27,15 +29,26 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Make the final bot-authored documentation correction
+      - name: Wait for removal, then make the final bot-authored change
         env:
           HEAD_REF: copilot/fix-auto-review-failure
         run: |
-          python3 -c 'from pathlib import Path; p = Path(".github/workflows/claude.yml"); data = p.read_text(); marker = "$" + "{{ github.token }}"; quote = chr(34); needle = "          github_token: " + marker + "\n          allowed_bots: " + quote + "Copilot,claude" + quote + "\n"; replacement = "          # Use the workflow token so allow-listed app actors avoid\n          # the action OIDC collaborator gate.\n" + needle; assert data.count(needle) == 2, "unexpected Claude action input count"; p.write_text(data.replace(needle, replacement)); Path(".github/workflows/finalize-pr48.yml").unlink()'
+          for attempt in {1..90}; do
+            git fetch origin "${HEAD_REF}"
+            if ! git cat-file -e "origin/${HEAD_REF}:.github/workflows/finalize-pr48.yml" 2>/dev/null; then
+              break
+            fi
+            if [ "${attempt}" -eq 90 ]; then
+              echo "Timed out waiting for the temporary finalizer to be removed" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          git switch --detach "origin/${HEAD_REF}"
+          python3 -c 'from pathlib import Path; p = Path("AGENTS.md"); data = p.read_text(); needle = "These instructions apply to every agent and automation path operating on this repository.\n"; replacement = needle + "These requirements apply to every pull request, including dependency-only and automation-authored changes.\n"; assert data.count(needle) == 1 and replacement not in data, "unexpected AGENTS.md scope text"; p.write_text(data.replace(needle, replacement))'
           git diff --check
-          test -n "$(git status --short)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A -- .github/workflows/claude.yml .github/workflows/finalize-pr48.yml
-          git commit -m "Document bot authentication path"
+          git add -- AGENTS.md
+          git commit -m "Clarify pull request integrity scope"
           git push origin "HEAD:${HEAD_REF}"
