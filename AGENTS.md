@@ -10,11 +10,11 @@ This file is the canonical project instruction for coding agents.
 - Security dependency updates must remain minimal and must preserve or strengthen existing test and cross-platform CI coverage.
 - If author/reviewer identity creates a sole-code-owner deadlock, use a bot/agent-authored branch and obtain the real code-owner review; do not bypass.
 
-Required local verification for repository changes:
+- Required local verification for repository changes:
 
-```bash
-npm ci
-npm run check
-npm run pack:check
-npm audit --omit=dev
-```
+  ```bash
+  npm ci
+  npm run check
+  npm run pack:check
+  npm audit --omit=dev
+  ```
