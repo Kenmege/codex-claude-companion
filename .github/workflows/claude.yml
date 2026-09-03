@@ -138,6 +138,8 @@ jobs:
           # lanes. Both jobs now block Bash; cost is the occasional
           # ability to ask @claude to run shell during interactive
           # sessions, which is mostly covered by Pull Request CI anyway.
+          github_token: ${{ github.token }}
+          allowed_bots: "Copilot,claude"
           claude_args: |
             --model opus
             --max-turns 80
@@ -148,6 +150,8 @@ jobs:
         uses: anthropics/claude-code-action@51705da45eecce209d4700538bf8377d5b5fc695 # v1 -> v1.0.152 (pinned 2026-06-19)
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          allowed_bots: "Copilot,claude"
           use_sticky_comment: true
           prompt: ${{ env.CLAUDE_AUTO_REVIEW_PROMPT }}
           claude_args: |
