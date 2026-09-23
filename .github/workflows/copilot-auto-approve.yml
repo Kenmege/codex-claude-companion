@@ -1,0 +1,100 @@
+# Auto-approve pull requests after Copilot code review APPROVES them.
+#
+# Scope (Kennedy / Cos 2026-09-23):
+# - Submits a GitHub *review approval* via GITHUB_TOKEN (github-actions[bot]).
+# - Does NOT merge. Does NOT bypass required status checks.
+# - Branch protection still requires CODEOWNER (@Kenmege) approval and green CI
+#   before merge; this workflow only records an independent APPROVED review when
+#   Copilot's formal review state is `approved`.
+# - Optional secret CODEOWNER_APPROVE_TOKEN (fine-scoped PAT of a CODEOWNER with
+#   pull_requests: write only) can be set later if the auto-approval must also
+#   satisfy require_code_owner_reviews. Do not invent tokens.
+#
+# Trigger: pull_request_review submitted by copilot-pull-request-reviewer[bot]
+# with state == approved. Copilot COMMENT-only reviews do not auto-approve.
+
+name: Copilot review auto-approve
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: copilot-auto-approve-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  auto-approve:
+    name: Approve after Copilot APPROVED
+    if: >
+      github.event.review.user.login == 'copilot-pull-request-reviewer[bot]' &&
+      github.event.review.state == 'approved' &&
+      github.event.pull_request.state == 'open'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository (pin only; no credentials persisted)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github
+          sparse-checkout-cone-mode: false
+
+      - name: Submit APPROVE review (no merge)
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          CODEOWNER_APPROVE_TOKEN: ${{ secrets.CODEOWNER_APPROVE_TOKEN }}
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const review = context.payload.review;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = pr.number;
+
+            // Prefer optional CODEOWNER token when present so the approval can
+            // satisfy require_code_owner_reviews; otherwise use GITHUB_TOKEN.
+            const token = process.env.CODEOWNER_APPROVE_TOKEN || undefined;
+            const octokit = token
+              ? github.getOctokit(token)
+              : github;
+
+            // Skip if an APPROVED review from this actor already exists on HEAD.
+            const headSha = pr.head.sha;
+            const { data: reviews } = await octokit.rest.pulls.listReviews({
+              owner, repo, pull_number, per_page: 100,
+            });
+            const already = reviews.some((r) =>
+              r.state === 'APPROVED' &&
+              r.commit_id === headSha &&
+              (r.user?.login === 'github-actions[bot]' ||
+               (token && r.user?.login === context.actor))
+            );
+            if (already) {
+              core.info(`Already APPROVED on head ${headSha}; skipping`);
+              return;
+            }
+
+            const body = [
+              'Auto-approved because Copilot code review returned **APPROVED**.',
+              '',
+              `- Copilot review id: ${review.id}`,
+              `- Head SHA: \`${headSha}\``,
+              '- This action does **not** merge and does **not** bypass required checks.',
+              '- CODEOWNER (@Kenmege) approval + green required checks remain mandatory for merge.',
+            ].join('\n');
+
+            await octokit.rest.pulls.createReview({
+              owner,
+              repo,
+              pull_number,
+              commit_id: headSha,
+              event: 'APPROVE',
+              body,
+            });
+            core.info(`Submitted APPROVE on PR #${pull_number} @ ${headSha}`);
