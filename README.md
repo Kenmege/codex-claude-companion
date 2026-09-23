@@ -138,6 +138,13 @@ privacy-safe lifecycle events exclude prompts and tool arguments.
 `codex-claude-review` remains a fully supported compatibility alias for every
 command, including the isolated read-only review lanes.
 
+Every public subcommand accepts `--help` and `-h`. When used before an option
+terminator (`--`), help is side-effect free: the helper prints static usage
+without taking a directory snapshot, reading Claude credentials, creating
+review or bridge state, starting tmux, or launching Claude/Codex. Malformed
+inline help forms such as `--help=value` are rejected as usage errors before
+dispatch.
+
 Or run a read-only review from any git workspace:
 
 ```bash

@@ -471,7 +471,17 @@ test("CLI supervision commands forward to Claude native controls", () => {
   assert.deepEqual(stop.stdout.trim().split("\n"), ["stop", "7c5dcf5d"]);
 
   for (const command of ["workspace-logs", "workspace-stop"]) {
-    for (const invalid of ["--help", "--version", "session-123"]) {
+    for (const helpFlag of ["--help", "-h"]) {
+      const help = spawnSync(process.execPath, [helper, command, helpFlag], {
+        cwd: root, env, encoding: "utf8"
+      });
+      assert.equal(help.status, 0, `${command} ${helpFlag}: ${help.stderr}`);
+      assert.match(help.stdout, /^Usage:\n/);
+      assert.match(help.stdout, new RegExp(`codex-claude ${command}\\b`));
+      assert.equal(help.stderr, "", "help must not reach the Claude CLI stub");
+    }
+
+    for (const invalid of ["--version", "session-123"]) {
       const rejected = spawnSync(process.execPath, [helper, command, invalid], {
         cwd: root, env, encoding: "utf8"
       });

@@ -437,7 +437,7 @@ export async function runClaudeWorker(spec) {
   } catch (error) {
     beginTermination("worker-identity", error);
   }
-  const heartbeat = setInterval(() => {
+  const writeHeartbeat = () => {
     try {
       writeJsonAtomic(spec.heartbeatFile, {
         workerPid: process.pid, claudePid: child.pid, timestamp: new Date().toISOString()
@@ -445,7 +445,9 @@ export async function runClaudeWorker(spec) {
     } catch (error) {
       beginTermination("worker-heartbeat", error);
     }
-  }, Math.max(100, spec.heartbeatIntervalMs ?? 1_000));
+  };
+  writeHeartbeat();
+  const heartbeat = setInterval(writeHeartbeat, Math.max(100, spec.heartbeatIntervalMs ?? 1_000));
   heartbeat.unref();
   const cancellation = setInterval(() => {
     if (typeof spec.cancelFile !== "string") return;

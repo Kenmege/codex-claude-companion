@@ -760,6 +760,28 @@ test("task logs subagent reasoning and messages with a subagent prefix", () => {
   );
 });
 
+test("task ignores unrelated buffered thread notifications while retaining owned subagent labels", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "with-unrelated-buffered-thread");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const result = run("node", [SCRIPT, "task", "challenge the current design"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const stateDir = resolveStateDir(repo);
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
+  assert.match(log, /Subagent design-challenger reasoning:/);
+  assert.doesNotMatch(log, /unrelated-worker|Unrelated sibling activity must not be captured/);
+});
+
 test("task waits for the main thread to complete before returning the final result", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();

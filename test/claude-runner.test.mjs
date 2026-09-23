@@ -151,7 +151,7 @@ test("runner extracts bounded redacted progress from authoritative assistant tex
   assert.deepEqual(progressFromClaudeLine(line.replace(value.execution.claudeSessionId, crypto.randomUUID()), value), []);
 });
 
-test("runner streams a private prompt on stdin and normalizes logs, heartbeat, and exit", async () => {
+test("runner streams a private prompt and persists a heartbeat before a short-lived child exits", async () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccb-runner-life-"));
   const workspace = path.join(base, "workspace");
   fs.mkdirSync(workspace);
@@ -167,7 +167,7 @@ test("runner streams a private prompt on stdin and normalizes logs, heartbeat, a
   const fakeClaude = path.join(base, "fake-claude");
   fs.writeFileSync(requestFile, JSON.stringify(value), { mode: 0o600 });
   fs.writeFileSync(promptFile, "durable private prompt", { mode: 0o600 });
-  fs.writeFileSync(fakeClaude, `#!/bin/sh\nIFS= read -r line\nprintf '%s' "$line" > '${capturedPrompt}'\nprintf 'worker-out\\n'\nprintf 'worker-err\\n' >&2\nsleep 0.15\nexit 7\n`, { mode: 0o700 });
+  fs.writeFileSync(fakeClaude, `#!/bin/sh\nIFS= read -r line\nprintf '%s' "$line" > '${capturedPrompt}'\nprintf 'worker-out\\n'\nprintf 'worker-err\\n' >&2\nexit 7\n`, { mode: 0o700 });
   const spec = {
     requestFile, promptFile, claudeBinary: fakeClaude, environmentFile: privateEnvironmentFile(base),
     workerCapabilityToken: WORKER_CAPABILITY,

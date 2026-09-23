@@ -47,24 +47,58 @@ test("pull request workflow cancels superseded matrix runs", () => {
   assert.match(source, /cancel-in-progress: true/);
 });
 
-test("pull request workflow proves the platform-neutral surface on minimum Node for Windows", () => {
+test("pull request workflow covers the platform-neutral surface on supported Node versions", () => {
   const source = read(".github/workflows/pull-request-ci.yml");
-  assert.match(source, /windows-test:/);
-  assert.match(source, /runs-on: windows-latest/);
-  assert.match(source, /node-version: 18\.18\.0/);
-  assert.match(source, /run: npm run lint/);
-  assert.match(source, /run: npm run test:windows/);
-  assert.match(source, /run: npm run pack:check/);
+  const checkJob = workflowJob(source, "check");
+
+  assert.match(checkJob, /runs-on: ubuntu-latest/);
+  for (const version of ["18\\.18\\.0", "20", "22"]) {
+    assert.match(checkJob, new RegExp(`^[\\t ]*-[\\t ]+${version}[\\t ]*$`, "m"));
+  }
+  assert.match(checkJob, /run: npm run check/);
+  assert.match(checkJob, /run: npm run pack:check/);
+});
+
+test("pull request workflow retains the Windows portability gate", () => {
+  const source = read(".github/workflows/pull-request-ci.yml");
+  const windowsJob = workflowJob(source, "windows-test");
+
+  assert.match(windowsJob, /runs-on: windows-latest/);
+  assert.match(windowsJob, /node-version: 18\.18\.0/);
+  assert.match(windowsJob, /run: npm run lint/);
+  assert.match(windowsJob, /run: npm run test:windows/);
+  assert.match(windowsJob, /run: npm run pack:check/);
+});
+
+test("pull request workflow pins every platform job to the reviewed action revisions without persisted credentials", () => {
+  const source = read(".github/workflows/pull-request-ci.yml");
+
+  for (const name of ["check", "windows-test", "macos-tmux", "tmux-integration"]) {
+    const job = workflowJob(source, name);
+    assert.match(job, /uses: actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\.0\.1/);
+    assert.match(job, /persist-credentials: false/);
+    assert.match(job, /uses: actions\/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7\.0\.0/);
+  }
 });
 
 test("pull request workflow runs the real tmux executor on macOS", () => {
   const source = read(".github/workflows/pull-request-ci.yml").replaceAll("\r\n", "\n");
-  const macosJob = source.match(/\n  macos-tmux:\n([\s\S]*?)(?=\n  [a-z][a-z0-9-]*:\n|$)/)?.[0] ?? "";
+  const macosJob = workflowJob(source, "macos-tmux");
 
   assert.match(macosJob, /runs-on: macos-latest/);
   assert.match(macosJob, /brew install tmux/);
   assert.match(macosJob, /run: npm ci/);
   assert.match(macosJob, /node --test test\/tmux-executor\.test\.mjs/);
+});
+
+test("pull request workflow runs the real tmux executor on Linux", () => {
+  const source = read(".github/workflows/pull-request-ci.yml").replaceAll("\r\n", "\n");
+  const tmuxJob = workflowJob(source, "tmux-integration");
+
+  assert.match(tmuxJob, /runs-on: ubuntu-latest/);
+  assert.match(tmuxJob, /run: npm ci/);
+  assert.match(tmuxJob, /node --test test\/tmux-executor\.test\.mjs/);
+  assert.doesNotMatch(tmuxJob, /brew install tmux/);
 });
 
 test("release workflow binds manual recovery to the triggering tag for accurate OIDC provenance", () => {

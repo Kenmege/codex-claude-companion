@@ -102,14 +102,14 @@ jobs:
 
       - name: Check out repository
         if: env.HAS_CLAUDE_CODE_OAUTH_TOKEN == 'true' || env.HAS_ANTHROPIC_API_KEY == 'true'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
 
       - name: Run Claude auto review with OAuth
         if: env.HAS_CLAUDE_CODE_OAUTH_TOKEN == 'true'
-        uses: anthropics/claude-code-action@51705da45eecce209d4700538bf8377d5b5fc695 # v1 -> v1.0.152 (pinned 2026-06-19)
+        uses: anthropics/claude-code-action@e5ad3c7725bc2459721893f88879fef9dbcf97b0 # v1 -> v1.0.202 (pinned 2026-09-02)
         with:
           # JUSTIFIED: anthropic_api_key omitted on purpose. When the
           # ANTHROPIC_API_KEY secret is unset, ${{ secrets.* }} resolves
@@ -145,7 +145,7 @@ jobs:
 
       - name: Run Claude auto review with API key
         if: env.HAS_CLAUDE_CODE_OAUTH_TOKEN != 'true' && env.HAS_ANTHROPIC_API_KEY == 'true'
-        uses: anthropics/claude-code-action@51705da45eecce209d4700538bf8377d5b5fc695 # v1 -> v1.0.152 (pinned 2026-06-19)
+        uses: anthropics/claude-code-action@e5ad3c7725bc2459721893f88879fef9dbcf97b0 # v1 -> v1.0.202 (pinned 2026-09-02)
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           use_sticky_comment: true
@@ -278,7 +278,7 @@ jobs:
 
       - name: Check out repository
         if: steps.preflight.outputs.skip != 'true' && (env.HAS_CLAUDE_CODE_OAUTH_TOKEN == 'true' || env.HAS_ANTHROPIC_API_KEY == 'true')
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           ref: ${{ steps.resolve_pr_head.outputs.head_sha || github.event.pull_request.head.sha || github.sha }}
@@ -286,7 +286,7 @@ jobs:
 
       - name: Run Claude interactive response with OAuth
         if: steps.preflight.outputs.skip != 'true' && env.HAS_CLAUDE_CODE_OAUTH_TOKEN == 'true'
-        uses: anthropics/claude-code-action@51705da45eecce209d4700538bf8377d5b5fc695 # v1 -> v1.0.152 (pinned 2026-06-19)
+        uses: anthropics/claude-code-action@e5ad3c7725bc2459721893f88879fef9dbcf97b0 # v1 -> v1.0.202 (pinned 2026-09-02)
         with:
           # JUSTIFIED: anthropic_api_key omitted on purpose; same reason
           # as the auto-review job above. Empty-string api key from an
@@ -310,7 +310,7 @@ jobs:
 
       - name: Run Claude interactive response with API key
         if: steps.preflight.outputs.skip != 'true' && env.HAS_CLAUDE_CODE_OAUTH_TOKEN != 'true' && env.HAS_ANTHROPIC_API_KEY == 'true'
-        uses: anthropics/claude-code-action@51705da45eecce209d4700538bf8377d5b5fc695 # v1 -> v1.0.152 (pinned 2026-06-19)
+        uses: anthropics/claude-code-action@e5ad3c7725bc2459721893f88879fef9dbcf97b0 # v1 -> v1.0.202 (pinned 2026-09-02)
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: >-
