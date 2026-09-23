@@ -36,6 +36,12 @@ current Opus alias, including the Opus 1M long-context alias, with `Read`,
 default. Every elite-tier finding must cite tool-call evidence, and malformed
 structured output fails closed.
 
+## Review automation (maintainer)
+
+- **Copilot automatic code review** is enabled on `main` (including draft PRs) via the repository ruleset *Automatic Copilot code review*.
+- **Copilot APPROVED → auto-approve review** is handled by [`.github/workflows/copilot-auto-approve.yml`](.github/workflows/copilot-auto-approve.yml). It records a GitHub review approval only; it never merges and never bypasses required checks. See [`docs/copilot-auto-approve.md`](docs/copilot-auto-approve.md).
+- **CodeRabbit** is configured in [`.coderabbit.yaml`](.coderabbit.yaml).
+
 ## 60-Second Quickstart
 
 The stable `latest` release remains `1.1.1` (the legacy `codex-plugin-cc`
