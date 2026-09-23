@@ -1,0 +1,23 @@
+# CodeRabbit config for Kenmege/codex-claude-companion
+# App already installed (coderabbitai[bot] reviews observed on open PRs).
+language: en-GB
+reviews:
+  profile: chill
+  request_changes_workflow: true
+  high_level_summary: true
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+  path_filters:
+    - "!**/RELEASE_NOTES_*.md"
+    - "!**/package-lock.json"
+  tools:
+    actionlint:
+      enabled: true
+    shellcheck:
+      enabled: true
+chat:
+  auto_reply: true
