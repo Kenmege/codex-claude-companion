@@ -246,16 +246,18 @@ test("every public subcommand help exits before provider, runtime, credential, o
   }
 
   for (const malformedFlag of ["--help=unexpected", "-h=unexpected"]) {
-    const malformed = spawnSync(process.execPath, [helper, "review", malformedFlag], {
-      cwd: root,
-      encoding: "utf8",
-      env: sandbox.env
-    });
-    assert.equal(malformed.status, 2, `${malformedFlag}: ${malformed.stderr}\n${malformed.stdout}`);
-    assert.match(malformed.stderr, /Invalid help option/);
-    assert.equal(fs.existsSync(sandbox.marker), false, `${malformedFlag} must not spawn a runtime`);
-    assert.equal(fs.existsSync(sandbox.reviewJobs), false, `${malformedFlag} must not create review job artifacts`);
-    assert.equal(fs.existsSync(sandbox.bridgeState), false, `${malformedFlag} must not create bridge state`);
+    for (const args of [[helper, malformedFlag], [helper, "review", malformedFlag]]) {
+      const malformed = spawnSync(process.execPath, args, {
+        cwd: root,
+        encoding: "utf8",
+        env: sandbox.env
+      });
+      assert.equal(malformed.status, 2, `${args.slice(1).join(" ")}: ${malformed.stderr}\n${malformed.stdout}`);
+      assert.match(malformed.stderr, /Invalid help option/);
+      assert.equal(fs.existsSync(sandbox.marker), false, `${malformedFlag} must not spawn a runtime`);
+      assert.equal(fs.existsSync(sandbox.reviewJobs), false, `${malformedFlag} must not create review job artifacts`);
+      assert.equal(fs.existsSync(sandbox.bridgeState), false, `${malformedFlag} must not create bridge state`);
+    }
   }
 });
 

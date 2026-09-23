@@ -2160,15 +2160,15 @@ function handleCancel(argv) {
 async function main() {
   const [command, ...argv] = process.argv.slice(2);
   try {
-    if (!command || command === "--help" || command === "-h" || command === "help") {
-      printUsage();
-      return;
-    }
-    const help = inspectCommandHelp(argv);
+    const help = inspectCommandHelp([command, ...argv]);
     if (help.invalid) {
       const error = new Error(`Invalid help option ${help.invalid}; use --help or -h`);
       error.code = "USAGE_ERROR";
       throw error;
+    }
+    if (!command || command === "--help" || command === "-h" || command === "help") {
+      printUsage();
+      return;
     }
     if (help.requested && printCommandUsage(command)) {
       return;

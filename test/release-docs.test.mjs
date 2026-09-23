@@ -70,6 +70,17 @@ test("pull request workflow retains the Windows portability gate", () => {
   assert.match(windowsJob, /run: npm run pack:check/);
 });
 
+test("pull request workflow pins every platform job to the reviewed action revisions without persisted credentials", () => {
+  const source = read(".github/workflows/pull-request-ci.yml");
+
+  for (const name of ["check", "windows-test", "macos-tmux", "tmux-integration"]) {
+    const job = workflowJob(source, name);
+    assert.match(job, /uses: actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7\.0\.1/);
+    assert.match(job, /persist-credentials: false/);
+    assert.match(job, /uses: actions\/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7\.0\.0/);
+  }
+});
+
 test("pull request workflow runs the real tmux executor on macOS", () => {
   const source = read(".github/workflows/pull-request-ci.yml").replaceAll("\r\n", "\n");
   const macosJob = workflowJob(source, "macos-tmux");
