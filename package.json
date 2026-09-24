@@ -26,6 +26,7 @@
     "scripts/claude-review-companion.mjs",
     "scripts/bridge-broker.mjs",
     "scripts/validate-repo.mjs",
+    "scripts/run-tests.mjs",
     "scripts/bin/",
     "scripts/lib/",
     "plugins/codex/.claude-plugin/plugin.json",

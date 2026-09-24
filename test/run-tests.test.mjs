@@ -125,13 +125,24 @@ test("run-tests forwards SIGTERM, ends the suite, removes the root, and does not
     stdio: "ignore"
   });
   const exited = new Promise((resolve) => child.on("exit", (code, signal) => resolve({ code, signal })));
-  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); });
+  let probePid = null;
+  t.after(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    if (probePid !== null && isAlive(probePid)) process.kill(probePid, "SIGKILL");
+  });
 
   await waitFor(() => fs.existsSync(`${report}.pid`), "the probe to start");
   const temporaryRoot = fs.readFileSync(report, "utf8");
-  const probePid = Number(fs.readFileSync(`${report}.pid`, "utf8"));
+  probePid = Number(fs.readFileSync(`${report}.pid`, "utf8"));
   child.kill("SIGTERM");
-  const { code, signal } = await exited;
+  // Bounded, so a runner that ignores SIGTERM fails this test instead of hanging it.
+  let deadline;
+  const { code, signal } = await Promise.race([
+    exited,
+    new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error("the runner did not exit within 15 s of SIGTERM")), 15_000);
+    })
+  ]).finally(() => clearTimeout(deadline));
 
   assert.ok(signal === "SIGTERM" || (code !== null && code !== 0), `interrupted run reported code ${code}, signal ${signal}`);
   assert.equal(fs.existsSync(temporaryRoot), false, "the per-run temporary root must be removed");

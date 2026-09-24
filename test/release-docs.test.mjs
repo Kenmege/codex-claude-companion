@@ -145,6 +145,15 @@ test("package files list excludes bump-version from the shipped tarball surface"
   assert.ok(!packageJson.files.includes("scripts/"));
 });
 
+test("every script the published package.json runs is shipped in the package", () => {
+  for (const [name, command] of Object.entries(packageJson.scripts)) {
+    for (const [, file] of command.matchAll(/\bnode\s+(?!--)(\S+\.m?js)\b/g)) {
+      const shipped = packageJson.files.some((entry) => entry === file || (entry.endsWith("/") && file.startsWith(entry)));
+      assert.ok(shipped, `npm script "${name}" runs ${file}, which the package files list does not ship`);
+    }
+  }
+});
+
 test("bump-version checks the current release manifests", () => {
   assert.doesNotThrow(() => {
     execFileSync(process.execPath, ["scripts/bump-version.mjs", "--check"], {
