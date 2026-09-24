@@ -90,7 +90,9 @@ function removeFileIfExists(filePath) {
   }
 }
 
-function writeJsonAtomic(filePath, payload) {
+// Every JSON record another process may read while it is rewritten goes through here: readers see the
+// old record or the new one, never a truncated file.
+export function writeJsonAtomic(filePath, payload) {
   const temporaryFile = `${filePath}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`;
   let fileDescriptor;
   try {
@@ -193,7 +195,7 @@ export function getConfig(cwd) {
 export function writeJobFile(cwd, jobId, payload) {
   ensureStateDir(cwd);
   const jobFile = resolveJobFile(cwd, jobId);
-  fs.writeFileSync(jobFile, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  writeJsonAtomic(jobFile, payload);
   return jobFile;
 }
 

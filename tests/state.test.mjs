@@ -5,7 +5,7 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 
 import { makeTempDir } from "./helpers.mjs";
-import { resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState } from "../plugins/codex/scripts/lib/state.mjs";
+import { readJobFile, resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState, writeJobFile } from "../plugins/codex/scripts/lib/state.mjs";
 
 // A live Claude Code session exports CLAUDE_PLUGIN_DATA, which resolveStateDir
 // prefers over the temp-backed default. Scrub it at module load so the default
@@ -79,6 +79,23 @@ test("saveState atomically replaces the state snapshot", { skip: process.platfor
     assert.equal(newState.jobs[0].id, secondJob.id);
   } finally {
     fs.closeSync(previousSnapshot);
+  }
+});
+
+// A reader such as `cancel` parses the job record while the background worker rewrites it. An
+// in-place write lets that reader see a truncated file ("Unexpected end of JSON input").
+test("writeJobFile atomically replaces the job record", { skip: process.platform === "win32" }, () => {
+  const workspace = makeTempDir();
+  const jobFile = writeJobFile(workspace, "job-atomic", { id: "job-atomic", status: "running", progress: "first" });
+  const previousRecord = fs.openSync(jobFile, "r");
+
+  try {
+    writeJobFile(workspace, "job-atomic", { id: "job-atomic", status: "cancelled", progress: "second" });
+
+    assert.equal(JSON.parse(fs.readFileSync(previousRecord, "utf8")).progress, "first");
+    assert.equal(readJobFile(jobFile).progress, "second");
+  } finally {
+    fs.closeSync(previousRecord);
   }
 });
 
