@@ -16,14 +16,17 @@ import { spawn } from "node:child_process";
 
 // Keep the root name short: Unix socket paths (broker.sock) are created beneath it, and macOS limits
 // them to 104 bytes.
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "cct-"));
+// Absolute even when the incoming TMPDIR is relative: children run with other working directories.
+const root = path.resolve(fs.mkdtempSync(path.join(os.tmpdir(), "cct-")));
 const env = { ...process.env, TMPDIR: root, TMP: root, TEMP: root };
 
 function removeRoot() {
   try {
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    return true;
   } catch (error) {
     process.stderr.write(`run-tests: could not remove temporary root ${root}: ${error.message}\n`);
+    return false;
   }
 }
 
@@ -42,7 +45,7 @@ child.on("error", (error) => {
 });
 
 child.on("exit", (code, signal) => {
-  removeRoot();
+  const removed = removeRoot();
   if (signal) {
     // Re-raise so callers see the same signal; the exit code covers a platform that cannot deliver it,
     // so a killed run can never end as a success.
@@ -51,5 +54,7 @@ child.on("exit", (code, signal) => {
     process.kill(process.pid, signal);
     return;
   }
-  process.exit(code ?? 1);
+  // A run that could not clean up after itself fails even when every test passed.
+  const status = code ?? 1;
+  process.exit(status === 0 && !removed ? 1 : status);
 });
