@@ -46,7 +46,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Submit APPROVE review (no merge)
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CODEOWNER_APPROVE_TOKEN: ${{ secrets.CODEOWNER_APPROVE_TOKEN }}
         with:
@@ -61,11 +61,11 @@ jobs:
             // satisfy require_code_owner_reviews; otherwise use GITHUB_TOKEN.
             const token = process.env.CODEOWNER_APPROVE_TOKEN || undefined;
             const octokit = token
-              ? github.getOctokit(token)
+              ? getOctokit(token)
               : github;
 
             // Skip if an APPROVED review from this actor already exists on HEAD.
-            const headSha = pr.head.sha;
+            const headSha = review.commit_id;
             const { data: reviews } = await octokit.rest.pulls.listReviews({
               owner, repo, pull_number, per_page: 100,
             });
