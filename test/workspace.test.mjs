@@ -249,7 +249,10 @@ test("workspace bounds a stalled Claude background dispatch and terminates its p
     {
       commandAvailable: () => true,
       dispatchTimeoutMs: 75,
-      dispatchTerminationGraceMs: 25,
+      // The stalled child exits on SIGTERM, but on a loaded machine a 25 ms grace expired before its exit
+      // was observed and the dispatch escalated to SIGKILL (ETIMEDOUT_KILL, 13 of 30 concurrent runs).
+      // 500 ms keeps the SIGTERM path deterministic and the run well inside the 2 s bound asserted below.
+      dispatchTerminationGraceMs: 500,
       runCommandCapture: (_command, _args, options) => runCommandCapture(
         process.execPath,
         ["-e", "setInterval(() => {}, 1000)"],

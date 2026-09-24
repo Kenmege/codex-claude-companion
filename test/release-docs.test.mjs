@@ -81,8 +81,10 @@ test("release workflow binds manual recovery to the triggering tag for accurate 
 const packageJson = JSON.parse(read("package.json"));
 
 test("package test command uses shell-independent Node discovery", () => {
-  assert.equal(packageJson.scripts.test, "node --test");
-  assert.match(packageJson.scripts["test:windows"], /^node --test /);
+  // scripts/run-tests.mjs gives the run a private temporary root and hands discovery to `node --test`
+  // itself (behaviour covered in test/run-tests.test.mjs), so no shell glob decides which files run.
+  assert.equal(packageJson.scripts.test, "node scripts/run-tests.mjs");
+  assert.match(packageJson.scripts["test:windows"], /^node scripts\/run-tests\.mjs /);
 });
 
 test("packed package installs working primary and compatibility command aliases", { timeout: 60_000 }, () => {

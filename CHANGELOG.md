@@ -6,6 +6,17 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- `npm test` no longer leaves hundreds of directories in the system temp
+  directory on every run: `scripts/run-tests.mjs` runs `node --test` inside a
+  private temporary root (`TMPDIR`/`TMP`/`TEMP`) and removes it however the run
+  ends, which also isolates temp files created by the code under test and its
+  child processes. Discovery is still Node's own `node --test`.
+- The stalled-dispatch workspace test no longer fails under load: its 25 ms
+  SIGTERM grace expired before the child's exit was observed, escalating to
+  `ETIMEDOUT_KILL`; a 500 ms grace keeps the SIGTERM path deterministic.
+
 ## [1.2.0-rc.1] — 2026-07-19
 
 ### Added
