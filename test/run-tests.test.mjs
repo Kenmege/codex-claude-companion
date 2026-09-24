@@ -47,13 +47,28 @@ async function waitFor(condition, what, timeoutMs = 15_000) {
   }
 }
 
-function isAlive(pid) {
+// One-letter process state ("R", "S", "Z", ...), or "" when it cannot be read.
+function processState(pid) {
+  try {
+    // /proc/<pid>/stat is "pid (comm) S ...", and comm may itself contain ") ", so read after the last ")".
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat.charAt(stat.lastIndexOf(")") + 2);
+  } catch {
+    const result = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
+    return result.status === 0 ? result.stdout.trim().charAt(0) : "";
+  }
+}
+
+// An exited process that its new parent has not reaped yet (a zombie, e.g. under a container init that
+// does not reap orphans) still answers kill(pid, 0), but it is not running. An unreadable state counts
+// as running, so the check can only err towards failing.
+function isRunning(pid) {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
   }
+  return processState(pid) !== "Z";
 }
 
 test("run-tests lets node --test discover the suite and removes the private temporary root", (t) => {
@@ -128,7 +143,7 @@ test("run-tests forwards SIGTERM, ends the suite, removes the root, and does not
   let probePid = null;
   t.after(() => {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    if (probePid !== null && isAlive(probePid)) process.kill(probePid, "SIGKILL");
+    if (probePid !== null && isRunning(probePid)) process.kill(probePid, "SIGKILL");
   });
 
   await waitFor(() => fs.existsSync(`${report}.pid`), "the probe to start");
@@ -146,5 +161,5 @@ test("run-tests forwards SIGTERM, ends the suite, removes the root, and does not
 
   assert.ok(signal === "SIGTERM" || (code !== null && code !== 0), `interrupted run reported code ${code}, signal ${signal}`);
   assert.equal(fs.existsSync(temporaryRoot), false, "the per-run temporary root must be removed");
-  await waitFor(() => !isAlive(probePid), "the interrupted suite's test process to exit");
+  await waitFor(() => !isRunning(probePid), "the interrupted suite's test process to exit");
 });
