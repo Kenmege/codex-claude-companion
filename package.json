@@ -26,6 +26,7 @@
     "scripts/claude-review-companion.mjs",
     "scripts/bridge-broker.mjs",
     "scripts/validate-repo.mjs",
+    "scripts/run-tests.mjs",
     "scripts/bin/",
     "scripts/lib/",
     "plugins/codex/.claude-plugin/plugin.json",
@@ -47,8 +48,8 @@
   },
   "scripts": {
     "lint": "node scripts/validate-repo.mjs",
-    "test": "node --test",
-    "test:windows": "node --test test/args.test.mjs test/mcp-config.test.mjs test/release-docs.test.mjs test/render.test.mjs tests/broker-lifecycle.test.mjs tests/helpers.test.mjs tests/process.test.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "test:windows": "node scripts/run-tests.mjs test/args.test.mjs test/mcp-config.test.mjs test/release-docs.test.mjs test/render.test.mjs tests/broker-lifecycle.test.mjs tests/helpers.test.mjs tests/process.test.mjs",
     "check": "npm run lint && npm test",
     "pack:check": "npm pack --dry-run"
   },

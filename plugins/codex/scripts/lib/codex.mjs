@@ -555,25 +555,24 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
   const state = createTurnCaptureState(threadId, options);
   const previousHandler = client.notificationHandler;
 
+  // One routing rule for live and buffered notifications. Thread announcements are always applied:
+  // a subagent's thread is not tracked yet when it is announced, so belongsToTurn() cannot claim it,
+  // and an announcement that raced ahead of the turn/start response used to be forwarded away,
+  // leaving the subagent logged by its thread id instead of its name.
+  const route = (message) => {
+    if (message.method === "thread/started" || message.method === "thread/name/updated" || belongsToTurn(state, message)) {
+      applyTurnNotification(state, message);
+    } else if (previousHandler) {
+      previousHandler(message);
+    }
+  };
+
   client.setNotificationHandler((message) => {
     if (!state.turnId) {
       state.bufferedNotifications.push(message);
       return;
     }
-
-    if (message.method === "thread/started" || message.method === "thread/name/updated") {
-      applyTurnNotification(state, message);
-      return;
-    }
-
-    if (!belongsToTurn(state, message)) {
-        if (previousHandler) {
-          previousHandler(message);
-        }
-        return;
-    }
-
-    applyTurnNotification(state, message);
+    route(message);
   });
 
   try {
@@ -584,13 +583,7 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
       state.threadTurnIds.set(state.threadId, state.turnId);
     }
     for (const message of state.bufferedNotifications) {
-      if (belongsToTurn(state, message)) {
-        applyTurnNotification(state, message);
-      } else {
-        if (previousHandler) {
-          previousHandler(message);
-        }
-      }
+      route(message);
     }
     state.bufferedNotifications.length = 0;
 

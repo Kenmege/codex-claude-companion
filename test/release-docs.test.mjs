@@ -81,8 +81,10 @@ test("release workflow binds manual recovery to the triggering tag for accurate 
 const packageJson = JSON.parse(read("package.json"));
 
 test("package test command uses shell-independent Node discovery", () => {
-  assert.equal(packageJson.scripts.test, "node --test");
-  assert.match(packageJson.scripts["test:windows"], /^node --test /);
+  // scripts/run-tests.mjs gives the run a private temporary root and hands discovery to `node --test`
+  // itself (behaviour covered in test/run-tests.test.mjs), so no shell glob decides which files run.
+  assert.equal(packageJson.scripts.test, "node scripts/run-tests.mjs");
+  assert.match(packageJson.scripts["test:windows"], /^node scripts\/run-tests\.mjs /);
 });
 
 test("packed package installs working primary and compatibility command aliases", { timeout: 60_000 }, () => {
@@ -141,6 +143,15 @@ test("package files list excludes bump-version from the shipped tarball surface"
   assert.ok(packageJson.files.includes("scripts/bin/"));
   assert.ok(packageJson.files.includes("scripts/lib/"));
   assert.ok(!packageJson.files.includes("scripts/"));
+});
+
+test("every script the published package.json runs is shipped in the package", () => {
+  for (const [name, command] of Object.entries(packageJson.scripts)) {
+    for (const [, file] of command.matchAll(/\bnode\s+(?!--)(\S+\.m?js)\b/g)) {
+      const shipped = packageJson.files.some((entry) => entry === file || (entry.endsWith("/") && file.startsWith(entry)));
+      assert.ok(shipped, `npm script "${name}" runs ${file}, which the package files list does not ship`);
+    }
+  }
 });
 
 test("bump-version checks the current release manifests", () => {

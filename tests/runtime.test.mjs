@@ -760,6 +760,29 @@ test("task logs subagent reasoning and messages with a subagent prefix", () => {
   );
 });
 
+test("task keeps the subagent label when the subagent is announced before the turn/start response", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "with-subagent-announced-before-response");
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+
+  const result = run("node", [SCRIPT, "task", "challenge the current design"], {
+    cwd: repo,
+    env: buildEnv(binDir)
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const stateDir = resolveStateDir(repo);
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
+  assert.match(log, /Starting subagent design-challenger via collaboration tool: wait\./);
+  assert.match(log, /Subagent design-challenger reasoning:/);
+  assert.doesNotMatch(log, /Starting subagent thr_/);
+});
+
 test("task waits for the main thread to complete before returning the final result", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
