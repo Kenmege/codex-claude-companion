@@ -8,6 +8,10 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ### Fixed
 
+- Cancelling a running Codex task no longer fails with `Unexpected end of JSON
+  input` when the background worker is rewriting the job record at that moment:
+  job records and the broker session file are now replaced atomically, like the
+  state snapshot already was.
 - Codex task logs no longer lose a subagent's name when Codex announces the
   subagent before the `turn/start` response is processed: buffered thread
   announcements are now applied like live ones instead of being forwarded away,
