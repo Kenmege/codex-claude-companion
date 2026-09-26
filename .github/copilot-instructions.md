@@ -16,3 +16,5 @@ read-only code review work from Codex to Claude Code.
 - Check public-release hygiene: no secrets, private paths, local-only machine
   assumptions, or accidental package contents.
 - Do not ask for broad rewrites when a narrow control-plane fix is enough.
+- Read and follow the repository-root `AGENTS.md`, which is the canonical instruction for coding agents.
+- Never bypass required status checks or required reviews.
