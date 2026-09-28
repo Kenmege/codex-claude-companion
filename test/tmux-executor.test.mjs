@@ -698,10 +698,18 @@ test("real tmux owns the actual worker, survives launcher return, and records be
   const tmuxBinary = fs.realpathSync(spawnSync("sh", ["-c", "command -v tmux"], { encoding: "utf8" }).stdout.trim());
   const socketName = `ccb-test-${process.pid}-${Date.now()}`;
   assert.equal(spawnSync(tmuxBinary, ["-L", socketName, "new-session", "-d", "-s", "env-seed", "sleep 10"]).status, 0);
+  // tmux (3.7c verified) does not unlink its socket on kill-server, so resolve the
+  // path while the server is alive and remove it ourselves during cleanup.
+  const socketPath = spawnSync(tmuxBinary, ["-L", socketName, "display-message", "-p", "#{socket_path}"], { encoding: "utf8" }).stdout.trim();
+  assert.ok(path.isAbsolute(socketPath) && path.basename(socketPath) === socketName, `unexpected tmux socket path: ${socketPath}`);
+  context.after(() => {
+    spawnSync(tmuxBinary, ["-L", socketName, "kill-server"]);
+    fs.rmSync(socketPath, { force: true });
+    assert.equal(fs.existsSync(socketPath), false, `tmux socket leaked: ${socketPath}`);
+  });
   assert.equal(spawnSync(tmuxBinary, ["-L", socketName, "set-environment", "-g", "ANTHROPIC_API_KEY", "stale-server-auth"]).status, 0);
   const req = request(workspace);
   const session = deriveTmuxSessionName(req.jobId);
-  context.after(() => spawnSync(tmuxBinary, ["-L", socketName, "kill-server"]));
   let dispatchIdentity;
 
   const launched = await launchTmuxClaudeWorker({
