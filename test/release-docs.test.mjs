@@ -100,19 +100,24 @@ test("packed package installs working primary and compatibility command aliases"
   const packDirectory = path.join(tempRoot, "pack");
   const installPrefix = path.join(tempRoot, "install");
   fs.mkdirSync(packDirectory, { recursive: true });
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+  // Windows command shims cannot be execFile'd on current Node. Execute npm's
+  // actual JavaScript CLI with npm's own runtime, without interpreting its arguments
+  // through a shell. npm test/exec supplies its installed CLI path.
+  const npm = process.platform === "win32" ? (process.env.npm_node_execpath ?? process.execPath) : "npm";
+  const npmPrefix = process.platform === "win32" ? [process.env.npm_execpath ??
+    path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js")] : [];
 
   try {
     const packed = JSON.parse(execFileSync(
       npm,
-      ["pack", "--json", "--ignore-scripts", "--pack-destination", packDirectory],
+      [...npmPrefix, "pack", "--json", "--ignore-scripts", "--pack-destination", packDirectory],
       { cwd: root, encoding: "utf8" }
     ));
     assert.equal(packed.length, 1);
     const tarball = path.join(packDirectory, packed[0].filename);
     execFileSync(
       npm,
-      ["install", "--prefix", installPrefix, "--ignore-scripts", "--no-audit", "--no-fund", tarball],
+      [...npmPrefix, "install", "--prefix", installPrefix, "--ignore-scripts", "--no-audit", "--no-fund", tarball],
       { cwd: tempRoot, encoding: "utf8" }
     );
 
