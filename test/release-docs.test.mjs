@@ -838,3 +838,16 @@ test("repository validation works from paths containing spaces and Unicode", () 
     fs.rmSync(parent, { recursive: true, force: true });
   }
 });
+
+test("relative links in the packaged README resolve to packaged files", () => {
+  // npm renders the packaged README; a relative link to an unpackaged file is broken there.
+  const files = JSON.parse(read("package.json")).files;
+  const packaged = (target) => files.some((entry) => entry.endsWith("/") ? target.startsWith(entry) : target === entry);
+  const targets = [...read("README.md").matchAll(/\]\(([^)\s]+)\)/g)]
+    .map((match) => match[1].split("#")[0])
+    .filter((target) => target && !/^[a-z][a-z0-9+.-]*:/i.test(target));
+  assert.ok(targets.length > 0);
+  for (const target of targets) {
+    assert.ok(packaged(target.replace(/^\.\//, "")), `README links to unpackaged ${target}`);
+  }
+});

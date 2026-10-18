@@ -39,8 +39,8 @@ structured output fails closed.
 ## Review automation (maintainer)
 
 - **Copilot automatic code review** is enabled on `main` (including draft PRs) via the repository ruleset *Automatic Copilot code review*.
-- **Human review is required.** `main` needs an approving code-owner review, and automated reviewers (Copilot, CodeRabbit, Codex, Devin) may comment or approve, but only a code owner's approval satisfies that requirement. Pull requests are reviewed by a second party: `@Kenmege` and `@kenmege-claude` (Kennedy's machine account for Claude) co-own general paths and never approve their own pull requests, while workflow, release and security paths need `@Kenmege`'s review. See [`.github/CODEOWNERS`](.github/CODEOWNERS).
-- **CodeRabbit** is configured in [`.coderabbit.yaml`](.coderabbit.yaml).
+- **Human review is required.** `main` needs an approving code-owner review, and automated reviewers (Copilot, CodeRabbit, Codex, Devin) may comment or approve, but only a code owner's approval satisfies that requirement. Pull requests are reviewed by a second party: `@Kenmege` and `@kenmege-claude` (Kennedy's machine account for Claude) co-own general paths and never approve their own pull requests, while workflow, release and security paths need `@Kenmege`'s review. See [`.github/CODEOWNERS`](https://github.com/Kenmege/codex-claude-companion/blob/main/.github/CODEOWNERS).
+- **CodeRabbit** is configured in [`.coderabbit.yaml`](https://github.com/Kenmege/codex-claude-companion/blob/main/.coderabbit.yaml).
 
 ## 60-Second Quickstart
 
@@ -66,7 +66,7 @@ codex-claude bridge-doctor --json
 `codex-plugin-cc@1.1.1` was the last stable release before the durable bridge.
 Upgrading from `1.2.0-rc.1` automatically migrates the job-state index once;
 jobs from older versions keep their summaries. Both executable names remain
-supported. See [the release notes](RELEASE_NOTES_v1.2.0.md).
+supported. See [the release notes](https://github.com/Kenmege/codex-claude-companion/blob/v1.2.0/RELEASE_NOTES_v1.2.0.md).
 
 For source development or an unpublished-commit test:
 

@@ -61,8 +61,14 @@ test("identity documentation distinguishes the two product directions", () => {
 test("stable release documentation describes the shipped version and preserves upgrade guidance", () => {
   const installDocs = ["README.md", "docs/CODEX_CLAUDE_BRIDGE_LAUNCH_GUIDE.html", "RELEASE_NOTES_v1.2.0.md"];
   for (const file of [...installDocs, "docs/bridge-migration.md", "docs/bridge-capabilities.md"]) {
-    const source = read(file);
-    const text = source.replace(/<[^>]+>/g, "").replace(/`/g, "");
+    // Compare prose across Markdown and HTML: drop inline markup until none is left.
+    let text = read(file);
+    let previous;
+    do {
+      previous = text;
+      text = text.replace(/<[^>]*>/g, "");
+    } while (text !== previous);
+    text = text.replace(/`/g, "");
     assert.match(text, /codex-claude-companion@1\.2\.0 is the current stable release on npm\s+dist-tag latest\./i, file);
     assert.doesNotMatch(text, /this checkout prepares|after (?:its )?separately approved publication|release preparation|preparing this release|publication requires separate\s+approval|after separate\s+publication approval/i, file);
     if (installDocs.includes(file)) {
