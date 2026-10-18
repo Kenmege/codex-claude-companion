@@ -17,6 +17,16 @@ npm run pack:check
 
 Do not weaken tests to pass. If a regression test exposes a real bug, fix the implementation.
 
+`npm test` and `npm run test:windows` include the bounded fast-check properties in
+`tests/property-fuzzing.test.mjs` for Codex argument parsing, job artifact paths,
+Markdown table rendering and job-state operation sequences. Run them alone with
+`node scripts/run-tests.mjs tests/property-fuzzing.test.mjs tests/input-boundaries.test.mjs`.
+Failures print a replay seed, shrink path and counterexample; reproduce the
+failure with the reported `seed` and `path` in that property's `fc.assert` options.
+Keep the property and add a minimal ordinary regression test before fixing a defect.
+State properties isolate plugin data in a temporary workspace and remove it after
+each generated sequence, including failed or shrinking cases.
+
 ## Working With Reviewers
 
 When you open a pull request:

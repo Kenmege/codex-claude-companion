@@ -49,7 +49,7 @@
   "scripts": {
     "lint": "node scripts/validate-repo.mjs",
     "test": "node scripts/run-tests.mjs",
-    "test:windows": "node scripts/run-tests.mjs test/args.test.mjs test/mcp-config.test.mjs test/release-docs.test.mjs test/render.test.mjs tests/broker-lifecycle.test.mjs tests/helpers.test.mjs tests/process.test.mjs tests/terminal-markers.test.mjs tests/job-index.test.mjs tests/state.test.mjs test/bridge-input.test.mjs test/bridge-repair.test.mjs",
+    "test:windows": "node scripts/run-tests.mjs test/args.test.mjs test/mcp-config.test.mjs test/release-docs.test.mjs test/render.test.mjs tests/broker-lifecycle.test.mjs tests/helpers.test.mjs tests/process.test.mjs tests/terminal-markers.test.mjs tests/job-index.test.mjs tests/state.test.mjs tests/input-boundaries.test.mjs tests/property-fuzzing.test.mjs test/bridge-input.test.mjs test/bridge-repair.test.mjs",
     "check": "npm run lint && npm test",
     "pack:check": "npm pack --dry-run"
   },
@@ -75,5 +75,8 @@
   "dependencies": {
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1"
+  },
+  "devDependencies": {
+    "fast-check": "4.10.2"
   }
 }
