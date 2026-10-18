@@ -483,7 +483,17 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.match(publishJob, /npm publish "\$PACKAGE_FILE" --access public --tag "\$PUBLISH_TAG"/);
   // A relative "release-artifact/x.tgz" is parsed by npm as a GitHub shorthand spec (v1.2.0 tag run failed this way).
   assert.match(publishJob, /PACKAGE_FILE="\$PWD\/\$\{PACKAGES\[0\]\}"/);
-  assert.match(publishJob, /for ATTEMPT in 1 2 3 4 5 6/);
+  const integrityCheck = publishJob.match(/verify_registry_integrity\(\) \{[\s\S]*?^          \}/m)?.[0] ?? "";
+  // 61 reads separated by 60 ten-second sleeps cover registry propagation
+  // beyond the observed three-minute delay; a non-empty mismatch still fails.
+  assert.match(integrityCheck, /for \(\(ATTEMPT=1; ATTEMPT<=61; ATTEMPT\+\+\)\); do/);
+  assert.match(integrityCheck, /if \[ "\$ATTEMPT" -lt 61 \]; then sleep 10; fi/);
+  assert.match(integrityCheck, /if \[ -n "\$registry_integrity" \]; then\s+break/);
+  assert.match(integrityCheck, /if \[ -z "\$registry_integrity" \]; then\s+echo "::error::npm version \$\{PACKAGE_NAME\}@\$\{VERSION\} did not become available with integrity after 10 minutes\."\s+exit 1\s+fi/);
+  assert.match(integrityCheck, /if \[ "\$registry_integrity" != "\$LOCAL_INTEGRITY" \]; then\s+echo "::error::npm artifact integrity for \$\{PACKAGE_NAME\}@\$\{VERSION\} did not match the validated tarball\."\s+exit 1/);
+  // Leave room for setup, publishing, and dist-tag verification around the wait.
+  assert.match(publishJob, /timeout-minutes: 20/);
+  assert.match(publishJob, /RESOLVED_VERSION=""\s+for ATTEMPT in 1 2 3 4 5 6; do/);
   assert.match(publishJob, /npm view "\$\{PACKAGE_NAME\}@\$\{PUBLISH_TAG\}" version/);
   assert.match(publishJob, /if \[ "\$RESOLVED_VERSION" != "\$VERSION" \]; then/);
   assert.match(publishJob, /npm dist-tag \$\{PUBLISH_TAG\} resolved to \$\{RESOLVED_VERSION:-<missing>\}, expected \$\{VERSION\}/);
@@ -667,12 +677,17 @@ test("Claude Code workflow is pinned, current, and auth-gated", () => {
   const readme = read("README.md");
   const contributing = read("CONTRIBUTING.md");
   const autoReviewJob = workflowJob(workflow, "auto-review");
+  const autoReviewFederationStep = workflowStep(workflow, "Run Claude auto review with workload identity");
   const autoReviewOauthStep = workflowStep(workflow, "Run Claude auto review with OAuth");
   const autoReviewApiKeyStep = workflowStep(workflow, "Run Claude auto review with API key");
   const interactiveOauthStep = workflowStep(workflow, "Run Claude interactive response with OAuth");
   const interactiveApiKeyStep = workflowStep(workflow, "Run Claude interactive response with API key");
+  const interactiveFederationStep = workflowStep(workflow, "Run Claude interactive response with workload identity");
 
-  assert.match(workflow, /pull_request:\r?\n\s+types: \[opened, synchronize, ready_for_review, reopened\]/);
+  // Auto-review runs once per ready PR (cost control), never on drafts or every push.
+  assert.match(workflow, /pull_request:\n(?:[ \t]+#[^\n]*\n)*[ \t]+types: \[opened, ready_for_review, reopened\]/);
+  assert.doesNotMatch(workflow.split("\njobs:")[0], /synchronize/);
+  assert.match(workflow, /github\.event_name == 'pull_request' &&\s+github\.event\.pull_request\.draft == false &&/);
   assert.match(workflow, /anthropics\/claude-code-action@[a-f0-9]{40}/);
   assert.doesNotMatch(workflow, /anthropics\/claude-code-action@v1/);
   assert.doesNotMatch(workflow, /^\s+mode:/m);
@@ -682,15 +697,17 @@ test("Claude Code workflow is pinned, current, and auth-gated", () => {
   assert.match(workflow, /Run Claude interactive response with OAuth/);
   assert.match(workflow, /Run Claude interactive response with API key/);
   assert.match(autoReviewJob, /timeout-minutes: 30/);
-  for (const step of [autoReviewOauthStep, autoReviewApiKeyStep]) {
+  for (const step of [autoReviewFederationStep, autoReviewOauthStep, autoReviewApiKeyStep,
+    interactiveFederationStep, interactiveOauthStep, interactiveApiKeyStep]) {
+    assert.match(step, /uses: anthropics\/claude-code-action@[a-f0-9]{40}(?:\s|$)/);
     assert.match(step, /--model opus/);
     assert.match(step, /--max-turns 80/);
     assert.match(step, /--disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell/);
   }
   assert.match(workflow, /anthropic_api_key: \$\{\{ secrets\.ANTHROPIC_API_KEY \}\}/);
   assert.match(workflow, /claude_code_oauth_token: \$\{\{ secrets\.CLAUDE_CODE_OAUTH_TOKEN \}\}/);
-  assert.match(workflow, /Verify Claude auth secret configured/);
-  assert.match(workflow, /Claude Code Action requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN/);
+  assert.match(workflow, /Verify Claude auth configured/);
+  assert.match(workflow, /Claude Code Action requires workload identity federation .*ANTHROPIC_FEDERATION_RULE_ID.*ANTHROPIC_ORGANIZATION_ID.*CLAUDE_CODE_OAUTH_TOKEN.*ANTHROPIC_API_KEY/);
   assert.match(workflow, /IS_UNTRUSTED_FORK_PR/);
   assert.match(workflow, /does not pass repository Actions secrets to forked pull_request workflows/);
   assert.match(workflow, /--append-system-prompt/);
@@ -709,6 +726,61 @@ test("Claude Code workflow is pinned, current, and auth-gated", () => {
   assert.match(readme, /Claude \(Anthropic Opus alias\)/);
   assert.match(contributing, /Working With Reviewers/);
   assert.match(contributing, /ANTHROPIC_API_KEY/);
+});
+
+test("Claude auth selects federation before OAuth and API keys with fork exclusion in both jobs", () => {
+  const workflow = read(".github/workflows/claude.yml");
+  assert.match(workflow, /^  id-token: write$/m);
+  for (const [jobName, label] of [["auto-review", "auto review"], ["interactive", "interactive response"]]) {
+    const job = workflowJob(workflow, jobName);
+    const preflight = workflowStep(job, jobName === "auto-review"
+      ? "Verify Claude auth configured" : "Verify Claude auth configured + fork-PR guard");
+    assert.match(preflight, /^        id: preflight$/m);
+    assert.match(job, /HAS_ANTHROPIC_FEDERATION: \$\{\{ vars\.ANTHROPIC_FEDERATION_RULE_ID != '' && vars\.ANTHROPIC_ORGANIZATION_ID != '' \}\}/);
+    assert.match(preflight, /if \[ "\$IS_UNTRUSTED_FORK_PR" = "true" \]/);
+    if (jobName === "interactive") {
+      assert.match(preflight, /\|\| \[ "\$IC_FORK" = "true" \]/);
+      for (const field of ["comment", "review", "issue"]) {
+        assert.ok(job.includes(`contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.${field}.author_association)`));
+      }
+      const lookup = workflowStep(job, "Resolve PR head for issue_comment events");
+      assert.match(lookup, /if: github\.event_name == 'issue_comment' && github\.event\.issue\.pull_request != null/);
+      assert.match(lookup, /if \[ "\$\{HEAD_REPO\}" = "\$\{\{ github\.repository \}\}" \]; then\s+echo "is_fork=false" >> "\$GITHUB_OUTPUT"\s+else\s+echo "is_fork=true" >> "\$GITHUB_OUTPUT"/);
+    }
+    assert.match(preflight, /::notice::[^\n]+\n\s+echo "mode=skip" >> "\$GITHUB_OUTPUT"\s+exit 0\s+fi\s+if \[ "\$HAS_ANTHROPIC_FEDERATION" = "true" \]; then\s+echo "mode=federation" >> "\$GITHUB_OUTPUT"\s+elif \[ "\$HAS_CLAUDE_CODE_OAUTH_TOKEN" = "true" \]; then\s+echo "mode=oauth" >> "\$GITHUB_OUTPUT"\s+elif \[ "\$HAS_ANTHROPIC_API_KEY" = "true" \]; then\s+echo "mode=api" >> "\$GITHUB_OUTPUT"\s+else\s+echo "::error::[^\n]+\n\s+exit 1\s+fi/);
+    assert.match(workflowStep(job, "Check out repository"), /if: steps\.preflight\.outputs\.mode != 'skip'/);
+    assert.match(workflowStep(job, "Check out repository"), /persist-credentials: false/);
+    for (const [mode, suffix, input] of [["federation", "workload identity", null],
+      ["oauth", "OAuth", "claude_code_oauth_token"], ["api", "API key", "anthropic_api_key"]]) {
+      const step = workflowStep(job, `Run Claude ${label} with ${suffix}`);
+      assert.match(step, new RegExp(`if: steps\\.preflight\\.outputs\\.mode == '${mode}'`));
+      if (input) {
+        assert.match(step, new RegExp(`^          ${input}: \\$\\{\\{ secrets\\.`, "m"));
+      } else {
+        for (const name of ["FEDERATION_RULE_ID", "ORGANIZATION_ID", "SERVICE_ACCOUNT_ID", "WORKSPACE_ID"]) {
+          assert.ok(step.includes("anthropic_" + name.toLowerCase() + ": ${{ vars.ANTHROPIC_" + name + " }}"));
+        }
+        assert.doesNotMatch(step, /^\s+(?:anthropic_api_key|claude_code_oauth_token):/m);
+        assert.ok(!step.includes("secrets."), "federation step must not reference secrets");
+      }
+      if (jobName === "auto-review") {
+        assert.match(step, /use_sticky_comment: true/);
+        assert.match(step, /prompt: \$\{\{ env\.CLAUDE_AUTO_REVIEW_PROMPT \}\}/);
+      } else {
+        assert.match(step, /--append-system-prompt "\$\{\{ env\.CLAUDE_INTERACTIVE_PROMPT \}\}"/);
+      }
+    }
+  }
+  for (const relativePath of ["CONTRIBUTING.md", "SECURITY.md", "docs/security/claude-workflow.md"]) {
+    const doc = read(relativePath);
+    assert.match(doc, /preferred[\s\S]{0,80}keyless|keyless[\s\S]{0,80}preferred/i);
+    for (const name of ["FEDERATION_RULE_ID", "ORGANIZATION_ID", "SERVICE_ACCOUNT_ID", "WORKSPACE_ID"]) {
+      assert.ok(doc.includes(`ANTHROPIC_${name}`), relativePath);
+    }
+    assert.match(doc, /CLAUDE_CODE_OAUTH_TOKEN/);
+    assert.match(doc, /ANTHROPIC_API_KEY/);
+    assert.match(doc, /repository variables/i);
+  }
 });
 
 test("public launch community files and release notes are present", () => {

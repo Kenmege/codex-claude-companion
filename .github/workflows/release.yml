@@ -155,7 +155,9 @@ jobs:
     needs: validate
     if: ${{ vars.NPMJS_PUBLISH_ENABLED == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Leave headroom for the ten-minute registry propagation wait, setup,
+    # publishing, and the separate dist-tag check.
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
@@ -196,13 +198,19 @@ jobs:
           LOCAL_INTEGRITY="$(cat release-artifact/package.integrity)"
           verify_registry_integrity() {
             local registry_integrity=""
-            for ATTEMPT in 1 2 3 4 5 6; do
+            # npm can accept a publish minutes before its version record is
+            # readable. Allow 60 ten-second intervals, checking immediately.
+            for ((ATTEMPT=1; ATTEMPT<=61; ATTEMPT++)); do
               registry_integrity="$(npm view "${PACKAGE_NAME}@${VERSION}" dist.integrity 2>/dev/null || true)"
               if [ -n "$registry_integrity" ]; then
                 break
               fi
-              if [ "$ATTEMPT" -lt 6 ]; then sleep 5; fi
+              if [ "$ATTEMPT" -lt 61 ]; then sleep 10; fi
             done
+            if [ -z "$registry_integrity" ]; then
+              echo "::error::npm version ${PACKAGE_NAME}@${VERSION} did not become available with integrity after 10 minutes."
+              exit 1
+            fi
             if [ "$registry_integrity" != "$LOCAL_INTEGRITY" ]; then
               echo "::error::npm artifact integrity for ${PACKAGE_NAME}@${VERSION} did not match the validated tarball."
               exit 1
