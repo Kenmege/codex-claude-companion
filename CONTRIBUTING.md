@@ -44,15 +44,28 @@ When reviewers disagree, prefer the one that cites file:line evidence. When all
 four reviewers agree something is broken, treat it as a strong signal and fix
 before merge.
 
-The Claude workflow requires one repository Actions secret for model
-authentication: `ANTHROPIC_API_KEY` for direct Anthropic API auth or
-`CLAUDE_CODE_OAUTH_TOKEN` for Claude Code OAuth auth. The workflow also uses
-GitHub OIDC (`id-token: write`) so the installed Claude GitHub App can obtain a
-short-lived repository-scoped GitHub token. Do not hardcode either credential in
-workflow files. GitHub does not pass repository Actions secrets to forked
-`pull_request` workflows, so the Claude auto-review job skips untrusted fork PRs
-with a notice instead of turning outside contributions red. Maintainer follow-up
-via `@claude` remains available once the PR is safe to inspect.
+The Claude workflow's preferred keyless authentication is workload identity
+federation. Configure the Console federation rule and these non-secret
+repository variables: `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`,
+`ANTHROPIC_SERVICE_ACCOUNT_ID`, and `ANTHROPIC_WORKSPACE_ID`. No repository
+authentication secret is needed for federation. Scope the Console rule to the
+intended repository, owner, events, and `claude.yml` workflow. GitHub OIDC
+(`id-token: write`) supplies a short-lived identity token for Anthropic access;
+the action also uses OIDC for the installed Claude GitHub App's repository token.
+
+Both jobs select exactly one mode: federation when the rule and organization
+variables are set, otherwise `CLAUDE_CODE_OAUTH_TOKEN`, otherwise
+`ANTHROPIC_API_KEY` from repository Actions secrets. OAuth and API keys are
+fallbacks when federation is not configured, not retries after a federation
+failure. Federation steps pass only the four federation auth inputs because a
+static credential would override federation inside the action. Never hardcode
+credentials in workflow files.
+
+Untrusted fork PRs are skipped with a notice before checkout or Claude in every
+auth mode, including maintainer `@claude` follow-ups on fork PRs. The interactive
+job also restricts mentions to owners, members, and collaborators. See the
+[workflow trust boundary](docs/security/claude-workflow.md) for the fork checks
+and tool fences that protect both static credentials and federation tokens.
 
 ## Code Style
 

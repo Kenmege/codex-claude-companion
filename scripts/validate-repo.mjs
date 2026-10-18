@@ -147,21 +147,61 @@ if (/^\s+mode:/m.test(claudeWorkflow) || /^\s+prompt-file:/m.test(claudeWorkflow
   throw new Error(".github/workflows/claude.yml must use current v1 inputs, not deprecated mode or prompt-file inputs.");
 }
 
-const hasApiKeyInput = claudeWorkflow.includes("anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}");
-const hasOauthInput = claudeWorkflow.includes("claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}");
-const hasFailClosedStep = claudeWorkflow.includes("Verify Claude auth secret configured");
-const hasForkSecretSkip =
-  claudeWorkflow.includes("IS_UNTRUSTED_FORK_PR") &&
-  claudeWorkflow.includes("GitHub does not pass repository Actions secrets to forked pull_request workflows");
-const hasSeparateAuthSteps =
-  claudeWorkflow.includes("Run Claude auto review with OAuth") &&
-  claudeWorkflow.includes("Run Claude auto review with API key") &&
-  claudeWorkflow.includes("Run Claude interactive response with OAuth") &&
-  claudeWorkflow.includes("Run Claude interactive response with API key");
-if (!hasApiKeyInput || !hasOauthInput || !hasFailClosedStep || !hasForkSecretSkip || !hasSeparateAuthSteps) {
-  throw new Error(
-    ".github/workflows/claude.yml must fail closed, skip secretless fork PRs, and provide separate API-key/OAuth action steps so empty secrets do not poison Claude auth."
-  );
+function requireClaudeContract(condition, message) {
+  if (!condition) throw new Error(`.github/workflows/claude.yml ${message}`);
+}
+
+function claudeStep(job, name) {
+  const lines = job.split("\n");
+  const start = lines.findIndex((line) => line === `      - name: ${name}`);
+  requireClaudeContract(start !== -1, `must include ${name}.`);
+  let end = start + 1;
+  while (end < lines.length && !/^      - name: /.test(lines[end])) end += 1;
+  return lines.slice(start, end).join("\n");
+}
+
+requireClaudeContract(/^  id-token: write$/m.test(claudeWorkflow), "must retain OIDC permission.");
+for (const [jobName, label] of [["auto-review", "auto review"], ["interactive", "interactive response"]]) {
+  const job = claudeWorkflow.match(new RegExp(`^  ${jobName}:\\n[\\s\\S]*?(?=^  [a-zA-Z0-9_-]+:|$(?![\\s\\S]))`, "m"))?.[0] ?? "";
+  requireClaudeContract(job.includes("HAS_ANTHROPIC_FEDERATION: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID != '' && vars.ANTHROPIC_ORGANIZATION_ID != '' }}"), `${jobName} must detect federation from both repository variables.`);
+  const preflight = claudeStep(job, jobName === "auto-review"
+    ? "Verify Claude auth configured" : "Verify Claude auth configured + fork-PR guard");
+  requireClaudeContract(/^        id: preflight$/m.test(preflight), `${jobName} must expose a single preflight mode.`);
+  requireClaudeContract(/if \[ "\$IS_UNTRUSTED_FORK_PR" = "true" \]/.test(preflight), `${jobName} must exclude fork PRs first.`);
+  requireClaudeContract(/::notice::[^\n]+\n\s+echo "mode=skip" >> "\$GITHUB_OUTPUT"\s+exit 0\s+fi\s+if \[ "\$HAS_ANTHROPIC_FEDERATION" = "true" \]; then\s+echo "mode=federation" >> "\$GITHUB_OUTPUT"\s+elif \[ "\$HAS_CLAUDE_CODE_OAUTH_TOKEN" = "true" \]; then\s+echo "mode=oauth" >> "\$GITHUB_OUTPUT"\s+elif \[ "\$HAS_ANTHROPIC_API_KEY" = "true" \]; then\s+echo "mode=api" >> "\$GITHUB_OUTPUT"\s+else\s+echo "::error::[^\n]+\n\s+exit 1\s+fi/.test(preflight), `${jobName} must skip forks, then select federation, OAuth, API, or fail closed in that order.`);
+  requireClaudeContract(/Claude Code Action requires workload identity federation .*ANTHROPIC_FEDERATION_RULE_ID.*ANTHROPIC_ORGANIZATION_ID.*CLAUDE_CODE_OAUTH_TOKEN.*ANTHROPIC_API_KEY/.test(preflight), `${jobName} must name all auth options on failure.`);
+  const checkout = claudeStep(job, "Check out repository");
+  requireClaudeContract(/^        if: steps\.preflight\.outputs\.mode != 'skip'$/m.test(checkout) && checkout.includes("persist-credentials: false") && /uses: actions\/checkout@[a-f0-9]{40}(?:\s|$)/.test(checkout), `${jobName} must skip checkout for forks and retain pinned, credential-free checkout.`);
+  if (jobName === "interactive") {
+    requireClaudeContract(preflight.includes('|| [ "$IC_FORK" = "true" ]') && preflight.includes("IC_FORK: ${{ steps.resolve_pr_head.outputs.is_fork }}"), "interactive must retain the issue-comment fork guard.");
+    const lookup = claudeStep(job, "Resolve PR head for issue_comment events");
+    requireClaudeContract(lookup.includes("if: github.event_name == 'issue_comment' && github.event.issue.pull_request != null") && /if \[ "\$\{HEAD_REPO\}" = "\$\{\{ github\.repository \}\}" \]; then\s+echo "is_fork=false" >> "\$GITHUB_OUTPUT"\s+else\s+echo "is_fork=true" >> "\$GITHUB_OUTPUT"/.test(lookup), "interactive must resolve PR comment heads and fail closed for non-matching repositories.");
+    for (const field of ["comment", "review", "issue"]) {
+      requireClaudeContract(job.includes(`contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.${field}.author_association)`), `interactive must retain the ${field} author-association gate.`);
+    }
+  }
+  const actionSteps = job.match(/^        uses: anthropics\/claude-code-action@.*$/gm) ?? [];
+  requireClaudeContract(actionSteps.length === 3, `${jobName} must have exactly three separate auth action steps.`);
+  for (const [mode, suffix, input, secret] of [
+    ["federation", "workload identity", null, null],
+    ["oauth", "OAuth", "claude_code_oauth_token", "CLAUDE_CODE_OAUTH_TOKEN"],
+    ["api", "API key", "anthropic_api_key", "ANTHROPIC_API_KEY"]
+  ]) {
+    const step = claudeStep(job, `Run Claude ${label} with ${suffix}`);
+    requireClaudeContract(step.includes(`if: steps.preflight.outputs.mode == '${mode}'`) && /uses: anthropics\/claude-code-action@[a-f0-9]{40}(?:\s|$)/.test(step), `${jobName}/${mode} must use its selected mode and a full action SHA.`);
+    requireClaudeContract(step.includes("--disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell") && step.includes("--model opus") && step.includes("--max-turns 80"), `${jobName}/${mode} must preserve the model, turn budget, and Bash/write-tool fence.`);
+    if (input) {
+      requireClaudeContract(step.includes(input + ": ${{ secrets." + secret + " }}"), `${jobName}/${mode} must use its matching secret input.`);
+    } else {
+      for (const name of ["FEDERATION_RULE_ID", "ORGANIZATION_ID", "SERVICE_ACCOUNT_ID", "WORKSPACE_ID"]) {
+        requireClaudeContract(step.includes("anthropic_" + name.toLowerCase() + ": ${{ vars.ANTHROPIC_" + name + " }}"), `${jobName}/federation must read ${name} from vars.`);
+      }
+      requireClaudeContract(!/^\s+(?:anthropic_api_key|claude_code_oauth_token):|secrets\./m.test(step), `${jobName}/federation must not pass static auth inputs.`);
+    }
+    requireClaudeContract(jobName === "auto-review"
+      ? step.includes("use_sticky_comment: true") && step.includes("prompt: ${{ env.CLAUDE_AUTO_REVIEW_PROMPT }}")
+      : step.includes('--append-system-prompt "${{ env.CLAUDE_INTERACTIVE_PROMPT }}"'), `${jobName}/${mode} must retain its shared prompt and comment behavior.`);
+  }
 }
 
 // JUSTIFIED: structural rather than name-locked validation so forks

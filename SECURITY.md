@@ -105,6 +105,24 @@ The default review lanes are read-only:
 
 `--unrestricted` disables the safe-mode fence and should only be used on trusted local diffs.
 
+### Repository review automation authentication
+
+The preferred keyless option for Claude review automation is workload identity
+federation. Configure `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`,
+`ANTHROPIC_SERVICE_ACCOUNT_ID`, and `ANTHROPIC_WORKSPACE_ID` as non-secret
+repository variables. Federation uses GitHub OIDC (`id-token: write`) for
+short-lived Anthropic access without a repository authentication secret. Bind
+the Console rule to the intended repository, owner, events, and workflow.
+
+Both jobs prefer federation when the rule and organization variables are set;
+otherwise they use the `CLAUDE_CODE_OAUTH_TOKEN` secret, then the
+`ANTHROPIC_API_KEY` secret. A configured federation failure fails the job rather
+than retrying with a static credential. The federation action step omits both
+static credential inputs because either would take precedence over federation.
+Short-lived identity tokens and exchanged credentials remain sensitive: the
+fork exclusion, collaborator mention gate, and Bash/write-tool fences apply
+equally to every auth mode. Fork PRs never reach checkout or a Claude step.
+
 ## Reporting
 
 For the repository automation boundary, see the

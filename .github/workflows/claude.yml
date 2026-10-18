@@ -31,6 +31,8 @@ on:
 # Kenmege/currentness-guardian remains directionally valid (more scopes
 # = more risk), but the action's runtime requirement is load-bearing
 # and the PR #8 attempted removal is reverted here.
+# Workload identity federation also uses this scope to exchange GitHub
+# identity for short-lived Anthropic access without a static secret.
 permissions:
   contents: read
   issues: write
@@ -54,11 +56,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      HAS_ANTHROPIC_FEDERATION: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID != '' && vars.ANTHROPIC_ORGANIZATION_ID != '' }}
       HAS_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
       HAS_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
       IS_UNTRUSTED_FORK_PR: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
       # Single source of truth for the auto-review system prompt
-      # (eliminates the OAuth/API-key duplicate-prompt drift surface).
+      # (eliminates the federation/OAuth/API-key duplicate-prompt drift surface).
       # Scoped to this job rather than the workflow so its
       # interpolation of `github.event.pull_request.number` only fires
       # for `pull_request` events — fix #6 from Copilot's second-pass
@@ -89,26 +92,51 @@ jobs:
         This repo also uses Copilot, Codex, and Devin as reviewers; do not duplicate their style. Focus on adversarial security and release safety where Claude's strength is.
 
     steps:
-      - name: Verify Claude auth secret configured
+      - name: Verify Claude auth configured
+        id: preflight
         run: |
-          if [ "$HAS_ANTHROPIC_API_KEY" != "true" ] && [ "$HAS_CLAUDE_CODE_OAUTH_TOKEN" != "true" ]; then
-            if [ "$IS_UNTRUSTED_FORK_PR" = "true" ]; then
-              echo "::notice::Skipping Claude Code review because GitHub does not pass repository Actions secrets to forked pull_request workflows."
-              exit 0
-            fi
-            echo "::error::Claude Code Action requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in repository Actions secrets."
+          if [ "$IS_UNTRUSTED_FORK_PR" = "true" ]; then
+            echo "::notice::Skipping Claude Code review because GitHub does not pass repository Actions secrets to forked pull_request workflows. Forks are excluded from workload identity federation too."
+            echo "mode=skip" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$HAS_ANTHROPIC_FEDERATION" = "true" ]; then
+            echo "mode=federation" >> "$GITHUB_OUTPUT"
+          elif [ "$HAS_CLAUDE_CODE_OAUTH_TOKEN" = "true" ]; then
+            echo "mode=oauth" >> "$GITHUB_OUTPUT"
+          elif [ "$HAS_ANTHROPIC_API_KEY" = "true" ]; then
+            echo "mode=api" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Claude Code Action requires workload identity federation (ANTHROPIC_FEDERATION_RULE_ID and ANTHROPIC_ORGANIZATION_ID repository variables), CLAUDE_CODE_OAUTH_TOKEN, or ANTHROPIC_API_KEY in repository Actions secrets."
             exit 1
           fi
 
       - name: Check out repository
-        if: env.HAS_CLAUDE_CODE_OAUTH_TOKEN == 'true' || env.HAS_ANTHROPIC_API_KEY == 'true'
+        if: steps.preflight.outputs.mode != 'skip'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Run Claude auto review with workload identity
+        if: steps.preflight.outputs.mode == 'federation'
+        uses: anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967 # v1.0.252
+        with:
+          # Static credentials take precedence inside the action, so this
+          # step must pass only federation auth inputs, never static credentials.
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          use_sticky_comment: true
+          prompt: ${{ env.CLAUDE_AUTO_REVIEW_PROMPT }}
+          claude_args: |
+            --model opus
+            --max-turns 80
+            --disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell
+
       - name: Run Claude auto review with OAuth
-        if: env.HAS_CLAUDE_CODE_OAUTH_TOKEN == 'true'
+        if: steps.preflight.outputs.mode == 'oauth'
         uses: anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967 # v1.0.252
         with:
           # JUSTIFIED: anthropic_api_key omitted on purpose. When the
@@ -129,12 +157,14 @@ jobs:
           # close the secret-exfiltration vector noted in the PR #75
           # security review on currentness-guardian. A crafted file in an
           # internal-branch PR could otherwise prompt-inject Claude into
-          # `curl`-ing the runner's CLAUDE_CODE_OAUTH_TOKEN out of the
-          # environment. The interactive job applies the same fence
+          # `curl`-ing the runner's OAuth, API, or federation identity
+          # token out of the environment or its token file. The interactive
+          # job applies the same fence
           # (M1 fix from Codex review of PR #8): even authenticated
           # maintainers can be steered into invoking @claude on a fork-
           # authored PR whose diff content is attacker-controlled, so
-          # the token is the highest-value asset to protect across both
+          # the credential (including a federation identity token) is the
+          # highest-value asset to protect across both
           # lanes. Both jobs now block Bash; cost is the occasional
           # ability to ask @claude to run shell during interactive
           # sessions, which is mostly covered by Pull Request CI anyway.
@@ -144,7 +174,7 @@ jobs:
             --disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell
 
       - name: Run Claude auto review with API key
-        if: env.HAS_CLAUDE_CODE_OAUTH_TOKEN != 'true' && env.HAS_ANTHROPIC_API_KEY == 'true'
+        if: steps.preflight.outputs.mode == 'api'
         uses: anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967 # v1.0.252
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -163,7 +193,8 @@ jobs:
     #    MEMBER, or COLLABORATOR. This prevents an external contributor
     #    or a stranger on a public issue from triggering an interactive
     #    Claude run that runs in base-repo context (where
-    #    CLAUDE_CODE_OAUTH_TOKEN is available). Fork contributors
+    #    OAuth/API credentials or federation identity are available).
+    #    Fork contributors
     #    typically have author_association of NONE or
     #    FIRST_TIME_CONTRIBUTOR; both are blocked here. This is the
     #    primary defense for the H3 finding flagged on PR #8 by
@@ -197,6 +228,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
+      HAS_ANTHROPIC_FEDERATION: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID != '' && vars.ANTHROPIC_ORGANIZATION_ID != '' }}
       HAS_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
       HAS_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
       # Defense-in-depth fork-head check. Only meaningful for events
@@ -227,7 +259,7 @@ jobs:
       # raised by Codex on PR #8 (commit 88ac9c7): without the
       # lookup, a maintainer commenting `@claude` on a fork-authored
       # PR thread would pass the author_association gate and reach
-      # the Claude step with `CLAUDE_CODE_OAUTH_TOKEN` in scope, and
+      # the Claude step with OAuth/API or federation identity access, and
       # the env-level `IS_UNTRUSTED_FORK_PR` would silently evaluate
       # to false (since `pull_request` is null in the payload).
       #
@@ -251,7 +283,7 @@ jobs:
             echo "is_fork=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Verify Claude auth secret configured + fork-PR guard
+      - name: Verify Claude auth configured + fork-PR guard
         id: preflight
         env:
           # `issue_comment` lookup output (empty string when the
@@ -260,32 +292,53 @@ jobs:
           IC_FORK: ${{ steps.resolve_pr_head.outputs.is_fork }}
         run: |
           if [ "$IS_UNTRUSTED_FORK_PR" = "true" ] || [ "$IC_FORK" = "true" ]; then
-            # NB: secrets ARE in scope here — this job runs in base-repo
+            # NB: secrets and federation identity ARE available here — this
+            # job runs in base-repo
             # context, which is exactly why the guard exists. The skip
             # is to avoid running Claude (with token access) against
             # diff content the fork contributor controls. Wording fix
             # #9 from Copilot's second-pass review on PR #8; logic fix
             # for `issue_comment` events from Codex's first round.
-            echo "::notice::Skipping Claude interactive response: the PR head is on a fork. CLAUDE_CODE_OAUTH_TOKEN is in scope here (base-repo context), but running Claude against fork-controlled diff content is the exfil path this guard prevents."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping Claude interactive response: the PR head is on a fork. OAuth/API credentials or federation identity are available here (base-repo context), but running Claude against fork-controlled diff content is the exfil path this guard prevents."
+            echo "mode=skip" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ "$HAS_ANTHROPIC_API_KEY" != "true" ] && [ "$HAS_CLAUDE_CODE_OAUTH_TOKEN" != "true" ]; then
-            echo "::error::Claude Code Action requires ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN in repository Actions secrets."
+          if [ "$HAS_ANTHROPIC_FEDERATION" = "true" ]; then
+            echo "mode=federation" >> "$GITHUB_OUTPUT"
+          elif [ "$HAS_CLAUDE_CODE_OAUTH_TOKEN" = "true" ]; then
+            echo "mode=oauth" >> "$GITHUB_OUTPUT"
+          elif [ "$HAS_ANTHROPIC_API_KEY" = "true" ]; then
+            echo "mode=api" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Claude Code Action requires workload identity federation (ANTHROPIC_FEDERATION_RULE_ID and ANTHROPIC_ORGANIZATION_ID repository variables), CLAUDE_CODE_OAUTH_TOKEN, or ANTHROPIC_API_KEY in repository Actions secrets."
             exit 1
           fi
-          echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Check out repository
-        if: steps.preflight.outputs.skip != 'true' && (env.HAS_CLAUDE_CODE_OAUTH_TOKEN == 'true' || env.HAS_ANTHROPIC_API_KEY == 'true')
+        if: steps.preflight.outputs.mode != 'skip'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           ref: ${{ steps.resolve_pr_head.outputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Run Claude interactive response with workload identity
+        if: steps.preflight.outputs.mode == 'federation'
+        uses: anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967 # v1.0.252
+        with:
+          # Never pass a static credential here: it would shadow federation.
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          claude_args: >-
+            --model opus
+            --max-turns 80
+            --disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell
+            --append-system-prompt "${{ env.CLAUDE_INTERACTIVE_PROMPT }}"
+
       - name: Run Claude interactive response with OAuth
-        if: steps.preflight.outputs.skip != 'true' && env.HAS_CLAUDE_CODE_OAUTH_TOKEN == 'true'
+        if: steps.preflight.outputs.mode == 'oauth'
         uses: anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967 # v1.0.252
         with:
           # JUSTIFIED: anthropic_api_key omitted on purpose; same reason
@@ -297,7 +350,7 @@ jobs:
           # as auto-review. Closes the residual exfil path where a
           # maintainer @claude'ing a fork-authored PR would otherwise
           # let prompt-injected diff content drive Claude into Bash
-          # with CLAUDE_CODE_OAUTH_TOKEN in scope. The author_association
+          # with OAuth/API or federation identity access. The author_association
           # gate at the trigger level already blocks non-collaborators;
           # this fence is the second layer for the maintainer-on-fork-PR
           # case the env-level IS_UNTRUSTED_FORK_PR cannot detect on
@@ -309,7 +362,7 @@ jobs:
             --append-system-prompt "${{ env.CLAUDE_INTERACTIVE_PROMPT }}"
 
       - name: Run Claude interactive response with API key
-        if: steps.preflight.outputs.skip != 'true' && env.HAS_CLAUDE_CODE_OAUTH_TOKEN != 'true' && env.HAS_ANTHROPIC_API_KEY == 'true'
+        if: steps.preflight.outputs.mode == 'api'
         uses: anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967 # v1.0.252
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
