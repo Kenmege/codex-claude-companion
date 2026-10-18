@@ -19,6 +19,7 @@ import {
 
 const JOB_ID = "ccb_00000000000000000000000001";
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";
+const directorySyncOnly = { skip: process.platform === "win32" ? "Windows has no POSIX directory fsync; covered by Windows publication assertions" : false };
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccb-input-"));
@@ -111,7 +112,7 @@ test("commit refuses a pre-existing mismatched queue object without overwriting 
   assert.equal(fs.readdirSync(paths.stagingDir).length, 1);
 });
 
-test("queue directory fsync failure is an idempotent commit with a recovery anchor", () => {
+test("queue directory fsync failure is an idempotent commit with a recovery anchor", directorySyncOnly, () => {
   const { jobDir } = fixture();
   const message = stageBridgeInput(jobDir, JOB_ID, "durability-uncertain continuation");
   const paths = bridgeInputPaths(jobDir);
@@ -154,7 +155,7 @@ test("crash leftovers from staging writes are never parsed as candidate messages
   assert.deepEqual(listPendingBridgeInput(jobDir, JOB_ID), []);
 });
 
-test("a staging directory sync fault leaves no visible unowned candidate", () => {
+test("a staging directory sync fault leaves no visible unowned candidate", directorySyncOnly, () => {
   const { jobDir } = fixture();
   const paths = initializeBridgeInput(jobDir);
   const originalFsync = fs.fsyncSync;
@@ -176,7 +177,7 @@ test("a staging directory sync fault leaves no visible unowned candidate", () =>
   assert.deepEqual(listPendingBridgeInput(jobDir, JOB_ID), []);
 });
 
-test("an authorized staging anchor recovers after post-link directory sync failure and final-name loss", () => {
+test("an authorized staging anchor recovers after post-link directory sync failure and final-name loss", directorySyncOnly, () => {
   const { jobDir } = fixture();
   const paths = initializeBridgeInput(jobDir);
   const originalFsync = fs.fsyncSync;
@@ -335,7 +336,7 @@ test("a wrong-identity final acknowledgement conflicts and never suppresses repl
   );
 });
 
-test("a post-link acknowledgement sync fault returns success and retains a recovery anchor", () => {
+test("a post-link acknowledgement sync fault returns success and retains a recovery anchor", directorySyncOnly, () => {
   const { jobDir } = fixture();
   const message = queuedMessage(jobDir);
   const paths = bridgeInputPaths(jobDir);
@@ -381,7 +382,7 @@ test("partial hidden acknowledgement writes are ignored and the message remains 
   );
 });
 
-test("a durable hidden acknowledgement anchor republishes a missing final name", () => {
+test("a durable hidden acknowledgement anchor republishes a missing final name", directorySyncOnly, () => {
   const { jobDir } = fixture();
   const message = queuedMessage(jobDir);
   const paths = bridgeInputPaths(jobDir);
@@ -405,4 +406,86 @@ test("a durable hidden acknowledgement anchor republishes a missing final name",
   assert.deepEqual(listPendingBridgeInput(jobDir, JOB_ID, { claudeSessionId: SESSION_ID }), []);
   assert.equal(fs.existsSync(path.join(paths.ackDir, `${message.messageId}.json`)), true);
   assert.equal(fs.readdirSync(paths.ackDir).some((name) => name.startsWith(`.ack-${message.messageId}.tmp-`)), false);
+});
+
+test("Windows publishes complete no-clobber input and acknowledgements without opening directories for fsync", { skip: process.platform !== "win32" }, (t) => {
+  const { jobDir } = fixture();
+  const paths = initializeBridgeInput(jobDir);
+  const originalOpen = fs.openSync;
+  const originalFsync = fs.fsyncSync;
+  const originalLink = fs.linkSync;
+  let fileSyncs = 0;
+  let publications = 0;
+  t.mock.method(fs, "openSync", (file, ...args) => {
+    assert.ok(![paths.stagingDir, paths.queueDir, paths.ackDir].includes(file), "Windows must skip directory fsync");
+    return originalOpen(file, ...args);
+  });
+  t.mock.method(fs, "fsyncSync", fd => {
+    assert.equal(fs.fstatSync(fd).isFile(), true);
+    fileSyncs++;
+    return originalFsync(fd);
+  });
+  t.mock.method(fs, "linkSync", (source, destination) => {
+    // At every atomic publication boundary the source is complete JSON and a
+    // prior file fsync has completed, even though directory sync is unavailable.
+    assert.ok(fileSyncs > 0);
+    assert.equal(JSON.parse(fs.readFileSync(source, "utf8")).jobId, JOB_ID);
+    publications++;
+    return originalLink(source, destination);
+  });
+  const message = stageBridgeInput(jobDir, JOB_ID, "Windows continuation");
+  assert.deepEqual(listPendingBridgeInput(jobDir, JOB_ID), []);
+  assert.doesNotThrow(() => commitBridgeInput(jobDir, message));
+  assert.doesNotThrow(() => commitBridgeInput(jobDir, message));
+  assert.deepEqual(listPendingBridgeInput(jobDir, JOB_ID, { authorizedEvents: authorization(message) }), [message]);
+  assert.deepEqual(fs.readdirSync(paths.stagingDir), []);
+  const ack = writeBridgeInputAck(jobDir, message, acknowledgement());
+  assert.deepEqual(writeBridgeInputAck(jobDir, message, acknowledgement()), ack);
+  assert.deepEqual(listPendingBridgeInput(jobDir, JOB_ID, { claudeSessionId: SESSION_ID }), []);
+  assert.deepEqual(fs.readdirSync(paths.ackDir), [`${message.messageId}.json`]);
+  assert.ok(fileSyncs >= 2);
+  assert.ok(publications >= 3);
+});
+
+test("file fsync failure never publishes a staging candidate or acknowledgement", (t) => {
+  const { jobDir } = fixture();
+  const message = queuedMessage(jobDir);
+  const paths = bridgeInputPaths(jobDir);
+  t.mock.method(fs, "fsyncSync", () => {
+    throw Object.assign(new Error("injected file fsync failure"), { code: "EIO" });
+  });
+  assert.throws(() => stageBridgeInput(jobDir, JOB_ID, "never published"), /file fsync failure/);
+  assert.deepEqual(fs.readdirSync(paths.stagingDir).filter(name => name.endsWith(".json")), []);
+  assert.throws(() => writeBridgeInputAck(jobDir, message, acknowledgement()), /file fsync failure/);
+  assert.equal(fs.existsSync(path.join(paths.ackDir, `${message.messageId}.json`)), false);
+  assert.deepEqual(listPendingBridgeInput(jobDir, JOB_ID).map(entry => entry.messageId), [message.messageId]);
+});
+
+test("an authorized hidden staging inode recovers a lost final name on every platform", () => {
+  const { jobDir } = fixture();
+  const message = stageBridgeInput(jobDir, JOB_ID, "recover hidden continuation");
+  const paths = bridgeInputPaths(jobDir);
+  const visible = fs.readdirSync(paths.stagingDir).find(name => name.endsWith(".json"));
+  const anchor = path.join(paths.stagingDir, `.${visible}.tmp-${process.pid}-${crypto.randomUUID()}`);
+  fs.linkSync(path.join(paths.stagingDir, visible), anchor);
+  fs.unlinkSync(path.join(paths.stagingDir, visible));
+  assert.deepEqual(recoverAuthorizedBridgeInput(jobDir, JOB_ID, []), []);
+  assert.deepEqual(recoverAuthorizedBridgeInput(jobDir, JOB_ID, authorization(message)), [message.messageId]);
+  assert.deepEqual(listPendingBridgeInput(jobDir, JOB_ID), [message]);
+  assert.equal(fs.existsSync(anchor), false);
+});
+
+test("an exact hidden acknowledgement inode recovers a lost final name on every platform", () => {
+  const { jobDir } = fixture();
+  const message = queuedMessage(jobDir);
+  const paths = bridgeInputPaths(jobDir);
+  const ack = writeBridgeInputAck(jobDir, message, acknowledgement());
+  const final = path.join(paths.ackDir, `${message.messageId}.json`);
+  const anchor = path.join(paths.ackDir, `.ack-${message.messageId}.tmp-${process.pid}-${crypto.randomUUID()}`);
+  fs.linkSync(final, anchor);
+  fs.unlinkSync(final);
+  assert.deepEqual(listPendingBridgeInput(jobDir, JOB_ID, { claudeSessionId: SESSION_ID }), []);
+  assert.deepEqual(readBridgeInputAck(jobDir, message.messageId, { expectedMessage: message, claudeSessionId: SESSION_ID }), ack);
+  assert.equal(fs.existsSync(final), true);
+  assert.equal(fs.existsSync(anchor), false);
 });
