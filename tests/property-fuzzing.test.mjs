@@ -119,10 +119,12 @@ test("fuzz: arbitrary job ids are rejected or every artifact stays inside jobs",
         const file = resolve(workspace, id);
         for (const artifact of [file, state.terminalMarkerFile(file)]) {
           assert.equal(path.dirname(artifact), jobs);
-          // Check both path grammars, even on a POSIX test host.
+          // Containment uses the host grammar (native separators); the file name must also be a
+          // single segment under both grammars, so it cannot escape on either platform.
+          const relative = path.relative(jobs, artifact);
+          assert.ok(relative && !relative.startsWith("..") && !path.isAbsolute(relative));
           for (const grammar of [path.posix, path.win32]) {
-            const relative = grammar.relative(jobs, artifact);
-            assert.ok(relative && !relative.startsWith("..") && !grammar.isAbsolute(relative));
+            assert.equal(grammar.basename(relative), relative);
           }
         }
       }
