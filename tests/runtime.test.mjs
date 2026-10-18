@@ -1001,6 +1001,52 @@ test("task --background enqueues a detached worker and exposes per-job status", 
   assert.match(resultPayload.storedJob.rendered, /Handled the requested task/);
 });
 
+test("task --background publishes its request before the worker can run", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  const outcomeFile = path.join(binDir, "worker-outcome.json");
+  const preloadFile = path.join(binDir, "worker-first.cjs");
+  fs.writeFileSync(preloadFile, `
+const fs = require("node:fs");
+const childProcess = require("node:child_process");
+const { syncBuiltinESMExports } = require("node:module");
+const originalSpawn = childProcess.spawn;
+childProcess.spawn = function(command, args, options) {
+  if (!args?.includes("task-worker")) return originalSpawn(command, args, options);
+  // Exercise the real worker before the launcher resumes. No sleep or polling
+  // controls the interleaving: the worker must finish before spawn returns.
+  const result = childProcess.spawnSync(command, args, {
+    ...options, detached: false, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8"
+  });
+  fs.writeFileSync(process.env.WORKER_OUTCOME_FILE, JSON.stringify({
+    status: result.status, signal: result.signal, stderr: result.stderr
+  }));
+  return { pid: result.pid, unref() {} };
+};
+syncBuiltinESMExports();
+`, "utf8");
+
+  const launched = run("node", ["--require", preloadFile, SCRIPT, "task", "--background", "--json", "exercise worker-first startup"], {
+    cwd: repo,
+    env: { ...buildEnv(binDir), WORKER_OUTCOME_FILE: outcomeFile }
+  });
+  assert.equal(launched.status, 0, launched.stderr);
+  const outcome = JSON.parse(fs.readFileSync(outcomeFile, "utf8"));
+  assert.equal(outcome.status, 0, outcome.stderr);
+  assert.equal(outcome.signal, null);
+
+  const payload = JSON.parse(launched.stdout);
+  assert.equal(payload.status, "queued");
+  const job = loadState(repo).jobs.find(candidate => candidate.id === payload.jobId);
+  assert.equal(job.status, "completed");
+  assert.equal(job.pid, null);
+  assert.ok(job.threadId);
+  assert.ok(job.turnId);
+  assert.match(job.rendered, /Handled the requested task/);
+});
+
 test("review rejects focus text because it is native-review only", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
