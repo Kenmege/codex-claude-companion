@@ -284,10 +284,9 @@ export function resolveCancelableJob(cwd, reference, options = {}) {
   const activeJobs = jobs.filter((job) => job.status === "queued" || job.status === "running");
 
   if (reference) {
+    const exact = jobs.find((job) => job.id === reference);
     const matchesActive = activeJobs.some((job) => job.id.startsWith(reference));
-    const selected = matchesActive
-      ? matchJobReference(activeJobs, reference)
-      : jobs.find((job) => job.id === reference);
+    const selected = exact ?? (matchesActive ? matchJobReference(activeJobs, reference) : null);
     if (!selected) {
       throw new Error(`No active job found for "${reference}".`);
     }

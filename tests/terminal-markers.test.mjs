@@ -8,6 +8,7 @@ import * as state from "../plugins/codex/scripts/lib/state.mjs";
 import { runTrackedJob } from "../plugins/codex/scripts/lib/tracked-jobs.mjs";
 import { resolveCancelableJob } from "../plugins/codex/scripts/lib/job-control.mjs";
 import { processTreeOwnsJob } from "../plugins/codex/scripts/lib/process.mjs";
+import { runAppServerTurn } from "../plugins/codex/scripts/lib/codex.mjs";
 import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
 import { makeTempDir } from "./helpers.mjs";
 
@@ -172,6 +173,77 @@ test("cancel before start never invokes the runner", async () => {
   assert.equal(result.skipped, true);
 });
 
+test("cancellation during slow runner startup aborts before write-capable work", async () => {
+  const job = fixture("slow-start");
+  let wrote = false;
+  let observedAbort = false;
+  const result = await runTrackedJob(job, async (signal) => {
+    assert.ok(signal instanceof AbortSignal, "runner must receive an AbortSignal");
+    // The worker is already in runner(), and process termination has missed it.
+    state.publishTerminalJob(job.workspaceRoot, job.id, { ...job, status: "cancelled" });
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("cancellation watchdog did not abort startup")), 3000);
+      signal.addEventListener("abort", () => {
+        clearTimeout(timeout);
+        observedAbort = true;
+        resolve();
+      }, { once: true });
+    });
+    signal.throwIfAborted();
+    wrote = true;
+    return execution;
+  });
+  assert.equal(observedAbort, true);
+  assert.equal(wrote, false);
+  assert.equal(result.status, "cancelled");
+  assert.equal(read(job).status, "cancelled");
+});
+
+test("app-server cancellation after thread startup prevents launching a write-capable turn", async (t) => {
+  const workspace = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  const previousPath = process.env.PATH;
+  process.env.PATH = buildEnv(binDir).PATH;
+  t.after(() => { process.env.PATH = previousPath; });
+  const controller = new AbortController();
+  const reason = new Error("cancelled during thread startup");
+  await assert.rejects(runAppServerTurn(workspace, {
+    prompt: "write a file", sandbox: "workspace-write", disableBroker: true, signal: controller.signal,
+    onProgress(event) {
+      if (event.message.startsWith("Thread ready")) controller.abort(reason);
+    }
+  }), error => error === reason);
+  const server = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.equal(server.threads.length, 1);
+  assert.equal(server.lastTurnStart, undefined);
+});
+
+test("app-server cancellation interrupts a turn when process termination misses", async (t) => {
+  const workspace = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "interruptible-slow-task");
+  const previousPath = process.env.PATH;
+  process.env.PATH = buildEnv(binDir).PATH;
+  t.after(() => { process.env.PATH = previousPath; });
+  const controller = new AbortController();
+  const reason = new Error("cancelled during turn");
+  try {
+    const result = await runAppServerTurn(workspace, {
+      prompt: "write a file", sandbox: "workspace-write", disableBroker: true, signal: controller.signal,
+      onProgress(event) {
+        if (event.message.startsWith("Turn started")) controller.abort(reason);
+      }
+    });
+    assert.equal(result.status, 1);
+  } catch (error) {
+    assert.equal(error, reason);
+  }
+  const server = JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+  assert.equal(controller.signal.aborted, true);
+  assert.deepEqual(server.lastInterrupt, { threadId: server.lastTurnStart.threadId, turnId: server.lastTurnStart.turnId });
+});
+
 test("a marker left after a crash overlays record reads and status without a shared index", () => {
   const job = fixture();
   const jobFile = state.resolveJobFile(job.workspaceRoot, job.id);
@@ -226,14 +298,20 @@ test("concurrent processes publish exactly one terminal winner and all adopt it"
   }
 });
 
-test("cancel reference prefers active prefixes and preserves active ambiguity", () => {
-  const job = fixture("task-prefix");
+test("cancel reference prefers exact finished ids before active prefixes and preserves active ambiguity", () => {
+  const job = fixture("abc");
   state.writeJobFile(job.workspaceRoot, job.id, { ...job, status: "completed" });
   state.upsertJob(job.workspaceRoot, { ...job, status: "completed" });
-  state.upsertJob(job.workspaceRoot, { id: "task-prefix-active", status: "running" });
-  assert.equal(resolveCancelableJob(job.workspaceRoot, "task-prefix").job.id, "task-prefix-active");
-  state.upsertJob(job.workspaceRoot, { id: "task-prefix-another", status: "running" });
-  assert.throws(() => resolveCancelableJob(job.workspaceRoot, "task-prefix"), /ambiguous/);
+  state.upsertJob(job.workspaceRoot, { id: "abcd", status: "running" });
+  assert.equal(resolveCancelableJob(job.workspaceRoot, "abc").job.id, "abc");
+  const result = cancel(job);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).alreadyTerminal, true);
+  assert.equal(state.readJobFile(state.resolveJobFile(job.workspaceRoot, "abcd")).status, "running");
+  assert.equal(resolveCancelableJob(job.workspaceRoot, "ab").job.id, "abcd");
+  state.upsertJob(job.workspaceRoot, { id: "abce", status: "running" });
+  assert.equal(resolveCancelableJob(job.workspaceRoot, "abc").job.id, "abc");
+  assert.throws(() => resolveCancelableJob(job.workspaceRoot, "ab"), /ambiguous/);
   assert.throws(() => resolveCancelableJob(job.workspaceRoot, "task-pre-no-match"), /No .*job/);
 });
 

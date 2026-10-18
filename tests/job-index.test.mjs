@@ -58,10 +58,12 @@ test("concurrent processes retain every distinct job's latest update", { timeout
   }
 });
 
-test("legacy index migrates missing files and metadata once without replacing newer records", () => {
+test("legacy index creates missing files once and never rewrites authoritative existing records", () => {
   const cwd = makeTempDir();
   const existing = { id: "existing", status: "running", progress: 5 };
   state.writeJobFile(cwd, existing.id, existing);
+  const existingFile = state.resolveJobFile(cwd, existing.id);
+  const before = fs.statSync(existingFile);
   const legacy = [
     { ...existing, progress: 1, summary: "legacy summary", createdAt: "2020-01-01", updatedAt: "2020-01-02" },
     { id: "missing", status: "completed", summary: "legacy result", updatedAt: "2020-01-03" }
@@ -72,9 +74,9 @@ test("legacy index migrates missing files and metadata once without replacing ne
   assert.equal(loaded.config.stopReviewGate, true);
   assert.equal(state.readJobFile(state.resolveJobFile(cwd, "missing")).summary, "legacy result");
   const migrated = state.readJobFile(state.resolveJobFile(cwd, "existing"));
-  assert.equal(migrated.progress, 5);
-  assert.equal(migrated.summary, "legacy summary");
-  assert.equal(migrated.createdAt, "2020-01-01");
+  assert.deepEqual(migrated, existing);
+  assert.equal(fs.statSync(existingFile).ino, before.ino);
+  assert.equal(fs.statSync(existingFile).mtimeMs, before.mtimeMs);
   assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(state.resolveStateFile(cwd))), "jobs"), false);
   fs.unlinkSync(state.resolveJobFile(cwd, "missing"));
   assert.deepEqual(state.listJobs(cwd).map(job => job.id), ["existing"]);
@@ -109,4 +111,60 @@ test("saving a stale configuration snapshot does not remove a later job", () => 
   state.saveState(cwd, { ...stale, config: { stopReviewGate: true } });
   assert.deepEqual(state.listJobs(cwd).map(job => job.id), ["later"]);
   assert.equal(state.getConfig(cwd).stopReviewGate, true);
+});
+
+test("retention keeps every active and unmarked record plus the newest fifty terminal jobs", () => {
+  const cwd = makeTempDir();
+  const protectedJobs = [
+    { id: "active-old", status: "running", updatedAt: "2000-01-01" },
+    { id: "queued-old", status: "queued", updatedAt: "2000-01-02" },
+    { id: "legacy-unmarked", status: "completed", updatedAt: "2000-01-03" }
+  ];
+  for (const job of protectedJobs) {
+    fs.writeFileSync(state.resolveJobFile(cwd, job.id), JSON.stringify(job));
+  }
+  for (let index = 0; index < 52; index++) {
+    state.publishTerminalJob(cwd, `terminal-${index}`, {
+      id: `terminal-${index}`, status: "completed", updatedAt: new Date(Date.UTC(2020, 0, index + 1)).toISOString()
+    });
+  }
+  const saved = state.saveState(cwd, { config: {} });
+  assert.equal(saved.jobs.length, 53);
+  for (const job of protectedJobs) assert.deepEqual(state.readJobFile(state.resolveJobFile(cwd, job.id)), job);
+  assert.equal(fs.existsSync(state.resolveJobFile(cwd, "terminal-0")), false);
+  assert.equal(fs.existsSync(state.resolveJobFile(cwd, "terminal-1")), false);
+  for (let index = 2; index < 52; index++) {
+    assert.equal(state.readJobFile(state.resolveJobFile(cwd, `terminal-${index}`)).status, "completed");
+  }
+});
+
+test("job paths reject unsafe ids and accept generated tokens", () => {
+  const cwd = makeTempDir();
+  for (const id of ["../escape", "a/b", "a\\b", "/absolute", "C:\\absolute", "..", "a..b", ".hidden",
+    "", "a b", "line\n", "nul\0", "a".repeat(129), null, undefined, 123]) {
+    assert.throws(() => state.resolveJobFile(cwd, id), /Invalid job id/);
+    assert.throws(() => state.resolveJobLogFile(cwd, id), /Invalid job id/);
+  }
+  for (const id of ["abc", "A_b-9", state.generateJobId("task"), state.generateJobId("review")]) {
+    assert.equal(path.dirname(state.resolveJobFile(cwd, id)), state.resolveJobsDir(cwd));
+  }
+});
+
+test("legacy migration skips invalid ids with diagnostics and never writes outside jobs", (t) => {
+  const cwd = makeTempDir();
+  const diagnostics = [];
+  t.mock.method(console, "warn", message => diagnostics.push(message));
+  const outside = path.join(state.resolveStateDir(cwd), "escape.json");
+  const jobs = [
+    { id: "../escape", status: "running" }, { id: "/absolute", status: "completed" },
+    { id: "a\\b", status: "running" }, { status: "queued" }, null,
+    { id: "safe-legacy", status: "running" }
+  ];
+  state.ensureStateDir(cwd);
+  fs.writeFileSync(state.resolveStateFile(cwd), JSON.stringify({ jobs }));
+  assert.deepEqual(state.loadState(cwd).jobs.map(job => job.id), ["safe-legacy"]);
+  assert.equal(fs.existsSync(outside), false);
+  assert.deepEqual(fs.readdirSync(state.resolveJobsDir(cwd)), ["safe-legacy.json"]);
+  assert.equal(diagnostics.length, 5);
+  for (const diagnostic of diagnostics) assert.match(diagnostic, /Skipping legacy job.*invalid.*id/i);
 });

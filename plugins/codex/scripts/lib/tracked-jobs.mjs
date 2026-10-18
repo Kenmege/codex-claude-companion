@@ -162,10 +162,25 @@ export async function runTrackedJob(job, runner, options = {}) {
   writeJobFile(job.workspaceRoot, job.id, runningRecord);
   upsertJob(job.workspaceRoot, runningRecord);
 
+  const controller = new AbortController();
+  const checkTerminal = () => {
+    const record = readStoredJobOrNull(job.workspaceRoot, job.id);
+    if (["completed", "failed", "cancelled"].includes(record?.status)) {
+      controller.abort(new Error(`Job ${job.id} is already ${record.status}.`));
+      return record;
+    }
+    return null;
+  };
+  const watchdog = setInterval(() => {
+    try { checkTerminal(); }
+    catch (error) { controller.abort(error); }
+  }, 100);
+  watchdog.unref();
   try {
-    const beforeStart = readStoredJobOrNull(job.workspaceRoot, job.id);
-    if (["completed", "failed", "cancelled"].includes(beforeStart?.status)) return terminalOutcome(beforeStart, true);
-    const execution = await runner();
+    // Recheck after publishing the running record, immediately before handing off work.
+    const beforeStart = checkTerminal();
+    if (beforeStart) return terminalOutcome(beforeStart, true);
+    const execution = await runner(controller.signal);
     const completionStatus = execution.exitStatus === 0 ? "completed" : "failed";
     const completedAt = nowIso();
     const publication = publishTerminalJob(job.workspaceRoot, job.id, {
@@ -187,6 +202,9 @@ export async function runTrackedJob(job, runner, options = {}) {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const existing = readStoredJobOrNull(job.workspaceRoot, job.id) ?? runningRecord;
+    if (controller.signal.aborted && ["completed", "failed", "cancelled"].includes(existing.status)) {
+      return terminalOutcome(existing, false);
+    }
     const completedAt = nowIso();
     writeJobFile(job.workspaceRoot, job.id, {
       ...existing,
@@ -206,5 +224,7 @@ export async function runTrackedJob(job, runner, options = {}) {
       completedAt
     });
     throw error;
+  } finally {
+    clearInterval(watchdog);
   }
 }

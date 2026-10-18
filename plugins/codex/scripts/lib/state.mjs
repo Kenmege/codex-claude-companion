@@ -14,6 +14,15 @@ const JOBS_DIR_NAME = "jobs";
 const MAX_JOBS = 50;
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
+function isSafeJobId(jobId) {
+  return typeof jobId === "string" && jobId.length > 0 && jobId.length <= 128 &&
+    /^[A-Za-z0-9]/.test(jobId) && !/[^A-Za-z0-9_-]/.test(jobId);
+}
+
+function validateJobId(jobId) {
+  if (!isSafeJobId(jobId)) throw new Error("Invalid job id: expected a safe alphanumeric token of at most 128 characters.");
+}
+
 export function terminalMarkerFile(jobFile) {
   return jobFile.replace(/\.json$/, ".terminal.json");
 }
@@ -86,21 +95,16 @@ function loadConfiguration(cwd) {
     config: { ...defaultState().config, ...(parsed.config ?? {}) }
   };
   if (Array.isArray(parsed.jobs)) {
-    // Legacy summaries and timestamps sometimes existed only in the index. Keep those fields,
-    // but prefer an existing per-job record for fields present in both places. Finish every file
-    // before retiring the legacy array; a failed migration can safely be retried.
+    // Existing per-job records are authoritative, including a worker record published during
+    // migration. Exclusive creation never rewrites them. Finish before retiring the array.
     ensureStateDir(cwd);
     for (const legacy of parsed.jobs) {
-      const jobFile = resolveJobFile(cwd, legacy.id);
-      let existing;
-      try { existing = JSON.parse(fs.readFileSync(jobFile, "utf8")); }
-      catch (error) { if (error.code !== "ENOENT") throw error; }
-      if (existing) {
-        const merged = { ...legacy, ...existing };
-        if (JSON.stringify(merged) !== JSON.stringify(existing)) writeJsonAtomic(jobFile, merged);
-      } else {
-        writeJsonAtomic(jobFile, legacy, { exclusive: true });
+      if (!isSafeJobId(legacy?.id)) {
+        console.warn(`Skipping legacy job with invalid id: ${JSON.stringify(legacy?.id)}`);
+        continue;
       }
+      const jobFile = resolveJobFile(cwd, legacy.id);
+      writeJsonAtomic(jobFile, legacy, { exclusive: true });
     }
     writeJsonAtomic(stateFile, state);
   }
@@ -130,8 +134,13 @@ export function loadState(cwd) {
 
 function pruneJobs(cwd) {
   const jobs = readJobs(cwd);
-  removeJobs(cwd, jobs.slice(MAX_JOBS));
-  return jobs.slice(0, MAX_JOBS);
+  // Only immutable outcomes are eligible: a stale snapshot of a running or legacy unmarked
+  // record cannot prove it is safe to delete while a worker may still be updating it.
+  const terminalJobs = jobs.filter((job) => fs.existsSync(terminalMarkerFile(resolveJobFile(cwd, job.id))));
+  const pruned = terminalJobs.slice(MAX_JOBS);
+  removeJobs(cwd, pruned);
+  const removedIds = new Set(pruned.map((job) => job.id));
+  return jobs.filter((job) => !removedIds.has(job.id));
 }
 
 function removeFileIfExists(filePath) {
@@ -321,11 +330,13 @@ export function removeJobs(cwd, jobs) {
 }
 
 export function resolveJobLogFile(cwd, jobId) {
+  validateJobId(jobId);
   ensureStateDir(cwd);
   return path.join(resolveJobsDir(cwd), `${jobId}.log`);
 }
 
 export function resolveJobFile(cwd, jobId) {
+  validateJobId(jobId);
   ensureStateDir(cwd);
   return path.join(resolveJobsDir(cwd), `${jobId}.json`);
 }

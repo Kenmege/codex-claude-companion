@@ -132,7 +132,7 @@ test("saveState preserves an atomic rename error when temporary cleanup also fai
   }
 });
 
-test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", () => {
+test("saveState prunes marked terminal job artifacts when terminal jobs exceed the cap", () => {
   const workspace = makeTempDir();
   const stateFile = resolveStateFile(workspace);
   fs.mkdirSync(path.dirname(stateFile), { recursive: true });
@@ -141,16 +141,16 @@ test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", 
     const jobId = `job-${index}`;
     const updatedAt = new Date(Date.UTC(2026, 0, 1, 0, index, 0)).toISOString();
     const logFile = resolveJobLogFile(workspace, jobId);
-    const jobFile = resolveJobFile(workspace, jobId);
     fs.writeFileSync(logFile, `log ${jobId}\n`, "utf8");
-    fs.writeFileSync(jobFile, JSON.stringify({ id: jobId, status: "completed" }, null, 2), "utf8");
-    return {
+    const job = {
       id: jobId,
       status: "completed",
       logFile,
       updatedAt,
       createdAt: updatedAt
     };
+    writeJobFile(workspace, jobId, job);
+    return job;
   });
 
   fs.writeFileSync(
@@ -192,7 +192,7 @@ test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", 
   assert.deepEqual(
     fs.readdirSync(jobsDir).sort(),
     Array.from({ length: 50 }, (_, index) => `job-${index + 1}`)
-      .flatMap((jobId) => [`${jobId}.json`, `${jobId}.log`])
+      .flatMap((jobId) => [`${jobId}.json`, `${jobId}.log`, `${jobId}.terminal.json`])
       .sort()
   );
 });

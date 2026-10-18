@@ -57,6 +57,14 @@ test("pull request workflow proves the platform-neutral surface on minimum Node 
   assert.match(source, /run: npm run pack:check/);
 });
 
+test("Windows smoke suite includes every hard-link publication suite", () => {
+  const command = JSON.parse(read("package.json")).scripts["test:windows"].split(/\s+/);
+  for (const suite of [
+    "tests/terminal-markers.test.mjs", "tests/job-index.test.mjs", "tests/state.test.mjs",
+    "test/bridge-input.test.mjs", "test/bridge-repair.test.mjs"
+  ]) assert.ok(command.includes(suite), `Windows smoke suite must execute ${suite}`);
+});
+
 test("pull request workflow runs the real tmux executor on macOS", () => {
   const source = read(".github/workflows/pull-request-ci.yml").replaceAll("\r\n", "\n");
   const macosJob = source.match(/\n  macos-tmux:\n([\s\S]*?)(?=\n  [a-z][a-z0-9-]*:\n|$)/)?.[0] ?? "";
