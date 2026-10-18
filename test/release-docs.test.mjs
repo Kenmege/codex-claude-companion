@@ -685,7 +685,7 @@ test("Claude Code workflow is pinned, current, and auth-gated", () => {
   const interactiveFederationStep = workflowStep(workflow, "Run Claude interactive response with workload identity");
 
   // Auto-review runs once per ready PR (cost control), never on drafts or every push.
-  assert.match(workflow, /pull_request:\r?\n(?:\s+#[^\n]*\r?\n)*\s+types: \[opened, ready_for_review, reopened\]/);
+  assert.match(workflow, /pull_request:\n(?:[ \t]+#[^\n]*\n)*[ \t]+types: \[opened, ready_for_review, reopened\]/);
   assert.doesNotMatch(workflow.split("\njobs:")[0], /synchronize/);
   assert.match(workflow, /github\.event_name == 'pull_request' &&\s+github\.event\.pull_request\.draft == false &&/);
   assert.match(workflow, /anthropics\/claude-code-action@[a-f0-9]{40}/);
@@ -760,7 +760,8 @@ test("Claude auth selects federation before OAuth and API keys with fork exclusi
         for (const name of ["FEDERATION_RULE_ID", "ORGANIZATION_ID", "SERVICE_ACCOUNT_ID", "WORKSPACE_ID"]) {
           assert.ok(step.includes("anthropic_" + name.toLowerCase() + ": ${{ vars.ANTHROPIC_" + name + " }}"));
         }
-        assert.doesNotMatch(step, /^\s+(?:anthropic_api_key|claude_code_oauth_token):|secrets\./m);
+        assert.doesNotMatch(step, /^\s+(?:anthropic_api_key|claude_code_oauth_token):/m);
+        assert.ok(!step.includes("secrets."), "federation step must not reference secrets");
       }
       if (jobName === "auto-review") {
         assert.match(step, /use_sticky_comment: true/);

@@ -76,7 +76,8 @@ const currentReleaseNotes = `RELEASE_NOTES_v${packageJson.version}.md`;
 if (!fs.existsSync(path.join(root, currentReleaseNotes))) {
   throw new Error(`Missing current release notes file: ${currentReleaseNotes}`);
 }
-const claudeWorkflow = fs.readFileSync(path.join(root, ".github/workflows/claude.yml"), "utf8");
+// Normalize CRLF so the line-anchored contract checks behave the same on Windows checkouts.
+const claudeWorkflow = fs.readFileSync(path.join(root, ".github/workflows/claude.yml"), "utf8").replaceAll("\r\n", "\n");
 JSON.parse(fs.readFileSync(path.join(root, "schemas/review-output.schema.json"), "utf8"));
 JSON.parse(fs.readFileSync(path.join(root, "schemas/elite-review-output.schema.json"), "utf8"));
 JSON.parse(fs.readFileSync(path.join(root, "schemas/agentic-review-output.schema.json"), "utf8"));
@@ -196,7 +197,7 @@ for (const [jobName, label] of [["auto-review", "auto review"], ["interactive", 
       for (const name of ["FEDERATION_RULE_ID", "ORGANIZATION_ID", "SERVICE_ACCOUNT_ID", "WORKSPACE_ID"]) {
         requireClaudeContract(step.includes("anthropic_" + name.toLowerCase() + ": ${{ vars.ANTHROPIC_" + name + " }}"), `${jobName}/federation must read ${name} from vars.`);
       }
-      requireClaudeContract(!/^\s+(?:anthropic_api_key|claude_code_oauth_token):|secrets\./m.test(step), `${jobName}/federation must not pass static auth inputs.`);
+      requireClaudeContract(!/^\s+(?:anthropic_api_key|claude_code_oauth_token):/m.test(step) && !step.includes("secrets."), `${jobName}/federation must not pass static auth inputs.`);
     }
     requireClaudeContract(jobName === "auto-review"
       ? step.includes("use_sticky_comment: true") && step.includes("prompt: ${{ env.CLAUDE_AUTO_REVIEW_PROMPT }}")
