@@ -399,6 +399,37 @@ rl.on("line", (line) => {
           } });
         };
         if (BEHAVIOR.startsWith("with-unrelated-") && BEHAVIOR.endsWith("before-response")) emitUnrelatedThread();
+        const emitEarlySubagent = () => {
+          const childId = "early-child";
+          const childTurn = "early-turn";
+          send({ method: "thread/started", params: { thread: { id: childId, name: "early-worker" } } });
+          send({ method: "turn/started", params: { threadId: childId, turn: buildTurn(childTurn) } });
+          const earlyMessage = (text, id = childId) => send({ method: "item/completed", params: {
+            threadId: id, turnId: childTurn,
+            item: { type: "agentMessage", id: "buffer-message", text, phase: "analysis" }
+          } });
+          if (BEHAVIOR.includes("overflow")) {
+            if (BEHAVIOR.endsWith("oversized")) {
+              // UTF-8 size exceeds the cap although the character count does not.
+              earlyMessage("DROP_OLD" + "界".repeat(90000));
+            } else {
+              earlyMessage("DROP_OLD");
+              if (BEHAVIOR.endsWith("count")) {
+                for (let i = 0; i < 130; i++) earlyMessage("FILLER_" + i);
+              } else if (BEHAVIOR.endsWith("bytes")) {
+                for (let i = 0; i < 4; i++) earlyMessage("界".repeat(30000));
+              } else if (BEHAVIOR.endsWith("threads")) {
+                for (let i = 0; i < 64; i++) earlyMessage("UNRELATED_OUTPUT", "foreign-" + i);
+              }
+            }
+          }
+          for (const text of ["EARLY_FIRST", "EARLY_SECOND"]) {
+            send({ method: "item/completed", params: { threadId: childId, turnId: childTurn,
+              item: { type: "agentMessage", id: text, text, phase: "analysis" } } });
+          }
+          send({ method: "turn/completed", params: { threadId: childId, turn: buildTurn(childTurn, "completed") } });
+        };
+        if (BEHAVIOR === "with-early-subagent-before-response") emitEarlySubagent();
         // Announce the subagent before answering turn/start, so the client must buffer the announcement.
         let announcedSubThread = null;
         if (BEHAVIOR === "with-subagent-announced-before-response") {
@@ -410,10 +441,21 @@ rl.on("line", (line) => {
         }
 	        send({ id: message.id, result: { turn: buildTurn(turnId) } });
         if (BEHAVIOR.startsWith("with-unrelated-") && BEHAVIOR.endsWith("after-response")) emitUnrelatedThread();
+        if (BEHAVIOR === "with-early-subagent-after-response" || BEHAVIOR.includes("early-subagent-overflow")) emitEarlySubagent();
 
         const payload = message.params.outputSchema && message.params.outputSchema.properties && message.params.outputSchema.properties.verdict
           ? structuredReviewPayload(prompt)
           : taskPayload(prompt, thread.name && thread.name.startsWith("Codex Companion Task") && prompt.includes("Continue from the current thread state"));
+
+        if (BEHAVIOR.startsWith("with-early-subagent-")) {
+          send({ method: "turn/started", params: { threadId: thread.id, turn: buildTurn(turnId) } });
+          send({ method: "item/completed", params: { threadId: thread.id, turnId,
+            item: { type: "collabAgentToolCall", id: "early-collab", tool: "wait", status: "completed", receiverThreadIds: ["early-child"] } } });
+          send({ method: "item/completed", params: { threadId: thread.id, turnId,
+            item: { type: "agentMessage", id: "root-final", text: payload, phase: "final_answer" } } });
+          // No root completion: inference succeeds only if the child's completion was replayed.
+          break;
+        }
 
         if (
           BEHAVIOR === "with-subagent" ||

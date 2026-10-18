@@ -43,6 +43,10 @@ import { binaryAvailable } from "./process.mjs";
 
 const SERVICE_NAME = "claude_code_codex_plugin";
 const TASK_THREAD_PREFIX = "Codex Companion Task";
+// Unknown-thread traffic is speculative. Keep recent events, with finite total storage.
+const PENDING_THREAD_LIMIT = 64;
+const PENDING_EVENT_LIMIT = 128;
+const PENDING_BYTE_LIMIT = 256 * 1024;
 const DEFAULT_CONTINUE_PROMPT =
   "Continue from the current thread state. Pick the next highest-value step and follow through until the task is resolved.";
 
@@ -581,6 +585,40 @@ function applyTurnNotification(state, message) {
 async function captureTurn(client, threadId, startRequest, options = {}) {
   const state = createTurnCaptureState(threadId, options);
   const previousHandler = client.notificationHandler;
+  const pendingEvents = new Map();
+  let dropReported = false;
+  const reportDrop = () => {
+    if (dropReported) return;
+    dropReported = true;
+    emitLogEvent(state.onProgress, {
+      message: "Pending thread event buffer limit exceeded; early events were dropped.",
+      logTitle: "Pending thread buffer overflow",
+      logBody: "Limits: 64 threads, 128 events and 262144 UTF-8 JSON bytes per thread. " +
+        "Drop oldest thread at thread limit, oldest events at count/byte limits, oversized incoming events. " +
+        "This diagnostic is emitted once per capture."
+    });
+  };
+  const hold = (id, message) => {
+    const bytes = Buffer.byteLength(JSON.stringify(message), "utf8");
+    if (bytes > PENDING_BYTE_LIMIT) {
+      reportDrop();
+      return;
+    }
+    if (!pendingEvents.has(id)) {
+      if (pendingEvents.size >= PENDING_THREAD_LIMIT) {
+        pendingEvents.delete(pendingEvents.keys().next().value);
+        reportDrop();
+      }
+      pendingEvents.set(id, { events: [], bytes: 0 });
+    }
+    const queue = pendingEvents.get(id);
+    while (queue.events.length >= PENDING_EVENT_LIMIT || queue.bytes + bytes > PENDING_BYTE_LIMIT) {
+      queue.bytes -= queue.events.shift().bytes;
+      reportDrop();
+    }
+    queue.events.push({ message, bytes });
+    queue.bytes += bytes;
+  };
 
   // Use one route for live and buffered events. Announcements supply labels, not ownership.
   // Keep early metadata until an owned collaboration names the receiver, preserving labels
@@ -595,13 +633,27 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
       previousHandler?.(message);
     } else if (metadata || belongsToTurn(state, message)) {
       applyTurnNotification(state, message);
-    } else if (previousHandler) {
-      previousHandler(message);
+      // Ownership can be granted by a parent or by a replayed child's collaboration.
+      // Delete before replay so nested registration cannot replay the same queue twice.
+      for (const [id, queue] of pendingEvents) {
+        if (!state.threadIds.has(id)) continue;
+        pendingEvents.delete(id);
+        for (const entry of queue.events) route(entry.message);
+      }
+    } else {
+      const id = extractThreadId(message);
+      if (id && !state.threadIds.has(id)) hold(id, message);
+      previousHandler?.(message);
     }
   };
 
   client.setNotificationHandler((message) => {
     if (!state.turnId) {
+      const id = extractThreadId(message);
+      if (id && !state.threadIds.has(id)) {
+        route(message);
+        return;
+      }
       state.bufferedNotifications.push(message);
       return;
     }
@@ -627,6 +679,7 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
     return await state.completion;
   } finally {
     clearCompletionTimer(state);
+    pendingEvents.clear();
     state.pendingThreadMetadata.clear();
     client.setNotificationHandler(previousHandler ?? null);
   }
