@@ -15,8 +15,9 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
   `claude-review` plugin ID, and existing state paths remain compatible. The
   legacy `codex-plugin-cc` shim remains an inert scaffold pending its coordinated
   publication.
-- Prepared the durable bridge for the stable release channel. Stable versions
-  select npm dist-tag `latest`; prereleases continue to select `next`.
+- Released the durable bridge on the stable release channel as
+  `codex-claude-companion@1.2.0` on npm dist-tag `latest`; prereleases continue
+  to select `next`.
 
 ### Fixed
 

@@ -345,8 +345,9 @@ test("bridge agent preset registry exposes the six promised roles without hard-c
 test("bridge capability documentation contrasts the three product generations and defines trusted autonomy", () => {
   const docs = fs.readFileSync(path.join(ROOT, "docs", "bridge-capabilities.md"), "utf8");
   assert.match(docs, /\| Capability \| Direct `claude` CLI \| Legacy workspace\/review lanes \| Durable bridge \|/);
-  assert.match(docs, /contract prepared for the\s+`codex-claude-companion@1\.2\.0` stable release/i);
-  assert.match(docs, /Publication requires separate\s+approval/i);
+  assert.match(docs, /contract shipped in\s+`codex-claude-companion@1\.2\.0`/i);
+  assert.match(docs, /`codex-claude-companion@1\.2\.0` is the current stable release on npm\s+dist-tag `latest`/i);
+  assert.doesNotMatch(docs, /contract prepared for|Publication requires separate\s+approval/i);
   assert.match(docs, /earlier stable\s+`codex-plugin-cc@1\.1\.1` package does not contain\s+this work/i);
   assert.match(docs, /## Exact meaning of `trusted-autonomous`/);
   assert.match(docs, /`--permission-mode bypassPermissions`/);

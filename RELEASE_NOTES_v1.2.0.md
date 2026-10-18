@@ -42,7 +42,17 @@ Anthropic. OpenAI's similarly named plugin runs in the opposite direction.
 
 ## Install the stable release
 
-After separately approved publication:
+`codex-claude-companion@1.2.0` is the current stable release on npm
+dist-tag `latest`. Install the stable bridge:
+
+```bash
+npm install -g codex-claude-companion
+codex-claude enable
+codex-claude doctor
+codex-claude bridge-doctor --json
+```
+
+Or pin this release explicitly:
 
 ```bash
 npm install -g codex-claude-companion@1.2.0
@@ -51,18 +61,19 @@ codex-claude doctor
 codex-claude bridge-doctor --json
 ```
 
-Stable publication selects npm dist-tag `latest`; prereleases select `next`.
-Preparing this release does not publish it or change either registry dist-tag.
+Prereleases use npm dist-tag `next`.
 
 ### Upgrade from rc.1
 
-Job-state migration is automatic and one-time. The old job index is migrated
-to per-job records, and jobs from older versions keep their summaries. Existing
+Upgrading from `1.2.0-rc.1` automatically migrates the job-state index once;
+jobs from older versions keep their summaries. The old job index is migrated
+to per-job records. Existing
 state paths and both `codex-claude` and `codex-claude-review` commands remain
 compatible. No manual job-state reset is needed.
 
-The former `codex-plugin-cc@1.1.1` package contains review and workspace lanes
-without the durable bridge. Its compatibility shim remains an inert scaffold
+`codex-plugin-cc@1.1.1` was the last stable release before the durable bridge.
+That package contains review and workspace lanes without the durable bridge.
+Its compatibility shim remains an inert scaffold
 pending coordinated publication. The earlier scoped
 `@kenmege/codex-claude-bridge` proposal is superseded; use the canonical unscoped
 `codex-claude-companion` name.

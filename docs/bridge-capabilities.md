@@ -1,8 +1,10 @@
 # Codex-Claude Bridge contracts
 
-This document describes the Codex-Claude Bridge contract prepared for the
-`codex-claude-companion@1.2.0` stable release. Publication requires separate
-approval. The earlier stable `codex-plugin-cc@1.1.1` package does not contain
+This document describes the Codex-Claude Bridge contract shipped in
+`codex-claude-companion@1.2.0`.
+
+`codex-claude-companion@1.2.0` is the current stable release on npm
+dist-tag `latest`. The earlier stable `codex-plugin-cc@1.1.1` package does not contain
 this work.
 
 ## Capability matrix
