@@ -78,7 +78,7 @@ export function ensureStateDir(cwd) {
   fs.mkdirSync(resolveJobsDir(cwd), { recursive: true });
 }
 
-function loadConfiguration(cwd) {
+function loadConfiguration(cwd, skippedJobFiles = new Set()) {
   const stateFile = resolveStateFile(cwd);
   if (!fs.existsSync(stateFile)) {
     return defaultState();
@@ -105,7 +105,14 @@ function loadConfiguration(cwd) {
       }
       const jobFile = resolveJobFile(cwd, legacy.id);
       writeJsonAtomic(jobFile, legacy, { exclusive: true });
-      const record = JSON.parse(fs.readFileSync(jobFile, "utf8"));
+      let record;
+      try { record = readBaseJobFile(jobFile); }
+      catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        warnUnparsableJob(jobFile);
+        skippedJobFiles.add(jobFile);
+        continue;
+      }
       if (TERMINAL_STATUSES.has(record.status) && !readTerminalMarker(jobFile)) {
         // Old writers kept completion summaries and recency only in the index. Carry those
         // fields into the immutable outcome without touching a worker's authoritative file.
@@ -121,7 +128,7 @@ function loadConfiguration(cwd) {
   return state;
 }
 
-function readJobs(cwd) {
+function readJobs(cwd, skippedJobFiles = new Set()) {
   const jobsDir = resolveJobsDir(cwd);
   let names;
   try { names = fs.readdirSync(jobsDir); }
@@ -129,8 +136,13 @@ function readJobs(cwd) {
   const jobs = [];
   for (const name of names) {
     if (!name.endsWith(".json") || name.endsWith(".terminal.json")) continue;
-    try { jobs.push(readJobFile(path.join(jobsDir, name))); }
-    catch (error) { if (error.code !== "ENOENT") throw error; } // A concurrent prune may remove it.
+    const jobFile = path.join(jobsDir, name);
+    if (skippedJobFiles.has(jobFile)) continue;
+    try { jobs.push(readJobFile(jobFile)); }
+    catch (error) {
+      if (error instanceof SyntaxError) warnUnparsableJob(jobFile);
+      else if (error.code !== "ENOENT") throw error; // A concurrent prune may remove it.
+    }
   }
   return jobs.sort((left, right) =>
     String(right.updatedAt ?? right.createdAt ?? "").localeCompare(String(left.updatedAt ?? left.createdAt ?? "")) ||
@@ -138,8 +150,9 @@ function readJobs(cwd) {
 }
 
 export function loadState(cwd) {
-  const state = loadConfiguration(cwd);
-  return { ...state, jobs: readJobs(cwd) };
+  const skippedJobFiles = new Set();
+  const state = loadConfiguration(cwd, skippedJobFiles);
+  return { ...state, jobs: readJobs(cwd, skippedJobFiles) };
 }
 
 function pruneJobs(cwd) {
@@ -269,9 +282,21 @@ export function writeJobFile(cwd, jobId, payload) {
   return jobFile;
 }
 
+function warnUnparsableJob(jobFile) {
+  console.warn(`Skipping unparsable job record: ${jobFile}`);
+}
+
+function readBaseJobFile(jobFile) {
+  const record = JSON.parse(fs.readFileSync(jobFile, "utf8"));
+  if (!record || typeof record !== "object" || Array.isArray(record) || typeof record.id !== "string") {
+    throw new SyntaxError(`Invalid job record: ${jobFile}`);
+  }
+  return record;
+}
+
 export function readJobFile(jobFile) {
   let record;
-  try { record = JSON.parse(fs.readFileSync(jobFile, "utf8")); }
+  try { record = readBaseJobFile(jobFile); }
   catch (error) { if (error.code !== "ENOENT") throw error; }
   const marker = readTerminalMarker(jobFile);
   if (marker) return { ...record, ...marker };

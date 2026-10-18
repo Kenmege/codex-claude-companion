@@ -1094,6 +1094,26 @@ test("review accepts --background while still running as a tracked review job", 
   assert.match(status.stdout, /completed/);
 });
 
+test("status lists valid jobs when another job file is truncated", () => {
+  const workspace = makeTempDir();
+  const jobsDir = path.join(resolveStateDir(workspace), "jobs");
+  fs.mkdirSync(jobsDir, { recursive: true });
+  fs.writeFileSync(path.join(jobsDir, "task-good.json"), JSON.stringify({
+    id: "task-good", status: "running", title: "Valid job", summary: "still visible"
+  }));
+  const badFile = path.join(jobsDir, "task-bad1.json");
+  const bytes = '{"id":"task-bad1","sta';
+  fs.writeFileSync(badFile, bytes);
+
+  const result = run("node", [SCRIPT, "status"], { cwd: workspace });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /task-good/);
+  assert.match(result.stdout, /still visible/);
+  assert.equal(result.stderr.trim(), `Skipping unparsable job record: ${badFile}`);
+  assert.equal(fs.readFileSync(badFile, "utf8"), bytes);
+});
+
 test("status shows phases, hints, and the latest finished job", () => {
   const workspace = makeTempDir();
   const stateDir = resolveStateDir(workspace);

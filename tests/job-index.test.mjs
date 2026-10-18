@@ -8,6 +8,62 @@ import { makeTempDir } from "./helpers.mjs";
 
 const stateUrl = new URL("../plugins/codex/scripts/lib/state.mjs", import.meta.url).href;
 
+test("loadState skips unparsable records without changing or pruning them", (t) => {
+  const cwd = makeTempDir();
+  const valid = { id: "task-good", status: "running" };
+  state.writeJobFile(cwd, valid.id, valid);
+  const diagnostics = [];
+  t.mock.method(console, "warn", message => diagnostics.push(message));
+  const malformed = ['{"id":"task-bad1","sta', "null", "[]", '"text"', "42", "false", "{}", '{"id":1}'];
+  const files = malformed.map((bytes, index) => {
+    const file = state.resolveJobFile(cwd, `bad-${index}`);
+    fs.writeFileSync(file, bytes);
+    return file;
+  });
+
+  assert.deepEqual(state.loadState(cwd).jobs, [valid]);
+  assert.equal(diagnostics.length, files.length);
+  files.forEach(file => assert.equal(diagnostics.filter(message => message.includes(file)).length, 1));
+  assert.throws(() => state.readJobFile(files[0]), SyntaxError);
+  for (let index = 0; index < 51; index++) {
+    const terminal = { id: `terminal-${index}`, status: "completed", updatedAt: String(index).padStart(2, "0") };
+    const file = state.resolveJobFile(cwd, terminal.id);
+    fs.writeFileSync(file, JSON.stringify(terminal));
+    fs.writeFileSync(state.terminalMarkerFile(file), JSON.stringify(terminal));
+  }
+  // Even a terminal marker cannot make a truncated base record safe to prune.
+  fs.writeFileSync(state.terminalMarkerFile(files[0]), JSON.stringify({
+    id: "bad-0", status: "completed", updatedAt: "0000"
+  }));
+  diagnostics.length = 0;
+  const saved = state.saveState(cwd, { config: {} });
+  assert.equal(saved.jobs.length, 51);
+  assert.ok(saved.jobs.some(job => job.id === valid.id));
+  assert.equal(fs.existsSync(state.resolveJobFile(cwd, "terminal-0")), false);
+  assert.equal(fs.existsSync(state.terminalMarkerFile(files[0])), true);
+  assert.equal(diagnostics.length, files.length);
+  files.forEach((file, index) => assert.equal(fs.readFileSync(file, "utf8"), malformed[index]));
+});
+
+test("job enumeration ignores a disappearing file but propagates other I/O errors", (t) => {
+  const cwd = makeTempDir();
+  const valid = { id: "task-good", status: "running" };
+  const file = state.writeJobFile(cwd, valid.id, valid);
+  const read = fs.readFileSync.bind(fs);
+  let failure;
+  t.mock.method(fs, "readFileSync", (target, ...args) => {
+    if (target === file && failure) throw failure;
+    return read(target, ...args);
+  });
+  failure = Object.assign(new Error("concurrent removal"), { code: "ENOENT" });
+  assert.deepEqual(state.loadState(cwd).jobs, []);
+  failure = Object.assign(new Error("read failed"), { code: "EIO" });
+  assert.throws(() => state.loadState(cwd), error => error === failure);
+  fs.writeFileSync(state.resolveStateFile(cwd), JSON.stringify({ jobs: [valid] }));
+  assert.throws(() => state.loadState(cwd), error => error === failure);
+  assert.equal(JSON.parse(read(state.resolveStateFile(cwd))).jobs.length, 1);
+});
+
 test("concurrent processes retain every distinct job's latest update", { timeout: 30000 }, async () => {
   const cwd = makeTempDir();
   const barrier = makeTempDir();
@@ -56,6 +112,27 @@ test("concurrent processes retain every distinct job's latest update", { timeout
     assert.ok(job.updatedAt);
     assert.deepEqual(state.readJobFile(state.resolveJobFile(cwd, job.id)), job);
   }
+});
+
+test("legacy migration skips an unparsable base file and retires the array after other entries", (t) => {
+  const cwd = makeTempDir();
+  const diagnostics = [];
+  t.mock.method(console, "warn", message => diagnostics.push(message));
+  const badFile = state.resolveJobFile(cwd, "task-bad1");
+  const bytes = '{"id":"task-bad1","sta';
+  fs.writeFileSync(badFile, bytes);
+  const good = { id: "task-good", status: "completed", summary: "kept" };
+  fs.writeFileSync(state.resolveStateFile(cwd), JSON.stringify({ jobs: [
+    { id: "task-bad1", status: "completed" }, good
+  ] }));
+
+  assert.deepEqual(state.loadState(cwd).jobs, [good]);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(state.resolveStateFile(cwd))), "jobs"), false);
+  assert.equal(fs.readFileSync(badFile, "utf8"), bytes);
+  assert.equal(fs.existsSync(state.terminalMarkerFile(badFile)), false);
+  assert.equal(fs.existsSync(state.terminalMarkerFile(state.resolveJobFile(cwd, good.id))), true);
+  assert.equal(diagnostics.length, 1);
+  assert.ok(diagnostics[0].includes(badFile));
 });
 
 test("legacy terminal migration carries index-only fields without rewriting the job file", () => {
