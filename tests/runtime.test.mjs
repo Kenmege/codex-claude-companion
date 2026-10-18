@@ -804,7 +804,7 @@ for (const timing of ["before-response", "after-response", "overflow-count", "ov
       cwd: repo, env: buildEnv(binDir), timeout: 10000
     });
     assert.equal(result.status, 0, result.stderr);
-    const state = JSON.parse(fs.readFileSync(path.join(resolveStateDir(repo), "state.json"), "utf8"));
+    const state = loadState(repo);
     const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
     const label = ["overflow-count", "overflow-bytes", "overflow-threads", "metadata-threads", "metadata-name-threads"].includes(timing)
       ? "early-child"
@@ -838,7 +838,7 @@ for (const announcement of ["thread", "name"]) {
         cwd: repo, env: buildEnv(binDir)
       });
       assert.equal(result.status, 0, result.stderr);
-      const state = JSON.parse(fs.readFileSync(path.join(resolveStateDir(repo), "state.json"), "utf8"));
+      const state = loadState(repo);
       const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
       assert.doesNotMatch(log, /UNRELATED_OWNER|UNRELATED_OUTPUT|unrelated-turn/);
       assert.doesNotMatch(result.stdout, /UNRELATED/);
@@ -1122,11 +1122,10 @@ test("status shows phases, hints, and the latest finished job", () => {
         title: "Codex Review",
         jobClass: "review",
         threadId: "thr_done",
-        summary: "Review main...HEAD",
+        summary: "Review creation summary",
         createdAt: "2026-03-18T15:10:00.000Z",
         startedAt: "2026-03-18T15:10:05.000Z",
         completedAt: "2026-03-18T15:11:10.000Z",
-        updatedAt: "2026-03-18T15:11:10.000Z",
         rendered: "# Codex Review\n\nReviewed uncommitted changes.\nNo material issues found.\n"
       },
       null,
@@ -1469,9 +1468,8 @@ test("result without a job id prefers the latest finished job from the current C
         title: "Codex Review",
         jobClass: "review",
         sessionId: "sess-current",
-        summary: "Current session review",
+        summary: "Current session creation summary",
         createdAt: "2026-03-18T15:10:00.000Z",
-        updatedAt: "2026-03-18T15:11:00.000Z",
         threadId: "thr_current",
         result: {
           codex: {
@@ -1494,9 +1492,8 @@ test("result without a job id prefers the latest finished job from the current C
         title: "Codex Review",
         jobClass: "review",
         sessionId: "sess-other",
-        summary: "Old session review",
+        summary: "Old session creation summary",
         createdAt: "2026-03-18T15:20:00.000Z",
-        updatedAt: "2026-03-18T15:21:00.000Z",
         threadId: "thr_other",
         result: {
           codex: {
@@ -1962,7 +1959,7 @@ test("session end fully cleans up jobs for the ending session", async (t) => {
   assert.equal(fs.existsSync(otherJobFile), true);
   assert.deepEqual(
     fs.readdirSync(path.dirname(otherJobFile)).sort(),
-    [path.basename(otherJobFile), path.basename(otherSessionLog)].sort()
+    [path.basename(otherJobFile), "review-other.terminal.json", path.basename(otherSessionLog)].sort()
   );
 
   await waitFor(() => {

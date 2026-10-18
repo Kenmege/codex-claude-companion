@@ -105,6 +105,16 @@ function loadConfiguration(cwd) {
       }
       const jobFile = resolveJobFile(cwd, legacy.id);
       writeJsonAtomic(jobFile, legacy, { exclusive: true });
+      const record = JSON.parse(fs.readFileSync(jobFile, "utf8"));
+      if (TERMINAL_STATUSES.has(record.status) && !readTerminalMarker(jobFile)) {
+        // Old writers kept completion summaries and recency only in the index. Carry those
+        // fields into the immutable outcome without touching a worker's authoritative file.
+        publishTerminalMarker(jobFile, {
+          ...record,
+          summary: legacy.status === record.status ? legacy.summary ?? record.summary : record.summary,
+          updatedAt: legacy.updatedAt ?? record.completedAt ?? record.createdAt
+        });
+      }
     }
     writeJsonAtomic(stateFile, state);
   }
@@ -287,6 +297,13 @@ export function publishTerminalJob(cwd, jobId, payload) {
   // A terminal-only job must also have an enumerable base record. Never replace an existing record
   // here: another publisher may already have won the terminal marker.
   if (!fs.existsSync(jobFile)) writeJsonAtomic(jobFile, terminal, { exclusive: true });
+  const published = publishTerminalMarker(jobFile, terminal);
+  const record = readJobFile(jobFile);
+  return { won: published && !adoptsExistingTerminal, record };
+}
+
+// Publish a complete immutable outcome. EEXIST means another publisher's marker wins.
+function publishTerminalMarker(jobFile, terminal) {
   const marker = terminalMarkerFile(jobFile);
   const temporaryFile = `${marker}.${process.pid}.${randomUUID()}.tmp`;
   let won = false;
@@ -299,7 +316,7 @@ export function publishTerminalJob(cwd, jobId, payload) {
     descriptor = undefined;
     try {
       fs.linkSync(temporaryFile, marker);
-      won = !adoptsExistingTerminal;
+      won = true;
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
     }
@@ -307,8 +324,7 @@ export function publishTerminalJob(cwd, jobId, payload) {
     if (descriptor !== undefined) fs.closeSync(descriptor);
     removeFileIfExists(temporaryFile);
   }
-  const record = readJobFile(jobFile);
-  return { won, record };
+  return won;
 }
 
 function removeJobFile(jobFile) {

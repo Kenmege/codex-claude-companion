@@ -58,12 +58,37 @@ test("concurrent processes retain every distinct job's latest update", { timeout
   }
 });
 
+test("legacy terminal migration carries index-only fields without rewriting the job file", () => {
+  const cwd = makeTempDir();
+  const fileRecord = {
+    id: "legacy-finished", status: "completed", summary: "creation summary",
+    createdAt: "2020-01-01", completedAt: "2020-01-02", result: { stdout: "kept" }
+  };
+  const jobFile = state.resolveJobFile(cwd, fileRecord.id);
+  fs.writeFileSync(jobFile, JSON.stringify(fileRecord));
+  fs.utimesSync(jobFile, new Date("2020-01-01"), new Date("2020-01-01"));
+  const bytes = fs.readFileSync(jobFile);
+  const before = fs.statSync(jobFile);
+  const legacy = { ...fileRecord, summary: "completion summary", updatedAt: "2020-01-03", result: { stdout: "stale" } };
+  fs.writeFileSync(state.resolveStateFile(cwd), JSON.stringify({ jobs: [legacy] }));
+
+  const loaded = state.loadState(cwd);
+  const expected = { ...fileRecord, summary: "completion summary", updatedAt: "2020-01-03" };
+  assert.deepEqual(loaded.jobs, [expected]);
+  assert.deepEqual(state.readJobFile(jobFile), expected);
+  assert.deepEqual(JSON.parse(fs.readFileSync(state.terminalMarkerFile(jobFile))), expected);
+  assert.deepEqual(fs.readFileSync(jobFile), bytes);
+  assert.equal(fs.statSync(jobFile).ino, before.ino);
+  assert.equal(fs.statSync(jobFile).mtimeMs, before.mtimeMs);
+});
+
 test("legacy index creates missing files once and never rewrites authoritative existing records", () => {
   const cwd = makeTempDir();
   const existing = { id: "existing", status: "running", progress: 5 };
   state.writeJobFile(cwd, existing.id, existing);
   const existingFile = state.resolveJobFile(cwd, existing.id);
   const before = fs.statSync(existingFile);
+  const bytes = fs.readFileSync(existingFile);
   const legacy = [
     { ...existing, progress: 1, summary: "legacy summary", createdAt: "2020-01-01", updatedAt: "2020-01-02" },
     { id: "missing", status: "completed", summary: "legacy result", updatedAt: "2020-01-03" }
@@ -73,13 +98,113 @@ test("legacy index creates missing files once and never rewrites authoritative e
   assert.equal(loaded.jobs.length, 2);
   assert.equal(loaded.config.stopReviewGate, true);
   assert.equal(state.readJobFile(state.resolveJobFile(cwd, "missing")).summary, "legacy result");
+  assert.equal(fs.existsSync(state.terminalMarkerFile(state.resolveJobFile(cwd, "missing"))), true);
   const migrated = state.readJobFile(state.resolveJobFile(cwd, "existing"));
   assert.deepEqual(migrated, existing);
+  assert.deepEqual(fs.readFileSync(existingFile), bytes);
+  assert.equal(fs.existsSync(state.terminalMarkerFile(existingFile)), false);
   assert.equal(fs.statSync(existingFile).ino, before.ino);
   assert.equal(fs.statSync(existingFile).mtimeMs, before.mtimeMs);
   assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(state.resolveStateFile(cwd))), "jobs"), false);
   fs.unlinkSync(state.resolveJobFile(cwd, "missing"));
   assert.deepEqual(state.listJobs(cwd).map(job => job.id), ["existing"]);
+});
+
+test("legacy migration preserves an existing terminal marker exactly", () => {
+  const cwd = makeTempDir();
+  const jobFile = state.writeJobFile(cwd, "winner", {
+    id: "winner", status: "failed", summary: "marker winner", completedAt: "2020-01-04"
+  });
+  const winner = state.readJobFile(jobFile);
+  const marker = state.terminalMarkerFile(jobFile);
+  const bytes = fs.readFileSync(marker);
+  const before = fs.statSync(marker);
+  fs.writeFileSync(state.resolveStateFile(cwd), JSON.stringify({ jobs: [
+    { id: "winner", status: "completed", summary: "stale legacy", updatedAt: "2020-01-05" }
+  ] }));
+  assert.deepEqual(state.loadState(cwd).jobs, [winner]);
+  assert.deepEqual(fs.readFileSync(marker), bytes);
+  assert.equal(fs.statSync(marker).ino, before.ino);
+  assert.equal(fs.statSync(marker).mtimeMs, before.mtimeMs);
+});
+
+test("legacy migration adopts a marker published between its check and exclusive link", (t) => {
+  const cwd = makeTempDir();
+  const record = { id: "race", status: "completed", summary: "file summary", createdAt: "2020-01-01" };
+  const jobFile = state.resolveJobFile(cwd, record.id);
+  fs.writeFileSync(jobFile, JSON.stringify(record));
+  fs.writeFileSync(state.resolveStateFile(cwd), JSON.stringify({ jobs: [
+    { ...record, summary: "legacy summary", updatedAt: "2020-01-02" }
+  ] }));
+  const marker = state.terminalMarkerFile(jobFile);
+  const winner = { ...record, summary: "concurrent winner", updatedAt: "2020-01-03" };
+  const temporary = `${marker}.winner.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(winner));
+  const link = fs.linkSync.bind(fs);
+  let raced = false;
+  t.mock.method(fs, "linkSync", (source, target) => {
+    if (target === marker && !raced) {
+      raced = true;
+      link(temporary, marker);
+    }
+    return link(source, target);
+  });
+  assert.deepEqual(state.loadState(cwd).jobs, [winner]);
+  assert.equal(raced, true);
+  assert.deepEqual(state.readJobFile(jobFile), winner);
+  assert.deepEqual(JSON.parse(fs.readFileSync(jobFile)), record);
+  fs.unlinkSync(temporary);
+  assert.deepEqual(fs.readdirSync(state.resolveJobsDir(cwd)).sort(), ["race.json", "race.terminal.json"]);
+});
+
+test("legacy terminal migration uses file outcomes and timestamp fallbacks", () => {
+  const cwd = makeTempDir();
+  const records = [
+    { id: "failed", status: "failed", summary: "file failure", completedAt: "2020-01-03", createdAt: "2020-01-01" },
+    { id: "cancelled", status: "cancelled", summary: "file cancellation", createdAt: "2020-01-02" }
+  ];
+  for (const record of records) fs.writeFileSync(state.resolveJobFile(cwd, record.id), JSON.stringify(record));
+  fs.writeFileSync(state.resolveStateFile(cwd), JSON.stringify({ jobs: [
+    { id: "failed", status: "completed", summary: "wrong outcome", updatedAt: null },
+    { id: "cancelled", status: "cancelled", summary: "legacy cancellation" }
+  ] }));
+  assert.deepEqual(state.loadState(cwd).jobs, [
+    { ...records[0], updatedAt: "2020-01-03" },
+    { ...records[1], summary: "legacy cancellation", updatedAt: "2020-01-02" }
+  ]);
+});
+
+test("migrated legacy terminal jobs are pruned by index recency while running jobs survive", () => {
+  const cwd = makeTempDir();
+  const legacy = [];
+  for (let index = 0; index < 52; index++) {
+    const record = {
+      id: `legacy-${index}`, status: "completed", summary: "creation summary",
+      createdAt: new Date(Date.UTC(2020, 0, 52 - index)).toISOString()
+    };
+    fs.writeFileSync(state.resolveJobFile(cwd, record.id), JSON.stringify(record));
+    legacy.push({ ...record, summary: "completion summary", updatedAt: new Date(Date.UTC(2021, 0, index + 1)).toISOString() });
+  }
+  const running = { id: "running-old", status: "running", createdAt: "2000-01-01" };
+  fs.writeFileSync(state.resolveJobFile(cwd, running.id), JSON.stringify(running));
+  legacy.push({ ...running, status: "completed", summary: "stale terminal index" });
+  fs.writeFileSync(state.resolveStateFile(cwd), JSON.stringify({ jobs: legacy }));
+  assert.equal(state.loadState(cwd).jobs.length, 53);
+  const saved = state.saveState(cwd, { config: {} });
+  assert.equal(saved.jobs.length, 51);
+  assert.deepEqual(saved.jobs.slice(0, 2).map(job => job.id), ["legacy-51", "legacy-50"]);
+  for (const index of [0, 1]) {
+    const file = state.resolveJobFile(cwd, `legacy-${index}`);
+    assert.equal(fs.existsSync(file), false);
+    assert.equal(fs.existsSync(state.terminalMarkerFile(file)), false);
+  }
+  for (let index = 2; index < 52; index++) {
+    const file = state.resolveJobFile(cwd, `legacy-${index}`);
+    assert.equal(state.readJobFile(file).summary, "completion summary");
+    assert.equal(fs.existsSync(state.terminalMarkerFile(file)), true);
+  }
+  assert.deepEqual(state.readJobFile(state.resolveJobFile(cwd, running.id)), running);
+  assert.equal(fs.existsSync(state.terminalMarkerFile(state.resolveJobFile(cwd, running.id))), false);
 });
 
 test("directory listing ignores markers and temporary files and overlays terminal state", () => {
