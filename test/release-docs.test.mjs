@@ -773,6 +773,12 @@ test("Claude auth selects federation before OAuth and API keys with fork exclusi
       if (jobName === "auto-review") {
         assert.match(step, /use_sticky_comment: true/);
         assert.match(step, /prompt: \$\{\{ env\.CLAUDE_AUTO_REVIEW_PROMPT \}\}/);
+        // With a prompt, pull_request runs use agent mode, which has no comment and no posting tool:
+        // without track_progress the review was computed and never posted.
+        assert.match(step, /^          track_progress: true$/m);
+        const allowed = [...step.matchAll(/--allowedTools ([^\n]+)/g)].map((match) => match[1].trim());
+        assert.deepEqual(allowed, ["mcp__github_inline_comment__create_inline_comment"]);
+        assert.match(step, /--disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell/);
       } else {
         assert.match(step, /--append-system-prompt "\$\{\{ env\.CLAUDE_INTERACTIVE_PROMPT \}\}"/);
       }

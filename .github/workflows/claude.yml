@@ -132,10 +132,16 @@ jobs:
           anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
           anthropic_workspace_id: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
           use_sticky_comment: true
+          # A prompt on pull_request selects agent mode, which creates no comment and gives
+          # Claude no posting tool (Bash is blocked below), so reviews were never posted.
+          # track_progress switches to tag mode: the action creates the claude[bot] comment
+          # and gives Claude the comment tool to write the review into it.
+          track_progress: true
           prompt: ${{ env.CLAUDE_AUTO_REVIEW_PROMPT }}
           claude_args: |
             --model opus
             --max-turns 80
+            --allowedTools mcp__github_inline_comment__create_inline_comment
             --disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell
 
       - name: Run Claude auto review with OAuth
@@ -149,12 +155,14 @@ jobs:
           # producing 401 Invalid bearer token. Reference:
           # https://code.claude.com/docs/en/authentication
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # JUSTIFIED: post Claude's full response as a sticky PR
-          # comment. Without this the action runs the inline-comment
-          # classifier on Claude's text output; if no findings match
-          # the classifier's file:line format, "No buffered inline
-          # comments" appears in the log and nothing is posted.
+          # JUSTIFIED: keep the review in one sticky claude[bot] comment
+          # that later runs update instead of adding new comments.
           use_sticky_comment: true
+          # A prompt on pull_request selects agent mode, which creates no comment and gives
+          # Claude no posting tool (Bash is blocked below), so reviews were never posted.
+          # track_progress switches to tag mode: the action creates the claude[bot] comment
+          # and gives Claude the comment tool to write the review into it.
+          track_progress: true
           prompt: ${{ env.CLAUDE_AUTO_REVIEW_PROMPT }}
           # NB: --disallowedTools includes Bash and its companions to
           # close the secret-exfiltration vector noted in the PR #75
@@ -174,6 +182,7 @@ jobs:
           claude_args: |
             --model opus
             --max-turns 80
+            --allowedTools mcp__github_inline_comment__create_inline_comment
             --disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell
 
       - name: Run Claude auto review with API key
@@ -182,10 +191,16 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           use_sticky_comment: true
+          # A prompt on pull_request selects agent mode, which creates no comment and gives
+          # Claude no posting tool (Bash is blocked below), so reviews were never posted.
+          # track_progress switches to tag mode: the action creates the claude[bot] comment
+          # and gives Claude the comment tool to write the review into it.
+          track_progress: true
           prompt: ${{ env.CLAUDE_AUTO_REVIEW_PROMPT }}
           claude_args: |
             --model opus
             --max-turns 80
+            --allowedTools mcp__github_inline_comment__create_inline_comment
             --disallowedTools Edit Write NotebookEdit Bash BashOutput KillShell
 
   interactive:
