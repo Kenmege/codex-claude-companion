@@ -15,6 +15,7 @@
  *   threadTurnIds: Map<string, string>,
  *   threadLabels: Map<string, string>,
  *   pendingThreadMetadata: Map<string, { threadName?: string, name?: string, agentNickname?: string, agentRole?: string }>,
+ *   drainPendingThread?: (threadId: string) => void,
  *   turnId: string | null,
  *   bufferedNotifications: AppServerNotification[],
  *   completion: Promise<TurnCaptureState>,
@@ -238,6 +239,7 @@ function registerThread(state, threadId, options = {}) {
   if (label) {
     state.threadLabels.set(threadId, label);
   }
+  state.drainPendingThread?.(threadId);
 }
 
 function threadMetadata(message) {
@@ -633,18 +635,19 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
       previousHandler?.(message);
     } else if (metadata || belongsToTurn(state, message)) {
       applyTurnNotification(state, message);
-      // Ownership can be granted by a parent or by a replayed child's collaboration.
-      // Delete before replay so nested registration cannot replay the same queue twice.
-      for (const [id, queue] of pendingEvents) {
-        if (!state.threadIds.has(id)) continue;
-        pendingEvents.delete(id);
-        for (const entry of queue.events) route(entry.message);
-      }
     } else {
       const id = extractThreadId(message);
       if (id && !state.threadIds.has(id)) hold(id, message);
       previousHandler?.(message);
     }
+  };
+
+  state.drainPendingThread = (id) => {
+    const queue = pendingEvents.get(id);
+    if (!queue) return;
+    // Delete before replay so nested registration cannot replay this queue twice.
+    pendingEvents.delete(id);
+    for (const entry of queue.events) route(entry.message);
   };
 
   client.setNotificationHandler((message) => {
@@ -662,8 +665,8 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
 
   try {
     const response = await startRequest();
-    options.onResponse?.(response, state);
     state.turnId = response.turn?.id ?? null;
+    options.onResponse?.(response, state);
     if (state.turnId) {
       state.threadTurnIds.set(state.threadId, state.turnId);
     }
@@ -1040,10 +1043,10 @@ export async function runAppServerReview(cwd, options = {}) {
         onProgress: options.onProgress,
         onResponse(response, state) {
           if (response.reviewThreadId) {
-            registerThread(state, response.reviewThreadId);
             if (delivery === "detached") {
               state.threadId = response.reviewThreadId;
             }
+            registerThread(state, response.reviewThreadId);
           }
         }
       }

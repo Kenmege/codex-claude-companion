@@ -217,6 +217,39 @@ test("review renders a no-findings result from app-server review/start", () => {
   assert.match(result.stdout, /No material issues found/);
 });
 
+test("detached review returns completion received before the review/start response", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "review-completes-before-response");
+  initGitRepo(repo);
+  const moduleUrl = new URL("../plugins/codex/scripts/lib/codex.mjs", import.meta.url).href;
+  const clientUrl = new URL("../plugins/codex/scripts/lib/app-server.mjs", import.meta.url).href;
+  const result = run("node", ["--input-type=module", "-e", `
+    import { runAppServerReview } from ${JSON.stringify(moduleUrl)};
+    import { CodexAppServerClient } from ${JSON.stringify(clientUrl)};
+    // Exercise direct transport: the broker independently buffers early review events.
+    const connect = CodexAppServerClient.connect.bind(CodexAppServerClient);
+    CodexAppServerClient.connect = (cwd, options) => connect(cwd, { ...options, disableBroker: true });
+    const deadline = setTimeout(() => {
+      console.error("Detached review did not drain its early completion notifications");
+      process.exit(1);
+    }, 5000);
+    try {
+      const result = await runAppServerReview(process.cwd(), {
+        delivery: "detached", target: { type: "uncommittedChanges" }
+      });
+      console.log(JSON.stringify(result));
+    } finally {
+      clearTimeout(deadline);
+    }
+  `], { cwd: repo, env: buildEnv(binDir) });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.notEqual(payload.threadId, payload.sourceThreadId);
+  assert.equal(payload.turn.status, "completed");
+  assert.match(payload.reviewText, /No material issues found/);
+});
+
 test("task runs when the active provider does not require OpenAI login", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();

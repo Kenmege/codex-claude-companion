@@ -298,7 +298,9 @@ rl.on("line", (line) => {
         }
         const thread = nextThread(state, message.params.cwd, message.params.ephemeral);
         send({ id: message.id, result: { thread: buildThread(thread), model: message.params.model || "gpt-5.5", modelProvider: "openai", serviceTier: null, cwd: thread.cwd, approvalPolicy: "never", sandbox: { type: "readOnly", access: { type: "fullAccess" }, networkAccess: false }, reasoningEffort: null } });
-        send({ method: "thread/started", params: { thread: { id: thread.id } } });
+        if (BEHAVIOR !== "review-completes-before-response") {
+          send({ method: "thread/started", params: { thread: { id: thread.id } } });
+        }
         break;
       }
 
@@ -340,10 +342,13 @@ rl.on("line", (line) => {
         let reviewThread = thread;
         if (message.params.delivery === "detached") {
           reviewThread = nextThread(state, thread.cwd, true);
-          send({ method: "thread/started", params: { thread: { id: reviewThread.id } } });
+          if (BEHAVIOR !== "review-completes-before-response") {
+            send({ method: "thread/started", params: { thread: { id: reviewThread.id } } });
+          }
         }
         const turnId = nextTurnId(state);
-        send({ id: message.id, result: { turn: buildTurn(turnId), reviewThreadId: reviewThread.id } });
+        const respond = () => send({ id: message.id, result: { turn: buildTurn(turnId), reviewThreadId: reviewThread.id } });
+        if (BEHAVIOR !== "review-completes-before-response") respond();
         emitTurnCompleted(reviewThread.id, turnId, [
           {
             started: { type: "enteredReviewMode", id: turnId, review: "current changes" }
@@ -364,6 +369,7 @@ rl.on("line", (line) => {
             completed: { type: "exitedReviewMode", id: turnId, review: nativeReviewText(message.params.target) }
           }
         ]);
+        if (BEHAVIOR === "review-completes-before-response") respond();
         break;
       }
 
