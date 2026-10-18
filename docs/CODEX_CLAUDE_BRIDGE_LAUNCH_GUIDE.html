@@ -486,15 +486,16 @@
         <article class="step">
           <div class="step-no">1</div>
           <div>
-            <h3>Install the public bridge release candidate</h3>
-            <p>The stable <code>latest</code> release remains <code>1.1.1</code>. Install the approved bridge RC from npm dist-tag <code>next</code>; it contains <code>delegate</code> and <code>bridge-doctor</code> without moving stable users automatically.</p>
+            <h3>Install the stable bridge</h3>
+            <p><code>codex-claude-companion@1.2.0</code> is the current stable release on npm dist-tag <code>latest</code>. Install the stable bridge with <code>delegate</code> and <code>bridge-doctor</code>.</p>
             <div class="code-card">
               <div class="code-head"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Terminal - one-time setup</span><button class="copy" type="button" aria-label="Copy one-time setup commands" aria-live="polite">Copy</button></div>
-              <pre><code><span class="cmd">npm</span> install -g codex-claude-companion@next
+              <pre><code><span class="cmd">npm</span> install -g codex-claude-companion
 <span class="cmd">codex-claude</span> enable
 <span class="comment"># Restart Codex CLI after enable completes.</span></code></pre>
             </div>
-            <p>Confirm the installed build reports <code>1.2.0-rc.1</code> and exposes the new surface with <code>codex-claude --help</code>. The package is named <code>codex-claude-companion</code>; the legacy <code>codex-plugin-cc</code> name is deprecated. Do not treat OpenAI's repository of the same name as this bridge.</p>
+            <p>To pin this release explicitly, use <code>npm install -g codex-claude-companion@1.2.0</code>. Confirm the installed build reports <code>1.2.0</code> and exposes the new surface with <code>codex-claude --help</code>. The package is named <code>codex-claude-companion</code>; the legacy <code>codex-plugin-cc</code> name is deprecated. Do not treat OpenAI's repository of the same name as this bridge.</p>
+            <p><code>codex-plugin-cc@1.1.1</code> was the last stable release before the durable bridge. Upgrading from <code>1.2.0-rc.1</code> automatically migrates the job-state index once; jobs from older versions keep their summaries. Both executable names remain supported.</p>
           </div>
         </article>
 

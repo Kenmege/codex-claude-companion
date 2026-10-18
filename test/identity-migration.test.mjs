@@ -40,8 +40,11 @@ test("identity documentation distinguishes the two product directions", () => {
   assert.match(readme, /OpenAI[\s\S]{0,80}`openai\/codex-plugin-cc`[\s\S]{0,80}Claude Code[\s\S]{0,40}Codex/i);
   assert.match(readme, /this project[\s\S]{0,80}Codex[\s\S]{0,40}Claude/i);
   assert.match(readme, /Delegate to Claude from Codex, keep control, and get verified work back/i);
-  assert.match(readme, /stable `latest` release remains `1\.1\.1`[\s\S]{0,180}`1\.2\.0-rc\.1`/i);
-  assert.match(readme, /npm install -g codex-claude-companion@next/i);
+  assert.match(readme, /`codex-claude-companion@1\.2\.0` is the current stable release on npm\s+dist-tag `latest`/i);
+  assert.match(readme, /npm install -g codex-claude-companion\r?\n/i);
+  assert.match(readme, /npm install -g codex-claude-companion@1\.2\.0(?:\s|$)/i);
+  assert.match(readme, /Upgrading from `1\.2\.0-rc\.1` automatically migrates the job-state index once/i);
+  assert.match(readme, /jobs from older versions keep their summaries/i);
   assert.doesNotMatch(readme, /Public npm is the frictionless install lane/i);
   assert.match(migration, /canonical repository and npm package name is `codex-claude-companion`/i);
   assert.match(migration, /SUPERSEDED[\s\S]{0,120}`@kenmege\/codex-claude-bridge`/i);
@@ -53,6 +56,33 @@ test("identity documentation distinguishes the two product directions", () => {
   assert.match(launchGuide, /this bridge[\s\S]{0,180}Codex[\s\S]{0,80}Claude/i);
   assert.match(launchGuide, /separate from CAMPUS/i);
   assert.doesNotMatch(launchGuide, /npm install -g @kenmege\/codex-claude-bridge/i);
+});
+
+test("stable release documentation describes the shipped version and preserves upgrade guidance", () => {
+  const installDocs = ["README.md", "docs/CODEX_CLAUDE_BRIDGE_LAUNCH_GUIDE.html", "RELEASE_NOTES_v1.2.0.md"];
+  for (const file of [...installDocs, "docs/bridge-migration.md", "docs/bridge-capabilities.md"]) {
+    // Compare prose across Markdown and HTML: drop inline markup until none is left.
+    let text = read(file);
+    let previous;
+    do {
+      previous = text;
+      text = text.replace(/<[^>]*>/g, "");
+    } while (text !== previous);
+    text = text.replace(/`/g, "");
+    assert.match(text, /codex-claude-companion@1\.2\.0 is the current stable release on npm\s+dist-tag latest\./i, file);
+    assert.doesNotMatch(text, /this checkout prepares|after (?:its )?separately approved publication|release preparation|preparing this release|publication requires separate\s+approval|after separate\s+publication approval/i, file);
+    if (installDocs.includes(file)) {
+      assert.match(text, /npm install -g codex-claude-companion\r?\n/, file);
+      assert.match(text, /npm install -g codex-claude-companion@1\.2\.0(?:\s|\.|$)/, file);
+      assert.match(text, /Upgrading from 1\.2\.0-rc\.1 automatically migrates the job-state index once/i, file);
+      assert.match(text, /jobs from older versions keep their summaries/i, file);
+      assert.match(text, /codex-plugin-cc@1\.1\.1 was the last stable release before the durable bridge/i, file);
+    }
+  }
+  const stableChanges = read("CHANGELOG.md").split("## [1.2.0] — 2026-10-18")[1]?.split("## [1.2.0-rc.1]")[0];
+  assert.ok(stableChanges, "the stable release changelog section must exist");
+  assert.match(stableChanges, /Released the durable bridge[\s\S]{0,120}`codex-claude-companion@1\.2\.0`[\s\S]{0,80}npm dist-tag `latest`/i);
+  assert.doesNotMatch(stableChanges, /prepared|not yet published|preparing this release/i);
 });
 
 test("established plugin and marketplace identifiers remain aligned", () => {

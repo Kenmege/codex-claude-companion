@@ -6,8 +6,36 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-18
+
+### Changed
+
+- Renamed the canonical npm package and repository to `codex-claude-companion`.
+  Both `codex-claude` and `codex-claude-review` executable names, the
+  `claude-review` plugin ID, and existing state paths remain compatible. The
+  legacy `codex-plugin-cc` shim remains an inert scaffold pending its coordinated
+  publication.
+- Released the durable bridge on the stable release channel as
+  `codex-claude-companion@1.2.0` on npm dist-tag `latest`; prereleases continue
+  to select `next`.
+
 ### Fixed
 
+- A background Codex task no longer stays `queued` forever when its worker
+  starts before the launcher has saved the task request: the request is now
+  saved before the worker starts, and the worker records its own process id
+  and progress.
+- Durable steering messages and acknowledgements now validate content hashes
+  and identity, publish atomically, and recover interrupted writes. Worker
+  input/output failures terminate the worker instead of being silently ignored.
+- Worker prompt and environment files are read through bounded private file
+  descriptors; consumed environment files are claimed before removal.
+- The independent verifier inherits an explicit environment allowlist, redacts
+  captured verification output before persistence, escalates timed-out checks,
+  and rejects a passing verdict without evidence.
+- Legacy cancellation and session-end cleanup verify process identity before
+  killing workers, protecting unrelated processes when a PID is reused.
+- State writes sync staged files and parent directories for crash durability.
 - Cancelling a running Codex task no longer fails with `Unexpected end of JSON
   input` when the background worker is rewriting the job record at that moment:
   job records and the broker session file are now replaced atomically, like the

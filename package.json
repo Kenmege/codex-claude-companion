@@ -1,7 +1,7 @@
 {
   "x-modification-notice": "Modified by Kennedy Umege for Codex-Claude Bridge, 2026.",
   "name": "codex-claude-companion",
-  "version": "1.2.0-rc.1",
+  "version": "1.2.0",
   "type": "module",
   "description": "Durable Codex-to-Claude delegation with tmux ownership, recovery, collaboration, independent verification, and isolated review lanes.",
   "license": "Apache-2.0",
