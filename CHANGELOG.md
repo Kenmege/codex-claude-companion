@@ -53,6 +53,9 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
   `--cwd=/work/a=b` passes `/work/a=b` instead of `/work/a`.
 - Markdown status tables escape backslashes and flatten carriage returns and
   Unicode line separators, so a job summary can no longer break a table row.
+- A job record whose summary is not a string (for example a hand-edited
+  record) no longer makes `status`, `result` or `cancel` throw; the value is
+  shown as JSON text.
 
 ## [1.2.0-rc.1] — 2026-07-19
 

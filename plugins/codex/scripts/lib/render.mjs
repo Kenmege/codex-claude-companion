@@ -92,8 +92,15 @@ function formatJobLine(job) {
   return parts.join(" | ");
 }
 
+// Stored job records are parsed from disk, so a display field may hold any JSON value.
+function displayText(value) {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  return JSON.stringify(value) ?? "";
+}
+
 function escapeMarkdownCell(value) {
-  return String(value ?? "")
+  return displayText(value)
     .replace(/\\/g, "\\\\")
     .replace(/\|/g, "\\|")
     .replace(/[\r\n\u2028\u2029]+/g, " ")
@@ -125,7 +132,7 @@ function appendActiveJobsTable(lines, jobs) {
 function pushJobDetails(lines, job, options = {}) {
   lines.push(`- ${formatJobLine(job)}`);
   if (job.summary) {
-    lines.push(`  Summary: ${job.summary}`);
+    lines.push(`  Summary: ${displayText(job.summary)}`);
   }
   if (job.phase) {
     lines.push(`  Phase: ${job.phase}`);
@@ -432,7 +439,7 @@ export function renderStoredJobResult(job, storedJob) {
   }
 
   if (job.summary) {
-    lines.push(`Summary: ${job.summary}`);
+    lines.push(`Summary: ${displayText(job.summary)}`);
   }
 
   if (job.errorMessage) {
@@ -458,7 +465,7 @@ export function renderCancelReport(job) {
     lines.push(`- Title: ${job.title}`);
   }
   if (job.summary) {
-    lines.push(`- Summary: ${job.summary}`);
+    lines.push(`- Summary: ${displayText(job.summary)}`);
   }
   lines.push("- Check `/codex:status` for the updated queue.");
 
