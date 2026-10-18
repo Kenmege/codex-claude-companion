@@ -44,21 +44,22 @@ structured output fails closed.
 
 ## 60-Second Quickstart
 
-The stable `latest` release remains `1.1.1` (the legacy `codex-plugin-cc`
-package). The approved public bridge release candidate is
-`codex-claude-companion@next` (`1.2.0-rc.1`), so installing the RC does not
-move existing stable users automatically:
+This checkout prepares the stable `codex-claude-companion@1.2.0` release.
+After its separately approved publication, install the stable bridge from npm
+dist-tag `latest`:
 
 ```bash
-npm install -g codex-claude-companion@next
+npm install -g codex-claude-companion@1.2.0
 codex-claude enable
 codex-claude doctor
 codex-claude bridge-doctor --json
 ```
 
-`codex-plugin-cc@1.1.1` remains useful for its stable review and workspace lanes,
-but it does not contain the durable bridge. The `codex-claude-companion` stable
-`latest` cut comes in a later synchronized release.
+`codex-plugin-cc@1.1.1` was the last stable release before the durable bridge.
+Upgrading from `1.2.0-rc.1` automatically migrates the job-state index once;
+jobs from older versions keep their summaries. Both executable names remain
+supported. Release preparation does not publish a package or move registry
+dist-tags; see [the release notes](RELEASE_NOTES_v1.2.0.md).
 
 For source development or an unpublished-commit test:
 

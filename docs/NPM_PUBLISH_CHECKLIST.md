@@ -7,15 +7,20 @@ real:
 npm install -g codex-claude-companion
 ```
 
-Kennedy approved the `1.2.0-rc.1` npmjs prerelease on 2026-07-19. Future stable
-or scoped-package releases require their own recorded release decision.
+The current release target is `1.2.0` (stable). This checkout prepares the
+release; publication requires Kennedy's separate explicit instruction.
+Historically, Kennedy approved the `1.2.0-rc.1` npmjs prerelease on 2026-07-19.
+That approval does not authorize this stable release.
 
 ## Current Registry Facts
 
-Checked on 2026-07-19:
+Checked on 2026-10-18 during release preparation:
 
-- `npm view codex-claude-companion --registry=https://registry.npmjs.org` returned
-  `1.1.1` as the current stable version at check time.
+- `npm view codex-claude-companion dist-tags --json --registry=https://registry.npmjs.org`
+  returned `1.2.0-rc.1` for both `latest` and `next`. A `latest` tag pointing to
+  a prerelease does not make that version stable.
+- `npm view codex-claude-companion@1.2.0 version --registry=https://registry.npmjs.org`
+  returned `E404`: the stable target was not published at check time.
 - The repo is configured for npmjs publishing through `publishConfig.registry`
   and `.github/workflows/release.yml`.
 
@@ -74,9 +79,9 @@ broker, Claude worker, or `ccb-*` tmux session remains after the smoke test.
 
 1. Confirm `package.json`, `package-lock.json`, and `.codex-plugin/plugin.json`
    versions match.
-2. For a prerelease version such as `1.2.0-rc.1`, confirm the workflow selects
-   npm dist-tag `next`; stable versions select `latest`. This preserves the
-   current stable install while release-candidate smoke tests run.
+2. For stable `1.2.0`, confirm the workflow selects npm dist-tag `latest`.
+   Prerelease versions select `next`. A stable publication does not move `next`
+   automatically; verify both tags against their recorded pre-publish state.
 3. Push a semver tag matching the package version exactly:
 
    ```bash
@@ -120,14 +125,18 @@ node --check node_modules/codex-claude-companion/scripts/bridge-broker.mjs
 node --check node_modules/codex-claude-companion/plugins/codex/scripts/app-server-broker.mjs
 ```
 
-For `1.2.0-rc.1`, also verify the dist-tags explicitly:
+For `1.2.0`, verify the version and dist-tags explicitly:
 
 ```bash
 npm view codex-claude-companion version --registry=https://registry.npmjs.org
+npm view codex-claude-companion dist-tags --json --registry=https://registry.npmjs.org
 npm view codex-claude-companion@next version --registry=https://registry.npmjs.org
 ```
 
-The expected values are `1.1.1` and `1.2.0-rc.1`, respectively.
+After stable publication, the default version and `latest` must be `1.2.0`.
+Unless separately changed, `next` remains at its pre-publish value
+(`1.2.0-rc.1` at the preparation check). These are post-publication expectations,
+not a claim that this preparation has changed the registry.
 
 Then verify the global install path:
 

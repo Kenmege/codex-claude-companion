@@ -1,8 +1,9 @@
 # Codex-Claude Bridge contracts
 
-This document describes the Codex-Claude Bridge contract shipped in the
-`codex-claude-companion@1.2.0-rc.1` public release candidate. The stable
-`codex-plugin-cc@1.1.1` package does not contain this work.
+This document describes the Codex-Claude Bridge contract prepared for the
+`codex-claude-companion@1.2.0` stable release. Publication requires separate
+approval. The earlier stable `codex-plugin-cc@1.1.1` package does not contain
+this work.
 
 ## Capability matrix
 

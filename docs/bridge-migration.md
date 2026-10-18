@@ -1,8 +1,9 @@
 # Codex-Claude Bridge identity and migration
 
 This document records naming and compatibility direction for the implemented
-bridge. It authorizes the existing-package release candidate and the unscoped
-cutover to the renamed `codex-claude-companion` package.
+bridge. It preserves the historical release-candidate approval and unscoped
+cutover decision for `codex-claude-companion`. This checkout prepares stable
+`1.2.0`; it does not authorize its publication.
 
 ## Product identity
 
@@ -49,8 +50,9 @@ decision to publish under the unscoped `codex-claude-companion` name (scoped pla
 dropped: name-family confusion and discoverability — the unscoped
 `codex-claude-bridge` name is already occupied by an unrelated third party, and
 the scoped `@kenmege/codex-claude-bridge` candidate shared that confusable
-"bridge" family). The existing-package `codex-claude-companion@1.2.0-rc.1`
-prerelease is approved on npm dist-tag `next`.
+"bridge" family). The stable release target is
+`codex-claude-companion@1.2.0`, using npm dist-tag `latest` after separate
+publication approval. The rc.1 approval is retained below as historical evidence.
 
 ## Migration sequence
 

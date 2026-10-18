@@ -40,8 +40,11 @@ test("identity documentation distinguishes the two product directions", () => {
   assert.match(readme, /OpenAI[\s\S]{0,80}`openai\/codex-plugin-cc`[\s\S]{0,80}Claude Code[\s\S]{0,40}Codex/i);
   assert.match(readme, /this project[\s\S]{0,80}Codex[\s\S]{0,40}Claude/i);
   assert.match(readme, /Delegate to Claude from Codex, keep control, and get verified work back/i);
-  assert.match(readme, /stable `latest` release remains `1\.1\.1`[\s\S]{0,180}`1\.2\.0-rc\.1`/i);
-  assert.match(readme, /npm install -g codex-claude-companion@next/i);
+  assert.match(readme, /prepares the stable `codex-claude-companion@1\.2\.0` release/i);
+  assert.match(readme, /After its separately approved publication[\s\S]{0,100}dist-tag `latest`/i);
+  assert.match(readme, /npm install -g codex-claude-companion@1\.2\.0(?:\s|$)/i);
+  assert.match(readme, /Upgrading from `1\.2\.0-rc\.1` automatically migrates the job-state index once/i);
+  assert.match(readme, /jobs from older versions keep their summaries/i);
   assert.doesNotMatch(readme, /Public npm is the frictionless install lane/i);
   assert.match(migration, /canonical repository and npm package name is `codex-claude-companion`/i);
   assert.match(migration, /SUPERSEDED[\s\S]{0,120}`@kenmege\/codex-claude-bridge`/i);
