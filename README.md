@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/Kenmege/codex-claude-companion/actions/workflows/pull-request-ci.yml/badge.svg)](https://github.com/Kenmege/codex-claude-companion/actions/workflows/pull-request-ci.yml)
 [![CodeQL](https://github.com/Kenmege/codex-claude-companion/actions/workflows/codeql.yml/badge.svg)](https://github.com/Kenmege/codex-claude-companion/actions/workflows/codeql.yml)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15660/badge)](https://www.bestpractices.dev/projects/15660)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18.18-brightgreen.svg)](#requirements)
 
@@ -651,6 +652,11 @@ npm test
 npm run check
 npm run pack:check
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how changes are tested and reviewed.
+Report bugs and request features in the
+[issue tracker](https://github.com/Kenmege/codex-claude-companion/issues);
+report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 The npm package intentionally omits `package.json.private` so npmjs publishing
 can run when explicitly enabled. The release workflow validates tags and only
