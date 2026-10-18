@@ -483,7 +483,17 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.match(publishJob, /npm publish "\$PACKAGE_FILE" --access public --tag "\$PUBLISH_TAG"/);
   // A relative "release-artifact/x.tgz" is parsed by npm as a GitHub shorthand spec (v1.2.0 tag run failed this way).
   assert.match(publishJob, /PACKAGE_FILE="\$PWD\/\$\{PACKAGES\[0\]\}"/);
-  assert.match(publishJob, /for ATTEMPT in 1 2 3 4 5 6/);
+  const integrityCheck = publishJob.match(/verify_registry_integrity\(\) \{[\s\S]*?^          \}/m)?.[0] ?? "";
+  // 61 reads separated by 60 ten-second sleeps cover registry propagation
+  // beyond the observed three-minute delay; a non-empty mismatch still fails.
+  assert.match(integrityCheck, /for \(\(ATTEMPT=1; ATTEMPT<=61; ATTEMPT\+\+\)\); do/);
+  assert.match(integrityCheck, /if \[ "\$ATTEMPT" -lt 61 \]; then sleep 10; fi/);
+  assert.match(integrityCheck, /if \[ -n "\$registry_integrity" \]; then\s+break/);
+  assert.match(integrityCheck, /if \[ -z "\$registry_integrity" \]; then\s+echo "::error::npm version \$\{PACKAGE_NAME\}@\$\{VERSION\} did not become available with integrity after 10 minutes\."\s+exit 1\s+fi/);
+  assert.match(integrityCheck, /if \[ "\$registry_integrity" != "\$LOCAL_INTEGRITY" \]; then\s+echo "::error::npm artifact integrity for \$\{PACKAGE_NAME\}@\$\{VERSION\} did not match the validated tarball\."\s+exit 1/);
+  // Leave room for setup, publishing, and dist-tag verification around the wait.
+  assert.match(publishJob, /timeout-minutes: 20/);
+  assert.match(publishJob, /RESOLVED_VERSION=""\s+for ATTEMPT in 1 2 3 4 5 6; do/);
   assert.match(publishJob, /npm view "\$\{PACKAGE_NAME\}@\$\{PUBLISH_TAG\}" version/);
   assert.match(publishJob, /if \[ "\$RESOLVED_VERSION" != "\$VERSION" \]; then/);
   assert.match(publishJob, /npm dist-tag \$\{PUBLISH_TAG\} resolved to \$\{RESOLVED_VERSION:-<missing>\}, expected \$\{VERSION\}/);
