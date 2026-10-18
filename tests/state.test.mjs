@@ -5,7 +5,7 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 
 import { makeTempDir } from "./helpers.mjs";
-import { loadState, readJobFile, resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState, writeJobFile } from "../plugins/codex/scripts/lib/state.mjs";
+import { loadState, readJobFile, resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState, writeJobFile, writeJsonAtomic } from "../plugins/codex/scripts/lib/state.mjs";
 
 // A live Claude Code session exports CLAUDE_PLUGIN_DATA, which resolveStateDir
 // prefers over the temp-backed default. Scrub it at module load so the default
@@ -106,6 +106,63 @@ test("saveState flushes the temporary snapshot before atomic replacement", (t) =
 
   saveState(workspace, { jobs: [] });
   assert.deepEqual(operations, ["fsync", "rename"]);
+});
+
+test("Windows atomic replacement retries transient sharing errors without losing the old snapshot", { skip: process.platform !== "win32" }, (t) => {
+  const root = makeTempDir();
+  const file = path.join(root, "shared.json");
+  writeJsonAtomic(file, { progress: 1 });
+  const rename = fs.renameSync;
+  const transient = ["EPERM", "EBUSY", "EACCES"];
+  let attempts = 0;
+  const waits = [];
+  t.mock.method(Atomics, "wait", (_buffer, _index, _value, delay) => { waits.push(delay); });
+  t.mock.method(fs, "renameSync", (source, destination) => {
+    assert.deepEqual(JSON.parse(fs.readFileSync(destination, "utf8")), { progress: 1 });
+    assert.deepEqual(JSON.parse(fs.readFileSync(source, "utf8")), { progress: 2 });
+    const code = transient[attempts++];
+    if (code) throw Object.assign(new Error("Windows reader temporarily holds the destination"), { code });
+    return rename(source, destination);
+  });
+  writeJsonAtomic(file, { progress: 2 });
+  assert.equal(attempts, 4);
+  assert.deepEqual(waits, [5, 10, 15]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { progress: 2 });
+  assert.deepEqual(fs.readdirSync(root), ["shared.json"]);
+});
+
+test("Windows atomic replacement bounds persistent sharing errors and propagates other failures immediately", { skip: process.platform !== "win32" }, (t) => {
+  const root = makeTempDir();
+  const file = path.join(root, "shared.json");
+  writeJsonAtomic(file, { progress: 1 });
+  let attempts = 0;
+  let failure = Object.assign(new Error("persistent sharing failure"), { code: "EPERM" });
+  const waits = [];
+  t.mock.method(Atomics, "wait", (_buffer, _index, _value, delay) => { waits.push(delay); });
+  t.mock.method(fs, "renameSync", () => { attempts++; throw failure; });
+  assert.throws(() => writeJsonAtomic(file, { progress: 2 }), error => error === failure);
+  assert.equal(attempts, 10);
+  assert.deepEqual(waits, [5, 10, 15, 20, 25, 30, 35, 40, 45]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { progress: 1 });
+  assert.deepEqual(fs.readdirSync(root), ["shared.json"]);
+  attempts = 0;
+  waits.length = 0;
+  failure = Object.assign(new Error("storage failure"), { code: "EIO" });
+  assert.throws(() => writeJsonAtomic(file, { progress: 3 }), error => error === failure);
+  assert.equal(attempts, 1);
+  assert.deepEqual(waits, []);
+  assert.deepEqual(fs.readdirSync(root), ["shared.json"]);
+});
+
+test("POSIX atomic replacement propagates sharing-like errors without retrying", { skip: process.platform === "win32" }, (t) => {
+  const file = path.join(makeTempDir(), "shared.json");
+  let attempts = 0;
+  const failure = Object.assign(new Error("permission failure"), { code: "EPERM" });
+  t.mock.method(fs, "renameSync", () => { attempts++; throw failure; });
+  t.mock.method(Atomics, "wait", () => assert.fail("POSIX errors must not be retried"));
+  assert.throws(() => writeJsonAtomic(file, { progress: 1 }), error => error === failure);
+  assert.equal(attempts, 1);
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), []);
 });
 
 test("saveState preserves an atomic rename error when temporary cleanup also fails", (t) => {

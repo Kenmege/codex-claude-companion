@@ -185,6 +185,22 @@ function removeFileIfExists(filePath) {
   catch (error) { if (error.code !== "ENOENT") throw error; }
 }
 
+function replaceJsonFile(source, destination) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(source, destination);
+      return;
+    } catch (error) {
+      // A Windows reader can briefly deny replacement of an otherwise writable
+      // file. Retain the old name and complete temporary inode while retrying;
+      // never unlink the destination or fall back to an in-place write.
+      if (process.platform !== "win32" ||
+          !["EPERM", "EBUSY", "EACCES"].includes(error.code) || attempt >= 9) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, (attempt + 1) * 5);
+    }
+  }
+}
+
 // Every JSON record another process may read while it is rewritten goes through here: readers see the
 // old record or the new one, never a truncated file.
 export function writeJsonAtomic(filePath, payload, { exclusive = false } = {}) {
@@ -200,7 +216,7 @@ export function writeJsonAtomic(filePath, payload, { exclusive = false } = {}) {
       try { fs.linkSync(temporaryFile, filePath); }
       catch (error) { if (error.code !== "EEXIST") throw error; }
     } else {
-      fs.renameSync(temporaryFile, filePath);
+      replaceJsonFile(temporaryFile, filePath);
     }
   } finally {
     if (fileDescriptor !== undefined) {
