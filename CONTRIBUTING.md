@@ -32,8 +32,10 @@ each generated sequence, including failed or shrinking cases.
 When you open a pull request:
 
 - **Copilot** runs automatically. No action is needed.
-- **Claude** runs automatically on PR open and synchronize. To ask a follow-up,
-  comment `@claude <your question>` on the PR.
+- **Claude** reviews a PR once when it is ready: opened or reopened as a
+  non-draft, or marked ready for review. It does not re-review every push and
+  never reviews drafts. For a fresh review or a follow-up, comment
+  `@claude <your request>` on the PR.
 - **Codex** does not run automatically. Comment `@codex review this PR` to
   trigger it.
 - **Devin** does not run automatically. Comment `@devin <task>` to delegate

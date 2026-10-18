@@ -684,7 +684,10 @@ test("Claude Code workflow is pinned, current, and auth-gated", () => {
   const interactiveApiKeyStep = workflowStep(workflow, "Run Claude interactive response with API key");
   const interactiveFederationStep = workflowStep(workflow, "Run Claude interactive response with workload identity");
 
-  assert.match(workflow, /pull_request:\r?\n\s+types: \[opened, synchronize, ready_for_review, reopened\]/);
+  // Auto-review runs once per ready PR (cost control), never on drafts or every push.
+  assert.match(workflow, /pull_request:\r?\n(?:\s+#[^\n]*\r?\n)*\s+types: \[opened, ready_for_review, reopened\]/);
+  assert.doesNotMatch(workflow.split("\njobs:")[0], /synchronize/);
+  assert.match(workflow, /github\.event_name == 'pull_request' &&\s+github\.event\.pull_request\.draft == false &&/);
   assert.match(workflow, /anthropics\/claude-code-action@[a-f0-9]{40}/);
   assert.doesNotMatch(workflow, /anthropics\/claude-code-action@v1/);
   assert.doesNotMatch(workflow, /^\s+mode:/m);
