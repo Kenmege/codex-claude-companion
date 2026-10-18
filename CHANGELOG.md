@@ -25,6 +25,37 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 - The stalled-dispatch workspace test no longer fails under load: its 25 ms
   SIGTERM grace expired before the child's exit was observed, escalating to
   `ETIMEDOUT_KILL`; a 500 ms grace keeps the SIGTERM path deterministic.
+- `--help` and `-h` on any `codex-claude` subcommand now print that command's
+  usage and exit without side effects. Previously `codex-claude review --help`
+  treated `--help` as focus text and ran a real review.
+- Claude workspace workers write their first heartbeat immediately, so a child
+  that exits before the first heartbeat interval still leaves one.
+- Codex turn capture no longer adopts an unrelated thread announced on the same
+  app-server connection. Events for a thread whose ownership is not yet known
+  are held in a bounded buffer and replayed in order once it is.
+- A job can no longer be reported both cancelled and completed when cancellation
+  and completion race. The first terminal state is published once, through an
+  exclusive hard link, and every later writer adopts it. A task cancelled before
+  it starts no longer runs, and cancelling during startup aborts the Codex turn.
+- Concurrent updates to different jobs no longer erase each other. The job list
+  is now read from the per-job records, and `state.json` keeps only
+  configuration. An existing job list is migrated once, keeping completion
+  summaries, and finished jobs from older versions stay subject to retention.
+- Cancelling by an exact job id always selects that job, even when the id is a
+  prefix of another active job's id.
+- Job ids are validated before any file path is built from them.
+- One unreadable job record no longer makes every job command fail; it is
+  skipped with a warning.
+- On Windows, replacing a job record that another process is reading no longer
+  fails with `EPERM` (the replacement is retried briefly), and `git` is no
+  longer started through the user's shell, which made every job update slow.
+- Inline option values keep everything after the first `=`, so
+  `--cwd=/work/a=b` passes `/work/a=b` instead of `/work/a`.
+- Markdown status tables escape backslashes and flatten carriage returns and
+  Unicode line separators, so a job summary can no longer break a table row.
+- A job record whose summary is not a string (for example a hand-edited
+  record) no longer makes `status`, `result` or `cancel` throw; the value is
+  shown as JSON text.
 
 ## [1.2.0-rc.1] — 2026-07-19
 

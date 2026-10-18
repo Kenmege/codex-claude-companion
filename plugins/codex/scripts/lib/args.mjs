@@ -25,7 +25,9 @@ export function parseArgs(argv, config = {}) {
     }
 
     if (token.startsWith("--")) {
-      const [rawKey, inlineValue] = token.slice(2).split("=", 2);
+      const separator = token.indexOf("=");
+      const rawKey = token.slice(2, separator === -1 ? undefined : separator);
+      const inlineValue = separator === -1 ? undefined : token.slice(separator + 1);
       const key = aliasMap[rawKey] ?? rawKey;
 
       if (booleanOptions.has(key)) {
