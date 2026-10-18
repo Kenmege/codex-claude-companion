@@ -445,14 +445,19 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.match(validateJob, /npm pack --json --pack-destination/);
   assert.match(validateJob, /sha256sum "\$PACKAGE_BASENAME" > package\.sha256/);
   assert.match(validateJob, /package\.integrity/);
-  assert.match(validateJob, /actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/);
+  assert.match(validateJob, /actions\/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9/);
 
   assert.match(publishJob, /permissions:\n      contents: read\n      id-token: write/);
   assert.doesNotMatch(publishJob, /contents: write|actions\/checkout|npm ci/);
-  assert.match(publishJob, /actions\/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c/);
-  assert.match(publishJob, /node-version: 22/);
+  assert.match(publishJob, /actions\/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333/);
+  assert.match(validateJob, /node-version: 24\.22\.0\r?\n/);
+  assert.match(publishJob, /node-version: 24\.22\.0\r?\n/);
   assert.match(publishJob, /registry-url: https:\/\/registry\.npmjs\.org/);
-  assert.match(publishJob, /npm install --global --ignore-scripts --no-audit --no-fund npm@11\.5\.1/);
+  assert.equal(
+    workflowStep(workflow, "Verify bundled npm for trusted publishing").trim(),
+    '- name: Verify bundled npm for trusted publishing\n        run: test "$(npm --version)" = "11.19.1"'
+  );
+  assert.doesNotMatch(workflow, /npm install --global/);
   assert.match(publishJob, /sha256sum --check package\.sha256/);
   assert.match(publishJob, /Expected exactly one npm package artifact/);
   assert.match(publishJob, /npm view "\$\{PACKAGE_NAME\}@\$\{VERSION\}" version/);
@@ -472,7 +477,7 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.match(githubReleaseJob, /needs\.publish_npm\.result == 'success'/);
   assert.match(githubReleaseJob, /permissions:\n      contents: write/);
   assert.doesNotMatch(githubReleaseJob, /id-token: write|actions\/checkout|npm ci/);
-  assert.match(githubReleaseJob, /actions\/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c/);
+  assert.match(githubReleaseJob, /actions\/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333/);
   assert.match(githubReleaseJob, /sha256sum --check package\.sha256/);
   assert.match(githubReleaseJob, /GitHub release artifact does not match npm integrity/);
   assert.match(githubReleaseJob, /SEMVER_WITHOUT_BUILD="\$\{VERSION%%\+\*\}"/);

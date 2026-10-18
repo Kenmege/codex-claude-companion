@@ -107,6 +107,10 @@ The default review lanes are read-only:
 
 ## Reporting
 
+For the repository automation boundary, see the
+[Claude workflow security rationale](docs/security/claude-workflow.md), including
+the collaborator and fork checks and the conditions for reopening CodeQL alerts.
+
 Report vulnerabilities through GitHub Security Advisories:
 https://github.com/Kenmege/codex-claude-companion/security/advisories/new
 
