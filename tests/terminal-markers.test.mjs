@@ -24,6 +24,59 @@ function cancel(job) {
   return spawnSync(process.execPath, [script, "cancel", job.id, "--cwd", job.workspaceRoot, "--json"], { encoding: "utf8" });
 }
 
+test("pruning a terminal job removes its record, marker and log while retaining other jobs", () => {
+  const job = fixture();
+  const jobFile = state.resolveJobFile(job.workspaceRoot, job.id);
+  const logFile = state.resolveJobLogFile(job.workspaceRoot, job.id);
+  fs.writeFileSync(logFile, "completed output");
+  state.upsertJob(job.workspaceRoot, { ...job, status: "completed", logFile, updatedAt: "2020-01-01T00:00:00Z" });
+  const retained = Array.from({ length: 50 }, (_, i) => ({
+    id: `retained-${i}`, status: "completed", updatedAt: "2030-01-01T00:00:00Z"
+  }));
+  for (const record of retained) state.writeJobFile(job.workspaceRoot, record.id, record);
+  state.saveState(job.workspaceRoot, { jobs: [...state.listJobs(job.workspaceRoot), ...retained] });
+  assert.equal(fs.existsSync(state.terminalMarkerFile(jobFile)), false);
+  assert.equal(fs.existsSync(jobFile), false);
+  assert.equal(fs.existsSync(logFile), false);
+  assert.equal(state.listJobs(job.workspaceRoot).length, 50);
+  for (const record of retained) {
+    assert.deepEqual(state.readJobFile(state.resolveJobFile(job.workspaceRoot, record.id)), record);
+  }
+});
+
+test("session end removes terminal markers only for the ending session", () => {
+  const job = fixture();
+  state.upsertJob(job.workspaceRoot, { ...job, status: "completed", sessionId: "ending" });
+  const retained = { id: "other-session", status: "completed", sessionId: "other" };
+  state.writeJobFile(job.workspaceRoot, retained.id, retained);
+  state.upsertJob(job.workspaceRoot, retained);
+  const hook = fileURLToPath(new URL("../plugins/codex/scripts/session-lifecycle-hook.mjs", import.meta.url));
+  const result = spawnSync(process.execPath, [hook, "SessionEnd"], {
+    encoding: "utf8",
+    input: JSON.stringify({ cwd: job.workspaceRoot, session_id: "ending" })
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(state.terminalMarkerFile(state.resolveJobFile(job.workspaceRoot, job.id))), false);
+  assert.equal(fs.existsSync(state.resolveJobFile(job.workspaceRoot, job.id)), false);
+  assert.deepEqual(state.listJobs(job.workspaceRoot).map(record => record.id), [retained.id]);
+  assert.equal(state.readJobFile(state.resolveJobFile(job.workspaceRoot, retained.id)).status, "completed");
+});
+
+for (const missing of ["record", "marker", "both"]) {
+  test(`removal tolerates a missing ${missing}`, () => {
+    const job = fixture();
+    state.upsertJob(job.workspaceRoot, { ...job, status: "completed" });
+    const jobFile = state.resolveJobFile(job.workspaceRoot, job.id);
+    const marker = state.terminalMarkerFile(jobFile);
+    if (missing !== "marker") fs.unlinkSync(jobFile);
+    if (missing !== "record") fs.unlinkSync(marker);
+    state.saveState(job.workspaceRoot, { jobs: [] });
+    assert.equal(fs.existsSync(jobFile), false);
+    assert.equal(fs.existsSync(marker), false);
+    assert.deepEqual(state.listJobs(job.workspaceRoot), []);
+  });
+}
+
 test("cancel then complete keeps the cancellation record and runner output in the log", async () => {
   const job = fixture();
   const logFile = state.resolveJobLogFile(job.workspaceRoot, job.id);

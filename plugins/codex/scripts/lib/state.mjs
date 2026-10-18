@@ -291,8 +291,12 @@ export function publishTerminalJob(cwd, jobId, payload) {
 }
 
 function removeJobFile(jobFile) {
-  if (fs.existsSync(jobFile)) {
-    fs.unlinkSync(jobFile);
+  for (const file of [jobFile, terminalMarkerFile(jobFile)]) {
+    try {
+      fs.unlinkSync(file);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
   }
 }
 
