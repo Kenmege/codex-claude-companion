@@ -13,6 +13,14 @@ const STATE_FILE_NAME = "state.json";
 const JOBS_DIR_NAME = "jobs";
 const MAX_JOBS = 50;
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const STATE_DIRECTORY = Symbol("operation state directory");
+
+// Resolve Git/workspace identity once per synchronous operation. Passing this private
+// location through nested helpers avoids repeated subprocesses without caching a cwd,
+// symlink target or CLAUDE_PLUGIN_DATA setting across independent operations.
+function stateLocation(cwd) {
+  return cwd?.[STATE_DIRECTORY] ? cwd : Object.freeze({ [STATE_DIRECTORY]: resolveStateDir(cwd) });
+}
 
 function isSafeJobId(jobId) {
   return typeof jobId === "string" && jobId.length > 0 && jobId.length <= 128 &&
@@ -50,6 +58,7 @@ function defaultState() {
 }
 
 export function resolveStateDir(cwd) {
+  if (cwd?.[STATE_DIRECTORY]) return cwd[STATE_DIRECTORY];
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   let canonicalWorkspaceRoot = workspaceRoot;
   try {
@@ -79,6 +88,7 @@ export function ensureStateDir(cwd) {
 }
 
 function loadConfiguration(cwd, skippedJobFiles = new Set()) {
+  cwd = stateLocation(cwd);
   const stateFile = resolveStateFile(cwd);
   if (!fs.existsSync(stateFile)) {
     return defaultState();
@@ -129,6 +139,7 @@ function loadConfiguration(cwd, skippedJobFiles = new Set()) {
 }
 
 function readJobs(cwd, skippedJobFiles = new Set()) {
+  cwd = stateLocation(cwd);
   const jobsDir = resolveJobsDir(cwd);
   let names;
   try { names = fs.readdirSync(jobsDir); }
@@ -150,12 +161,14 @@ function readJobs(cwd, skippedJobFiles = new Set()) {
 }
 
 export function loadState(cwd) {
+  cwd = stateLocation(cwd);
   const skippedJobFiles = new Set();
   const state = loadConfiguration(cwd, skippedJobFiles);
   return { ...state, jobs: readJobs(cwd, skippedJobFiles) };
 }
 
 function pruneJobs(cwd) {
+  cwd = stateLocation(cwd);
   const jobs = readJobs(cwd);
   // Only immutable outcomes are eligible: a stale snapshot of a running or legacy unmarked
   // record cannot prove it is safe to delete while a worker may still be updating it.
@@ -206,6 +219,7 @@ export function writeJsonAtomic(filePath, payload, { exclusive = false } = {}) {
 }
 
 export function saveState(cwd, state) {
+  cwd = stateLocation(cwd);
   loadConfiguration(cwd);
   ensureStateDir(cwd);
   const nextState = {
@@ -223,6 +237,7 @@ export function saveState(cwd, state) {
 }
 
 export function updateState(cwd, mutate) {
+  cwd = stateLocation(cwd);
   const state = loadConfiguration(cwd);
   mutate(state);
   return saveState(cwd, state);
@@ -234,6 +249,7 @@ export function generateJobId(prefix = "job") {
 }
 
 export function upsertJob(cwd, jobPatch) {
+  cwd = stateLocation(cwd);
   const state = loadConfiguration(cwd);
   const jobFile = resolveJobFile(cwd, jobPatch.id);
   let existing = {};
@@ -267,6 +283,7 @@ export function getConfig(cwd) {
 }
 
 export function writeJobFile(cwd, jobId, payload) {
+  cwd = stateLocation(cwd);
   ensureStateDir(cwd);
   const jobFile = resolveJobFile(cwd, jobId);
   if (TERMINAL_STATUSES.has(payload.status)) {
@@ -364,6 +381,7 @@ function removeJobFile(jobFile) {
 
 // Delete only the selected records, never the complement of a possibly stale snapshot.
 export function removeJobs(cwd, jobs) {
+  cwd = stateLocation(cwd);
   for (const job of jobs) {
     removeJobFile(resolveJobFile(cwd, job.id));
     removeFileIfExists(job.logFile ?? path.join(resolveJobsDir(cwd), `${job.id}.log`));
@@ -372,12 +390,14 @@ export function removeJobs(cwd, jobs) {
 
 export function resolveJobLogFile(cwd, jobId) {
   validateJobId(jobId);
+  cwd = stateLocation(cwd);
   ensureStateDir(cwd);
   return path.join(resolveJobsDir(cwd), `${jobId}.log`);
 }
 
 export function resolveJobFile(cwd, jobId) {
   validateJobId(jobId);
+  cwd = stateLocation(cwd);
   ensureStateDir(cwd);
   return path.join(resolveJobsDir(cwd), `${jobId}.json`);
 }

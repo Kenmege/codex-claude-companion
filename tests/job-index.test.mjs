@@ -1,12 +1,40 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import childProcess, { spawn } from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import test from "node:test";
 import * as state from "../plugins/codex/scripts/lib/state.mjs";
 import { makeTempDir } from "./helpers.mjs";
 
 const stateUrl = new URL("../plugins/codex/scripts/lib/state.mjs", import.meta.url).href;
+
+test("a job update resolves its workspace once and later updates resolve it afresh", (t) => {
+  const cwd = makeTempDir();
+  const firstRoot = makeTempDir();
+  const secondRoot = makeTempDir();
+  const originalSpawn = childProcess.spawnSync;
+  let root = firstRoot;
+  let discoveries = 0;
+  t.mock.method(childProcess, "spawnSync", (command, args, options) => {
+    if (command === "git" && args.join(" ") === "rev-parse --show-toplevel") {
+      discoveries++;
+      return { status: 0, stdout: root, stderr: "" };
+    }
+    return originalSpawn(command, args, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+
+  state.upsertJob(cwd, { id: "first", status: "running" });
+  assert.equal(discoveries, 1, "one update must not repeatedly spawn Git");
+  root = secondRoot;
+  state.upsertJob(cwd, { id: "second", status: "running" });
+  assert.equal(discoveries, 2, "a later operation must not reuse stale workspace discovery");
+  assert.deepEqual(state.listJobs(cwd).map(job => job.id), ["second"]);
+  root = firstRoot;
+  assert.deepEqual(state.listJobs(cwd).map(job => job.id), ["first"]);
+});
 
 test("loadState skips unparsable records without changing or pruning them", (t) => {
   const cwd = makeTempDir();
