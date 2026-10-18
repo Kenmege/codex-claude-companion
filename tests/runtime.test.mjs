@@ -1120,6 +1120,13 @@ test("status shows phases, hints, and the latest finished job", () => {
         id: "review-done",
         status: "completed",
         title: "Codex Review",
+        jobClass: "review",
+        threadId: "thr_done",
+        summary: "Review main...HEAD",
+        createdAt: "2026-03-18T15:10:00.000Z",
+        startedAt: "2026-03-18T15:10:05.000Z",
+        completedAt: "2026-03-18T15:11:10.000Z",
+        updatedAt: "2026-03-18T15:11:10.000Z",
         rendered: "# Codex Review\n\nReviewed uncommitted changes.\nNo material issues found.\n"
       },
       null,
@@ -1460,6 +1467,11 @@ test("result without a job id prefers the latest finished job from the current C
         id: "review-current",
         status: "completed",
         title: "Codex Review",
+        jobClass: "review",
+        sessionId: "sess-current",
+        summary: "Current session review",
+        createdAt: "2026-03-18T15:10:00.000Z",
+        updatedAt: "2026-03-18T15:11:00.000Z",
         threadId: "thr_current",
         result: {
           codex: {
@@ -1480,6 +1492,11 @@ test("result without a job id prefers the latest finished job from the current C
         id: "review-other",
         status: "completed",
         title: "Codex Review",
+        jobClass: "review",
+        sessionId: "sess-other",
+        summary: "Old session review",
+        createdAt: "2026-03-18T15:20:00.000Z",
+        updatedAt: "2026-03-18T15:21:00.000Z",
         threadId: "thr_other",
         result: {
           codex: {
@@ -1601,6 +1618,12 @@ test("cancel stops an active background job and marks it cancelled", async (t) =
         id: "task-live",
         status: "running",
         title: "Codex Task",
+        jobClass: "task",
+        summary: "Investigate flaky test",
+        pid: sleeper.pid,
+        createdAt: "2026-03-18T15:30:00.000Z",
+        startedAt: "2026-03-18T15:30:01.000Z",
+        updatedAt: "2026-03-18T15:30:02.000Z",
         logFile
       },
       null,
@@ -1847,11 +1870,24 @@ test("session end fully cleans up jobs for the ending session", async (t) => {
   fs.writeFileSync(completedLog, "completed\n", "utf8");
   fs.writeFileSync(runningLog, "running\n", "utf8");
   fs.writeFileSync(otherSessionLog, "other\n", "utf8");
-  fs.writeFileSync(completedJobFile, JSON.stringify({ id: "review-completed" }, null, 2), "utf8");
-  fs.writeFileSync(otherJobFile, JSON.stringify({ id: "review-other" }, null, 2), "utf8");
+  // Existing per-job files are authoritative; session ownership cannot live only in the legacy index.
+  fs.writeFileSync(completedJobFile, JSON.stringify({
+    id: "review-completed", status: "completed", title: "Codex Review",
+    sessionId: "sess-current", logFile: completedLog,
+    createdAt: "2026-03-18T15:30:00.000Z", updatedAt: "2026-03-18T15:31:00.000Z"
+  }, null, 2), "utf8");
+  fs.writeFileSync(otherJobFile, JSON.stringify({
+    id: "review-other", status: "completed", title: "Codex Review",
+    sessionId: "sess-other", logFile: otherSessionLog,
+    createdAt: "2026-03-18T15:34:00.000Z", updatedAt: "2026-03-18T15:35:00.000Z"
+  }, null, 2), "utf8");
 
   const sleeper = spawnTrackedWorker("review-running", repo);
-  fs.writeFileSync(runningJobFile, JSON.stringify({ id: "review-running" }, null, 2), "utf8");
+  fs.writeFileSync(runningJobFile, JSON.stringify({
+    id: "review-running", status: "running", title: "Codex Review",
+    sessionId: "sess-current", pid: sleeper.pid, logFile: runningLog,
+    createdAt: "2026-03-18T15:32:00.000Z", updatedAt: "2026-03-18T15:33:00.000Z"
+  }, null, 2), "utf8");
 
   t.after(() => {
     try {
