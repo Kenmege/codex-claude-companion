@@ -5,7 +5,7 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 
 import { makeTempDir } from "./helpers.mjs";
-import { resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState } from "../plugins/codex/scripts/lib/state.mjs";
+import { loadState, readJobFile, resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState, writeJobFile, writeJsonAtomic } from "../plugins/codex/scripts/lib/state.mjs";
 
 // A live Claude Code session exports CLAUDE_PLUGIN_DATA, which resolveStateDir
 // prefers over the temp-backed default. Scrub it at module load so the default
@@ -56,29 +56,36 @@ test("resolveStateDir uses CLAUDE_PLUGIN_DATA when it is provided", () => {
 test("saveState atomically replaces the state snapshot", { skip: process.platform === "win32" }, () => {
   const workspace = makeTempDir();
   const stateFile = resolveStateFile(workspace);
-  const firstJob = {
-    id: "job-first",
-    status: "completed",
-    updatedAt: "2026-07-11T15:00:00.000Z"
-  };
-  const secondJob = {
-    id: "job-second",
-    status: "completed",
-    updatedAt: "2026-07-11T15:01:00.000Z"
-  };
-
-  saveState(workspace, { jobs: [firstJob] });
+  saveState(workspace, { config: { stopReviewGate: false } });
   const previousSnapshot = fs.openSync(stateFile, "r");
 
   try {
-    saveState(workspace, { jobs: [secondJob] });
+    saveState(workspace, { config: { stopReviewGate: true } });
 
     const oldState = JSON.parse(fs.readFileSync(previousSnapshot, "utf8"));
     const newState = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-    assert.equal(oldState.jobs[0].id, firstJob.id);
-    assert.equal(newState.jobs[0].id, secondJob.id);
+    assert.equal(oldState.config.stopReviewGate, false);
+    assert.equal(newState.config.stopReviewGate, true);
+    assert.equal(Object.hasOwn(newState, "jobs"), false);
   } finally {
     fs.closeSync(previousSnapshot);
+  }
+});
+
+// A reader such as `cancel` parses the job record while the background worker rewrites it. An
+// in-place write lets that reader see a truncated file ("Unexpected end of JSON input").
+test("writeJobFile atomically replaces the job record", { skip: process.platform === "win32" }, () => {
+  const workspace = makeTempDir();
+  const jobFile = writeJobFile(workspace, "job-atomic", { id: "job-atomic", status: "running", progress: "first" });
+  const previousRecord = fs.openSync(jobFile, "r");
+
+  try {
+    writeJobFile(workspace, "job-atomic", { id: "job-atomic", status: "cancelled", progress: "second" });
+
+    assert.equal(JSON.parse(fs.readFileSync(previousRecord, "utf8")).progress, "first");
+    assert.equal(readJobFile(jobFile).progress, "second");
+  } finally {
+    fs.closeSync(previousRecord);
   }
 });
 
@@ -99,6 +106,63 @@ test("saveState flushes the temporary snapshot before atomic replacement", (t) =
 
   saveState(workspace, { jobs: [] });
   assert.deepEqual(operations, ["fsync", "rename"]);
+});
+
+test("Windows atomic replacement retries transient sharing errors without losing the old snapshot", { skip: process.platform !== "win32" }, (t) => {
+  const root = makeTempDir();
+  const file = path.join(root, "shared.json");
+  writeJsonAtomic(file, { progress: 1 });
+  const rename = fs.renameSync;
+  const transient = ["EPERM", "EBUSY", "EACCES"];
+  let attempts = 0;
+  const waits = [];
+  t.mock.method(Atomics, "wait", (_buffer, _index, _value, delay) => { waits.push(delay); });
+  t.mock.method(fs, "renameSync", (source, destination) => {
+    assert.deepEqual(JSON.parse(fs.readFileSync(destination, "utf8")), { progress: 1 });
+    assert.deepEqual(JSON.parse(fs.readFileSync(source, "utf8")), { progress: 2 });
+    const code = transient[attempts++];
+    if (code) throw Object.assign(new Error("Windows reader temporarily holds the destination"), { code });
+    return rename(source, destination);
+  });
+  writeJsonAtomic(file, { progress: 2 });
+  assert.equal(attempts, 4);
+  assert.deepEqual(waits, [5, 10, 15]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { progress: 2 });
+  assert.deepEqual(fs.readdirSync(root), ["shared.json"]);
+});
+
+test("Windows atomic replacement bounds persistent sharing errors and propagates other failures immediately", { skip: process.platform !== "win32" }, (t) => {
+  const root = makeTempDir();
+  const file = path.join(root, "shared.json");
+  writeJsonAtomic(file, { progress: 1 });
+  let attempts = 0;
+  let failure = Object.assign(new Error("persistent sharing failure"), { code: "EPERM" });
+  const waits = [];
+  t.mock.method(Atomics, "wait", (_buffer, _index, _value, delay) => { waits.push(delay); });
+  t.mock.method(fs, "renameSync", () => { attempts++; throw failure; });
+  assert.throws(() => writeJsonAtomic(file, { progress: 2 }), error => error === failure);
+  assert.equal(attempts, 10);
+  assert.deepEqual(waits, [5, 10, 15, 20, 25, 30, 35, 40, 45]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { progress: 1 });
+  assert.deepEqual(fs.readdirSync(root), ["shared.json"]);
+  attempts = 0;
+  waits.length = 0;
+  failure = Object.assign(new Error("storage failure"), { code: "EIO" });
+  assert.throws(() => writeJsonAtomic(file, { progress: 3 }), error => error === failure);
+  assert.equal(attempts, 1);
+  assert.deepEqual(waits, []);
+  assert.deepEqual(fs.readdirSync(root), ["shared.json"]);
+});
+
+test("POSIX atomic replacement propagates sharing-like errors without retrying", { skip: process.platform === "win32" }, (t) => {
+  const file = path.join(makeTempDir(), "shared.json");
+  let attempts = 0;
+  const failure = Object.assign(new Error("permission failure"), { code: "EPERM" });
+  t.mock.method(fs, "renameSync", () => { attempts++; throw failure; });
+  t.mock.method(Atomics, "wait", () => assert.fail("POSIX errors must not be retried"));
+  assert.throws(() => writeJsonAtomic(file, { progress: 1 }), error => error === failure);
+  assert.equal(attempts, 1);
+  assert.deepEqual(fs.readdirSync(path.dirname(file)), []);
 });
 
 test("saveState preserves an atomic rename error when temporary cleanup also fails", (t) => {
@@ -125,7 +189,7 @@ test("saveState preserves an atomic rename error when temporary cleanup also fai
   }
 });
 
-test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", () => {
+test("saveState prunes marked terminal job artifacts when terminal jobs exceed the cap", () => {
   const workspace = makeTempDir();
   const stateFile = resolveStateFile(workspace);
   fs.mkdirSync(path.dirname(stateFile), { recursive: true });
@@ -134,16 +198,16 @@ test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", 
     const jobId = `job-${index}`;
     const updatedAt = new Date(Date.UTC(2026, 0, 1, 0, index, 0)).toISOString();
     const logFile = resolveJobLogFile(workspace, jobId);
-    const jobFile = resolveJobFile(workspace, jobId);
     fs.writeFileSync(logFile, `log ${jobId}\n`, "utf8");
-    fs.writeFileSync(jobFile, JSON.stringify({ id: jobId, status: "completed" }, null, 2), "utf8");
-    return {
+    const job = {
       id: jobId,
       status: "completed",
       logFile,
       updatedAt,
       createdAt: updatedAt
     };
+    writeJobFile(workspace, jobId, job);
+    return job;
   });
 
   fs.writeFileSync(
@@ -175,7 +239,8 @@ test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", 
   assert.equal(fs.existsSync(retainedJobFile), true);
   assert.equal(fs.existsSync(retainedLogFile), true);
 
-  const savedState = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  const savedState = loadState(workspace);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(stateFile, "utf8")), "jobs"), false);
   assert.equal(savedState.jobs.length, 50);
   assert.deepEqual(
     savedState.jobs.map((job) => job.id),
@@ -184,7 +249,7 @@ test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", 
   assert.deepEqual(
     fs.readdirSync(jobsDir).sort(),
     Array.from({ length: 50 }, (_, index) => `job-${index + 1}`)
-      .flatMap((jobId) => [`${jobId}.json`, `${jobId}.log`])
+      .flatMap((jobId) => [`${jobId}.json`, `${jobId}.log`, `${jobId}.terminal.json`])
       .sort()
   );
 });

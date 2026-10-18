@@ -21,7 +21,7 @@ import {
   loadBrokerSession,
   saveBrokerSession
 } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
-import { resolveStateDir } from "../plugins/codex/scripts/lib/state.mjs";
+import { loadState, resolveStateDir } from "../plugins/codex/scripts/lib/state.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PLUGIN_ROOT = path.join(ROOT, "plugins", "codex");
@@ -429,8 +429,7 @@ test("review logs reasoning summaries and review output to the job log", () => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  const stateDir = resolveStateDir(repo);
-  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  const state = loadState(repo);
   const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
   assert.match(log, /Reasoning summary/);
   assert.match(log, /Reviewed the changed files and checked the likely regression paths/);
@@ -756,8 +755,7 @@ test("task logs reasoning summaries and assistant messages to the job log", () =
   });
 
   assert.equal(result.status, 0, result.stderr);
-  const stateDir = resolveStateDir(repo);
-  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  const state = loadState(repo);
   const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
   assert.match(log, /Reasoning summary/);
   assert.match(log, /Inspected the prompt, gathered evidence, and checked the highest-risk paths first/);
@@ -780,8 +778,7 @@ test("task logs subagent reasoning and messages with a subagent prefix", () => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  const stateDir = resolveStateDir(repo);
-  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  const state = loadState(repo);
   const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
   assert.match(log, /Starting subagent design-challenger via collaboration tool: wait\./);
   assert.match(log, /Subagent design-challenger reasoning:/);
@@ -807,7 +804,7 @@ for (const timing of ["before-response", "after-response", "overflow-count", "ov
       cwd: repo, env: buildEnv(binDir), timeout: 10000
     });
     assert.equal(result.status, 0, result.stderr);
-    const state = JSON.parse(fs.readFileSync(path.join(resolveStateDir(repo), "state.json"), "utf8"));
+    const state = loadState(repo);
     const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
     const label = ["overflow-count", "overflow-bytes", "overflow-threads", "metadata-threads", "metadata-name-threads"].includes(timing)
       ? "early-child"
@@ -841,7 +838,7 @@ for (const announcement of ["thread", "name"]) {
         cwd: repo, env: buildEnv(binDir)
       });
       assert.equal(result.status, 0, result.stderr);
-      const state = JSON.parse(fs.readFileSync(path.join(resolveStateDir(repo), "state.json"), "utf8"));
+      const state = loadState(repo);
       const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
       assert.doesNotMatch(log, /UNRELATED_OWNER|UNRELATED_OUTPUT|unrelated-turn/);
       assert.doesNotMatch(result.stdout, /UNRELATED/);
@@ -864,8 +861,7 @@ test("task keeps the subagent label when the subagent is announced before the tu
   });
 
   assert.equal(result.status, 0, result.stderr);
-  const stateDir = resolveStateDir(repo);
-  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  const state = loadState(repo);
   const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
   assert.match(log, /Starting subagent design-challenger via collaboration tool: wait\./);
   assert.match(log, /Subagent design-challenger reasoning:/);
@@ -1098,6 +1094,26 @@ test("review accepts --background while still running as a tracked review job", 
   assert.match(status.stdout, /completed/);
 });
 
+test("status lists valid jobs when another job file is truncated", () => {
+  const workspace = makeTempDir();
+  const jobsDir = path.join(resolveStateDir(workspace), "jobs");
+  fs.mkdirSync(jobsDir, { recursive: true });
+  fs.writeFileSync(path.join(jobsDir, "task-good.json"), JSON.stringify({
+    id: "task-good", status: "running", title: "Valid job", summary: "still visible"
+  }));
+  const badFile = path.join(jobsDir, "task-bad1.json");
+  const bytes = '{"id":"task-bad1","sta';
+  fs.writeFileSync(badFile, bytes);
+
+  const result = run("node", [SCRIPT, "status"], { cwd: workspace });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /task-good/);
+  assert.match(result.stdout, /still visible/);
+  assert.equal(result.stderr.trim(), `Skipping unparsable job record: ${badFile}`);
+  assert.equal(fs.readFileSync(badFile, "utf8"), bytes);
+});
+
 test("status shows phases, hints, and the latest finished job", () => {
   const workspace = makeTempDir();
   const stateDir = resolveStateDir(workspace);
@@ -1124,6 +1140,12 @@ test("status shows phases, hints, and the latest finished job", () => {
         id: "review-done",
         status: "completed",
         title: "Codex Review",
+        jobClass: "review",
+        threadId: "thr_done",
+        summary: "Review creation summary",
+        createdAt: "2026-03-18T15:10:00.000Z",
+        startedAt: "2026-03-18T15:10:05.000Z",
+        completedAt: "2026-03-18T15:11:10.000Z",
         rendered: "# Codex Review\n\nReviewed uncommitted changes.\nNo material issues found.\n"
       },
       null,
@@ -1464,6 +1486,10 @@ test("result without a job id prefers the latest finished job from the current C
         id: "review-current",
         status: "completed",
         title: "Codex Review",
+        jobClass: "review",
+        sessionId: "sess-current",
+        summary: "Current session creation summary",
+        createdAt: "2026-03-18T15:10:00.000Z",
         threadId: "thr_current",
         result: {
           codex: {
@@ -1484,6 +1510,10 @@ test("result without a job id prefers the latest finished job from the current C
         id: "review-other",
         status: "completed",
         title: "Codex Review",
+        jobClass: "review",
+        sessionId: "sess-other",
+        summary: "Old session creation summary",
+        createdAt: "2026-03-18T15:20:00.000Z",
         threadId: "thr_other",
         result: {
           codex: {
@@ -1605,6 +1635,12 @@ test("cancel stops an active background job and marks it cancelled", async (t) =
         id: "task-live",
         status: "running",
         title: "Codex Task",
+        jobClass: "task",
+        summary: "Investigate flaky test",
+        pid: sleeper.pid,
+        createdAt: "2026-03-18T15:30:00.000Z",
+        startedAt: "2026-03-18T15:30:01.000Z",
+        updatedAt: "2026-03-18T15:30:02.000Z",
         logFile
       },
       null,
@@ -1655,12 +1691,12 @@ test("cancel stops an active background job and marks it cancelled", async (t) =
     }
   });
 
-  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  const state = loadState(workspace);
   const cancelled = state.jobs.find((job) => job.id === "task-live");
   assert.equal(cancelled.status, "cancelled");
   assert.equal(cancelled.pid, null);
 
-  const stored = JSON.parse(fs.readFileSync(jobFile, "utf8"));
+  const stored = JSON.parse(fs.readFileSync(jobFile.replace(/\.json$/, ".terminal.json"), "utf8"));
   assert.equal(stored.status, "cancelled");
   assert.match(fs.readFileSync(logFile, "utf8"), /Cancelled by user/);
 });
@@ -1716,7 +1752,7 @@ test("cancel without a job id ignores active jobs from other Claude sessions", (
   assert.equal(cancel.status, 1);
   assert.match(cancel.stderr, /No active Codex jobs to cancel for this session\./);
 
-  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  const state = loadState(workspace);
   assert.equal(state.jobs[0].status, "running");
 });
 
@@ -1764,7 +1800,7 @@ test("cancel with a job id can still target an active job from another Claude se
   assert.equal(cancel.status, 0, cancel.stderr);
   assert.equal(JSON.parse(cancel.stdout).jobId, "task-other");
 
-  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  const state = loadState(workspace);
   assert.equal(state.jobs[0].status, "cancelled");
 });
 
@@ -1789,9 +1825,8 @@ test("cancel sends turn interrupt to the shared app-server before killing a brok
   const jobId = launchPayload.jobId;
   assert.ok(jobId);
 
-  const stateDir = resolveStateDir(repo);
   const runningJob = await waitFor(() => {
-    const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+    const state = loadState(repo);
     const job = state.jobs.find((candidate) => candidate.id === jobId);
     if (job?.status === "running" && job.threadId && job.turnId) {
       return job;
@@ -1852,11 +1887,24 @@ test("session end fully cleans up jobs for the ending session", async (t) => {
   fs.writeFileSync(completedLog, "completed\n", "utf8");
   fs.writeFileSync(runningLog, "running\n", "utf8");
   fs.writeFileSync(otherSessionLog, "other\n", "utf8");
-  fs.writeFileSync(completedJobFile, JSON.stringify({ id: "review-completed" }, null, 2), "utf8");
-  fs.writeFileSync(otherJobFile, JSON.stringify({ id: "review-other" }, null, 2), "utf8");
+  // Existing per-job files are authoritative; session ownership cannot live only in the legacy index.
+  fs.writeFileSync(completedJobFile, JSON.stringify({
+    id: "review-completed", status: "completed", title: "Codex Review",
+    sessionId: "sess-current", logFile: completedLog,
+    createdAt: "2026-03-18T15:30:00.000Z", updatedAt: "2026-03-18T15:31:00.000Z"
+  }, null, 2), "utf8");
+  fs.writeFileSync(otherJobFile, JSON.stringify({
+    id: "review-other", status: "completed", title: "Codex Review",
+    sessionId: "sess-other", logFile: otherSessionLog,
+    createdAt: "2026-03-18T15:34:00.000Z", updatedAt: "2026-03-18T15:35:00.000Z"
+  }, null, 2), "utf8");
 
   const sleeper = spawnTrackedWorker("review-running", repo);
-  fs.writeFileSync(runningJobFile, JSON.stringify({ id: "review-running" }, null, 2), "utf8");
+  fs.writeFileSync(runningJobFile, JSON.stringify({
+    id: "review-running", status: "running", title: "Codex Review",
+    sessionId: "sess-current", pid: sleeper.pid, logFile: runningLog,
+    createdAt: "2026-03-18T15:32:00.000Z", updatedAt: "2026-03-18T15:33:00.000Z"
+  }, null, 2), "utf8");
 
   t.after(() => {
     try {
@@ -1931,7 +1979,7 @@ test("session end fully cleans up jobs for the ending session", async (t) => {
   assert.equal(fs.existsSync(otherJobFile), true);
   assert.deepEqual(
     fs.readdirSync(path.dirname(otherJobFile)).sort(),
-    [path.basename(otherJobFile), path.basename(otherSessionLog)].sort()
+    [path.basename(otherJobFile), "review-other.terminal.json", path.basename(otherSessionLog)].sort()
   );
 
   await waitFor(() => {
@@ -1943,7 +1991,7 @@ test("session end fully cleans up jobs for the ending session", async (t) => {
     }
   });
 
-  const state = JSON.parse(fs.readFileSync(path.join(stateDir, "state.json"), "utf8"));
+  const state = loadState(repo);
   assert.deepEqual(state.jobs.map((job) => job.id), ["review-other"]);
   const otherJob = state.jobs[0];
   assert.equal(otherJob.logFile, otherSessionLog);

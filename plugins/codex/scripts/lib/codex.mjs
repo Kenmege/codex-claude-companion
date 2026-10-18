@@ -588,6 +588,18 @@ function applyTurnNotification(state, message) {
 async function captureTurn(client, threadId, startRequest, options = {}) {
   const state = createTurnCaptureState(threadId, options);
   const previousHandler = client.notificationHandler;
+  // Cancellation can arrive while startRequest is pending, before the turn id is known.
+  // Attach a rejection handler now; interrupt as soon as the response supplies its id.
+  state.completion.catch(() => {});
+  let interrupting = false;
+  const abort = () => {
+    if (!state.turnId || interrupting || state.completed) return;
+    interrupting = true;
+    client.request("turn/interrupt", { threadId: state.threadId, turnId: state.turnId })
+      .then(() => state.rejectCompletion(options.signal.reason), error => state.rejectCompletion(error));
+  };
+  options.signal?.addEventListener("abort", abort, { once: true });
+
   const pendingEvents = new Map();
   let dropReported = false;
   const reportDrop = () => {
@@ -674,12 +686,14 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
   });
 
   try {
+    options.signal?.throwIfAborted();
     const response = await startRequest();
     state.turnId = response.turn?.id ?? null;
     options.onResponse?.(response, state);
     if (state.turnId) {
       state.threadTurnIds.set(state.threadId, state.turnId);
     }
+    if (options.signal?.aborted) abort();
     for (const message of state.bufferedNotifications) {
       route(message);
     }
@@ -691,6 +705,7 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
 
     return await state.completion;
   } finally {
+    options.signal?.removeEventListener("abort", abort);
     clearCompletionTimer(state);
     pendingEvents.clear();
     state.pendingThreadMetadata.clear();
@@ -1021,12 +1036,14 @@ export async function interruptAppServerTurn(cwd, { threadId, turnId }) {
 }
 
 export async function runAppServerReview(cwd, options = {}) {
+  options.signal?.throwIfAborted();
   const availability = getCodexAvailability(cwd);
   if (!availability.available) {
     throw new Error("Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/codex:setup`.");
   }
 
   return withAppServer(cwd, async (client) => {
+    options.signal?.throwIfAborted();
     emitProgress(options.onProgress, "Starting Codex review thread.", "starting");
     const thread = await startThread(client, cwd, {
       model: options.model,
@@ -1050,6 +1067,7 @@ export async function runAppServerReview(cwd, options = {}) {
           target: options.target
         }),
       {
+        signal: options.signal,
         onProgress: options.onProgress,
         onResponse(response, state) {
           if (response.reviewThreadId) {
@@ -1077,12 +1095,14 @@ export async function runAppServerReview(cwd, options = {}) {
 }
 
 export async function runAppServerTurn(cwd, options = {}) {
+  options.signal?.throwIfAborted();
   const availability = getCodexAvailability(cwd);
   if (!availability.available) {
     throw new Error("Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/codex:setup`.");
   }
 
   return withAppServer(cwd, async (client) => {
+    options.signal?.throwIfAborted();
     let threadId;
 
     if (options.resumeThreadId) {
@@ -1124,7 +1144,7 @@ export async function runAppServerTurn(cwd, options = {}) {
           effort: options.effort ?? null,
           outputSchema: options.outputSchema ?? null
         }),
-      { onProgress: options.onProgress }
+      { onProgress: options.onProgress, signal: options.signal }
     );
 
     return {

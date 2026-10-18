@@ -276,7 +276,7 @@ test("a live reused persisted PID is ignored unless exact process discovery prov
   assert.deepEqual(h.counts(), { created: 1, spawned: 2 });
 });
 
-test("broker process discovery requires an exact command and fails closed on ambiguity", () => {
+test("broker process discovery requires an exact command and fails closed on ambiguity", { skip: process.platform === "win32" ? "POSIX ps discovery is unavailable; covered by Windows fail-closed assertion" : false }, () => {
   const nodeBinary = "/opt/node/bin/node";
   const brokerScript = "/repo/scripts/bridge-broker.mjs";
   const specFile = "/state/jobs/child/broker-spec.json";
@@ -306,4 +306,10 @@ test("broker process discovery requires an exact command and fails closed on amb
     () => discoverBrokerProcess(nodeBinary, brokerScript, specFile, listing("", 1)),
     /unable to inspect process identities/
   );
+});
+
+test("Windows broker discovery fails closed without invoking a POSIX process tool", { skip: process.platform !== "win32" }, () => {
+  assert.equal(discoverBrokerProcess("C:\\node.exe", "C:\\broker.mjs", "C:\\spec.json", () => {
+    assert.fail("unsupported Windows discovery must never inspect or trust a POSIX process listing");
+  }), null);
 });

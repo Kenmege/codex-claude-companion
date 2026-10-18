@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import process from "node:process";
 
-import { readJobFile, resolveJobFile, resolveJobLogFile, upsertJob, writeJobFile } from "./state.mjs";
+import { readJobFile, resolveJobFile, resolveJobLogFile, upsertJob, writeJobFile, terminalMarkerFile, publishTerminalJob } from "./state.mjs";
 
 export const SESSION_ID_ENV = "CODEX_COMPANION_SESSION_ID";
 
@@ -133,13 +133,24 @@ export function createProgressReporter({ stderr = false, logFile = null, onEvent
 
 function readStoredJobOrNull(workspaceRoot, jobId) {
   const jobFile = resolveJobFile(workspaceRoot, jobId);
-  if (!fs.existsSync(jobFile)) {
+  if (!fs.existsSync(jobFile) && !fs.existsSync(terminalMarkerFile(jobFile))) {
     return null;
   }
   return readJobFile(jobFile);
 }
 
 export async function runTrackedJob(job, runner, options = {}) {
+  function terminalOutcome(record, skipped) {
+    return {
+      status: record.status, skipped,
+      exitStatus: record.status === "completed" ? 0 : 1,
+      payload: record,
+      rendered: `Job ${job.id} is already ${record.status}.`,
+      summary: `Job ${job.id} is already ${record.status}.`
+    };
+  }
+  const prior = readStoredJobOrNull(job.workspaceRoot, job.id);
+  if (prior && ["completed", "failed", "cancelled"].includes(prior.status)) return terminalOutcome(prior, true);
   const runningRecord = {
     ...job,
     status: "running",
@@ -151,11 +162,28 @@ export async function runTrackedJob(job, runner, options = {}) {
   writeJobFile(job.workspaceRoot, job.id, runningRecord);
   upsertJob(job.workspaceRoot, runningRecord);
 
+  const controller = new AbortController();
+  const checkTerminal = () => {
+    const record = readStoredJobOrNull(job.workspaceRoot, job.id);
+    if (["completed", "failed", "cancelled"].includes(record?.status)) {
+      controller.abort(new Error(`Job ${job.id} is already ${record.status}.`));
+      return record;
+    }
+    return null;
+  };
+  const watchdog = setInterval(() => {
+    try { checkTerminal(); }
+    catch (error) { controller.abort(error); }
+  }, 100);
+  watchdog.unref();
   try {
-    const execution = await runner();
+    // Recheck after publishing the running record, immediately before handing off work.
+    const beforeStart = checkTerminal();
+    if (beforeStart) return terminalOutcome(beforeStart, true);
+    const execution = await runner(controller.signal);
     const completionStatus = execution.exitStatus === 0 ? "completed" : "failed";
     const completedAt = nowIso();
-    writeJobFile(job.workspaceRoot, job.id, {
+    const publication = publishTerminalJob(job.workspaceRoot, job.id, {
       ...runningRecord,
       status: completionStatus,
       threadId: execution.threadId ?? null,
@@ -164,23 +192,19 @@ export async function runTrackedJob(job, runner, options = {}) {
       phase: completionStatus === "completed" ? "done" : "failed",
       completedAt,
       result: execution.payload,
-      rendered: execution.rendered
+      rendered: execution.rendered,
+      summary: execution.summary
     });
-    upsertJob(job.workspaceRoot, {
-      id: job.id,
-      status: completionStatus,
-      threadId: execution.threadId ?? null,
-      turnId: execution.turnId ?? null,
-      summary: execution.summary,
-      phase: completionStatus === "completed" ? "done" : "failed",
-      pid: null,
-      completedAt
-    });
+    upsertJob(job.workspaceRoot, publication.record);
     appendLogBlock(options.logFile ?? job.logFile ?? null, "Final output", execution.rendered);
+    if (!publication.won) return terminalOutcome(publication.record, false);
     return execution;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const existing = readStoredJobOrNull(job.workspaceRoot, job.id) ?? runningRecord;
+    if (controller.signal.aborted && ["completed", "failed", "cancelled"].includes(existing.status)) {
+      return terminalOutcome(existing, false);
+    }
     const completedAt = nowIso();
     writeJobFile(job.workspaceRoot, job.id, {
       ...existing,
@@ -200,5 +224,7 @@ export async function runTrackedJob(job, runner, options = {}) {
       completedAt
     });
     throw error;
+  } finally {
+    clearInterval(watchdog);
   }
 }

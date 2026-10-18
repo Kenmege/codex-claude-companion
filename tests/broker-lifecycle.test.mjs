@@ -10,6 +10,7 @@ import {
   loadBrokerSession,
   saveBrokerSession
 } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
+import { resolveStateDir } from "../plugins/codex/scripts/lib/state.mjs";
 
 function fixture() {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "broker-lifecycle-"));
@@ -162,4 +163,20 @@ test("inconclusive inspection preserves a live persisted broker instead of orpha
   assert.equal(fs.existsSync(existing.pidFile), true);
   assert.equal(fs.existsSync(existing.logFile), true);
   assert.equal(fs.existsSync(existing.sessionDir), true);
+});
+
+test("saveBrokerSession atomically replaces the persisted session", { skip: process.platform === "win32" }, () => {
+  const { cwd, existing } = fixture();
+  saveBrokerSession(cwd, existing);
+  const sessionFile = path.join(resolveStateDir(cwd), "broker.json");
+  const previousSession = fs.openSync(sessionFile, "r");
+
+  try {
+    saveBrokerSession(cwd, { ...existing, pid: existing.pid + 1 });
+
+    assert.deepEqual(JSON.parse(fs.readFileSync(previousSession, "utf8")), existing);
+    assert.equal(loadBrokerSession(cwd).pid, existing.pid + 1);
+  } finally {
+    fs.closeSync(previousSession);
+  }
 });

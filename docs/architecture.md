@@ -144,6 +144,31 @@ direct child of the selected jobs directory. An explicit `--job-dir` is
 threaded through the foreground pipeline, detached worker, diagnostics, and
 all lifecycle controls instead of relying on mutable process-global state.
 
+## Codex Adapter Job Index
+
+The Codex adapter derives its job list from `jobs/<id>.json`, overlaying each
+record's first-writer-wins `<id>.terminal.json` marker. Marker files and temporary
+files are not separate jobs. Job summaries, results, and creation/update times
+live in these per-job records; status, result, cancel, and retention use the same
+derived list. Updates to different jobs do not replace a shared index or acquire
+a cross-process lock.
+
+`state.json` stores configuration only. Reading an older snapshot migrates its
+legacy jobs array into atomic per-job files before dropping the array. Missing
+files are created without replacing a concurrently created record. Existing
+records take precedence over legacy values, while missing legacy metadata is
+preserved. Terminal markers continue to take precedence over base records.
+
+Retention keeps the 50 most recently updated jobs and removes the other job
+files, terminal markers, and logs. Session cleanup removes explicitly selected
+jobs, so a stale snapshot cannot delete another session's new job.
+
+Configuration writes remain atomic but are not serialized: simultaneous edits
+to configuration, including retirement of the legacy index during migration,
+are last-writer-wins and can overwrite another configuration edit. Ordinary
+job updates after migration do not write configuration. Nonterminal updates
+to the same job are also last-writer-wins; terminal markers remain immutable.
+
 ## MCP And Subagents
 
 The default MCP stance is strict: project/local MCPs are not inherited unless

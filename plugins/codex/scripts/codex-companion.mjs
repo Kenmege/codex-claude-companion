@@ -28,6 +28,7 @@ import {
   generateJobId,
   getConfig,
   listJobs,
+  publishTerminalJob,
   setConfig,
   upsertJob,
   writeJobFile
@@ -367,6 +368,7 @@ async function executeReviewRun(request) {
     const result = await runAppServerReview(request.cwd, {
       target: reviewTarget,
       model: request.model,
+      signal: request.signal,
       onProgress: request.onProgress
     });
     const payload = {
@@ -410,6 +412,7 @@ async function executeReviewRun(request) {
     model: request.model,
     sandbox: "read-only",
     outputSchema: readOutputSchema(REVIEW_SCHEMA),
+    signal: request.signal,
     onProgress: request.onProgress
   });
   const parsed = parseStructuredOutput(result.finalMessage, {
@@ -486,6 +489,7 @@ async function executeTaskRun(request) {
     model: request.model,
     effort: request.effort,
     sandbox: request.write ? "workspace-write" : "read-only",
+    signal: request.signal,
     onProgress: request.onProgress,
     persistThread: true,
     threadName: resumeThreadId ? null : buildPersistentTaskThreadName(request.prompt || DEFAULT_CONTINUE_PROMPT)
@@ -630,7 +634,7 @@ async function runForegroundCommand(job, runner, options = {}) {
     logFile: options.logFile,
     stderr: !options.json
   });
-  const execution = await runTrackedJob(job, () => runner(progress), { logFile });
+  const execution = await runTrackedJob(job, (signal) => runner(progress, signal), { logFile });
   outputResult(options.json ? execution.payload : execution.rendered, options.json);
   if (execution.exitStatus !== 0) {
     process.exitCode = execution.exitStatus;
@@ -708,8 +712,9 @@ async function handleReviewCommand(argv, config) {
   });
   await runForegroundCommand(
     job,
-    (progress) =>
+    (progress, signal) =>
       executeReviewRun({
+        signal,
         cwd,
         base: options.base,
         scope: options.scope,
@@ -777,8 +782,9 @@ async function handleTask(argv) {
   const job = buildTaskJob(workspaceRoot, taskMetadata, write);
   await runForegroundCommand(
     job,
-    (progress) =>
+    (progress, signal) =>
       executeTaskRun({
+        signal,
         cwd,
         model,
         effort,
@@ -828,9 +834,10 @@ async function handleTaskWorker(argv) {
       workspaceRoot,
       logFile
     },
-    () =>
+    (signal) =>
       executeTaskRun({
         ...request,
+        signal,
         onProgress: progress
       }),
     { logFile }
@@ -930,6 +937,27 @@ async function handleCancel(argv) {
   const threadId = existing.threadId ?? job.threadId ?? null;
   const turnId = existing.turnId ?? job.turnId ?? null;
 
+  const completedAt = nowIso();
+  const publication = publishTerminalJob(workspaceRoot, job.id, {
+    ...job,
+    ...existing,
+    status: "cancelled",
+    phase: "cancelled",
+    pid: null,
+    completedAt,
+    cancelledAt: completedAt,
+    errorMessage: "Cancelled by user."
+  });
+  const nextJob = publication.record;
+  upsertJob(workspaceRoot, nextJob);
+  if (!publication.won) {
+    outputCommandResult({
+      jobId: job.id, status: nextJob.status, title: nextJob.title,
+      alreadyTerminal: true, turnInterruptAttempted: false, turnInterrupted: false
+    }, `Job ${job.id} is already ${nextJob.status}.\n`, options.json);
+    return;
+  }
+
   const interrupt = await interruptAppServerTurn(cwd, { threadId, turnId });
   if (interrupt.attempted) {
     appendLogLine(
@@ -943,34 +971,11 @@ async function handleCancel(argv) {
   terminateTrackedJobProcessTree(job);
   appendLogLine(job.logFile, "Cancelled by user.");
 
-  const completedAt = nowIso();
-  const nextJob = {
-    ...job,
-    status: "cancelled",
-    phase: "cancelled",
-    pid: null,
-    completedAt,
-    errorMessage: "Cancelled by user."
-  };
-
-  writeJobFile(workspaceRoot, job.id, {
-    ...existing,
-    ...nextJob,
-    cancelledAt: completedAt
-  });
-  upsertJob(workspaceRoot, {
-    id: job.id,
-    status: "cancelled",
-    phase: "cancelled",
-    pid: null,
-    errorMessage: "Cancelled by user.",
-    completedAt
-  });
-
   const payload = {
     jobId: job.id,
     status: "cancelled",
     title: job.title,
+    alreadyTerminal: false,
     turnInterruptAttempted: interrupt.attempted,
     turnInterrupted: interrupt.interrupted
   };
