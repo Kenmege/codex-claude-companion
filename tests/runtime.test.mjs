@@ -217,6 +217,39 @@ test("review renders a no-findings result from app-server review/start", () => {
   assert.match(result.stdout, /No material issues found/);
 });
 
+test("detached review returns completion received before the review/start response", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir, "review-completes-before-response");
+  initGitRepo(repo);
+  const moduleUrl = new URL("../plugins/codex/scripts/lib/codex.mjs", import.meta.url).href;
+  const clientUrl = new URL("../plugins/codex/scripts/lib/app-server.mjs", import.meta.url).href;
+  const result = run("node", ["--input-type=module", "-e", `
+    import { runAppServerReview } from ${JSON.stringify(moduleUrl)};
+    import { CodexAppServerClient } from ${JSON.stringify(clientUrl)};
+    // Exercise direct transport: the broker independently buffers early review events.
+    const connect = CodexAppServerClient.connect.bind(CodexAppServerClient);
+    CodexAppServerClient.connect = (cwd, options) => connect(cwd, { ...options, disableBroker: true });
+    const deadline = setTimeout(() => {
+      console.error("Detached review did not drain its early completion notifications");
+      process.exit(1);
+    }, 5000);
+    try {
+      const result = await runAppServerReview(process.cwd(), {
+        delivery: "detached", target: { type: "uncommittedChanges" }
+      });
+      console.log(JSON.stringify(result));
+    } finally {
+      clearTimeout(deadline);
+    }
+  `], { cwd: repo, env: buildEnv(binDir) });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.notEqual(payload.threadId, payload.sourceThreadId);
+  assert.equal(payload.turn.status, "completed");
+  assert.match(payload.reviewText, /No material issues found/);
+});
+
 test("task runs when the active provider does not require OpenAI login", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
@@ -759,6 +792,62 @@ test("task logs subagent reasoning and messages with a subagent prefix", () => {
     /The design assumes retries are harmless, but they can duplicate side effects without stronger idempotency guarantees\./
   );
 });
+
+for (const timing of ["before-response", "after-response", "overflow-count", "overflow-bytes", "overflow-oversized", "overflow-threads",
+  "metadata-threads", "metadata-name-threads", "metadata-oversized", "metadata-count", "metadata-bytes", "metadata-at-limit"]) {
+  test(`task replays early subagent events in order ${timing}`, () => {
+    const repo = makeTempDir();
+    const binDir = makeTempDir();
+    installFakeCodex(binDir, `with-early-subagent-${timing}`);
+    initGitRepo(repo);
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    run("git", ["add", "README.md"], { cwd: repo });
+    run("git", ["commit", "-m", "init"], { cwd: repo });
+    const result = run("node", [SCRIPT, "task", "challenge the current design"], {
+      cwd: repo, env: buildEnv(binDir), timeout: 10000
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const state = JSON.parse(fs.readFileSync(path.join(resolveStateDir(repo), "state.json"), "utf8"));
+    const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
+    const label = ["overflow-count", "overflow-bytes", "overflow-threads", "metadata-threads", "metadata-name-threads"].includes(timing)
+      ? "early-child"
+      : ["metadata-count", "metadata-bytes"].includes(timing) ? "recent-worker" : "early-worker";
+    assert.ok(log.includes(`Subagent ${label}: EARLY_FIRST`), log);
+    assert.ok(log.includes(`Subagent ${label}: EARLY_SECOND`));
+    assert.doesNotMatch(log, /OVERSIZED_NAME|foreign-worker/);
+    assert.ok(log.indexOf("EARLY_FIRST") < log.indexOf("EARLY_SECOND"));
+    assert.match(log, /Turn completion inferred/);
+    assert.doesNotMatch(log, /DROP_OLD|UNRELATED_OUTPUT/);
+    if (timing.startsWith("overflow") || (timing.startsWith("metadata") && timing !== "metadata-at-limit")) {
+      assert.equal((log.match(/Pending thread buffer overflow/g) ?? []).length, 1);
+      assert.match(log, /Drop oldest thread.*oldest events.*oversized incoming events/);
+    } else {
+      assert.doesNotMatch(log, /buffer overflow/);
+    }
+  });
+}
+
+for (const announcement of ["thread", "name"]) {
+  for (const timing of ["before-response", "after-response"]) {
+    test(`task ignores unrelated ${announcement} announcements ${timing}`, () => {
+      const repo = makeTempDir();
+      const binDir = makeTempDir();
+      installFakeCodex(binDir, `with-unrelated-${announcement}-${timing}`);
+      initGitRepo(repo);
+      fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+      run("git", ["add", "README.md"], { cwd: repo });
+      run("git", ["commit", "-m", "init"], { cwd: repo });
+      const result = run("node", [SCRIPT, "task", "challenge the current design"], {
+        cwd: repo, env: buildEnv(binDir)
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const state = JSON.parse(fs.readFileSync(path.join(resolveStateDir(repo), "state.json"), "utf8"));
+      const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
+      assert.doesNotMatch(log, /UNRELATED_OWNER|UNRELATED_OUTPUT|unrelated-turn/);
+      assert.doesNotMatch(result.stdout, /UNRELATED/);
+    });
+  }
+}
 
 test("task keeps the subagent label when the subagent is announced before the turn/start response", () => {
   const repo = makeTempDir();
