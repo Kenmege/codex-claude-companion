@@ -6,10 +6,16 @@
 # are wired separately via their own GitHub App configurations and the
 # Copilot ruleset on `main`.
 #
+# @kenmege-claude is Kennedy's machine account for Claude (co-maintainer). It
+# co-owns general paths so pull requests always have a second, independent party:
+# a PR authored by one owner is approved by the other. It never approves its own
+# pull requests. Workflow, release and security surfaces below stay owned by
+# @Kenmege alone, so changes there always need Kennedy's review.
+#
 # Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
 # Default owner — all paths fall back to this.
-*                                  @Kenmege
+*                                  @Kenmege @kenmege-claude
 
 # Workflow + release surfaces — extra-careful review.
 .github/                           @Kenmege

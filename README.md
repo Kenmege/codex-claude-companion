@@ -39,7 +39,7 @@ structured output fails closed.
 ## Review automation (maintainer)
 
 - **Copilot automatic code review** is enabled on `main` (including draft PRs) via the repository ruleset *Automatic Copilot code review*.
-- **Copilot APPROVED → auto-approve review** is handled by [`.github/workflows/copilot-auto-approve.yml`](.github/workflows/copilot-auto-approve.yml). It records a GitHub review approval only; it never merges and never bypasses required checks. See [`docs/copilot-auto-approve.md`](docs/copilot-auto-approve.md).
+- **Human review is required.** `main` needs an approving code-owner review, and automated reviewers (Copilot, CodeRabbit, Codex, Devin) may comment or approve, but only a code owner's approval satisfies that requirement. Pull requests are reviewed by a second party: `@Kenmege` and `@kenmege-claude` (Kennedy's machine account for Claude) co-own general paths and never approve their own pull requests, while workflow, release and security paths need `@Kenmege`'s review. See [`.github/CODEOWNERS`](.github/CODEOWNERS).
 - **CodeRabbit** is configured in [`.coderabbit.yaml`](.coderabbit.yaml).
 
 ## 60-Second Quickstart
