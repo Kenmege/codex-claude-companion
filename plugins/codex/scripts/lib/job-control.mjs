@@ -1,7 +1,7 @@
 import fs from "node:fs";
 
 import { getSessionRuntimeStatus } from "./codex.mjs";
-import { getConfig, listJobs, readJobFile, resolveJobFile } from "./state.mjs";
+import { getConfig, listJobs, readJobFile, resolveJobFile, terminalMarkerFile } from "./state.mjs";
 import { SESSION_ID_ENV } from "./tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
@@ -182,7 +182,7 @@ export function enrichJob(job, options = {}) {
 
 export function readStoredJob(workspaceRoot, jobId) {
   const jobFile = resolveJobFile(workspaceRoot, jobId);
-  if (!fs.existsSync(jobFile)) {
+  if (!fs.existsSync(jobFile) && !fs.existsSync(terminalMarkerFile(jobFile))) {
     return null;
   }
   return readJobFile(jobFile);
@@ -284,7 +284,10 @@ export function resolveCancelableJob(cwd, reference, options = {}) {
   const activeJobs = jobs.filter((job) => job.status === "queued" || job.status === "running");
 
   if (reference) {
-    const selected = matchJobReference(activeJobs, reference);
+    const matchesActive = activeJobs.some((job) => job.id.startsWith(reference));
+    const selected = matchesActive
+      ? matchJobReference(activeJobs, reference)
+      : jobs.find((job) => job.id === reference);
     if (!selected) {
       throw new Error(`No active job found for "${reference}".`);
     }

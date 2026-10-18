@@ -28,6 +28,7 @@ import {
   generateJobId,
   getConfig,
   listJobs,
+  publishTerminalJob,
   setConfig,
   upsertJob,
   writeJobFile
@@ -930,6 +931,27 @@ async function handleCancel(argv) {
   const threadId = existing.threadId ?? job.threadId ?? null;
   const turnId = existing.turnId ?? job.turnId ?? null;
 
+  const completedAt = nowIso();
+  const publication = publishTerminalJob(workspaceRoot, job.id, {
+    ...job,
+    ...existing,
+    status: "cancelled",
+    phase: "cancelled",
+    pid: null,
+    completedAt,
+    cancelledAt: completedAt,
+    errorMessage: "Cancelled by user."
+  });
+  const nextJob = publication.record;
+  upsertJob(workspaceRoot, nextJob);
+  if (!publication.won) {
+    outputCommandResult({
+      jobId: job.id, status: nextJob.status, title: nextJob.title,
+      alreadyTerminal: true, turnInterruptAttempted: false, turnInterrupted: false
+    }, `Job ${job.id} is already ${nextJob.status}.\n`, options.json);
+    return;
+  }
+
   const interrupt = await interruptAppServerTurn(cwd, { threadId, turnId });
   if (interrupt.attempted) {
     appendLogLine(
@@ -943,34 +965,11 @@ async function handleCancel(argv) {
   terminateTrackedJobProcessTree(job);
   appendLogLine(job.logFile, "Cancelled by user.");
 
-  const completedAt = nowIso();
-  const nextJob = {
-    ...job,
-    status: "cancelled",
-    phase: "cancelled",
-    pid: null,
-    completedAt,
-    errorMessage: "Cancelled by user."
-  };
-
-  writeJobFile(workspaceRoot, job.id, {
-    ...existing,
-    ...nextJob,
-    cancelledAt: completedAt
-  });
-  upsertJob(workspaceRoot, {
-    id: job.id,
-    status: "cancelled",
-    phase: "cancelled",
-    pid: null,
-    errorMessage: "Cancelled by user.",
-    completedAt
-  });
-
   const payload = {
     jobId: job.id,
     status: "cancelled",
     title: job.title,
+    alreadyTerminal: false,
     turnInterruptAttempted: interrupt.attempted,
     turnInterrupted: interrupt.interrupted
   };

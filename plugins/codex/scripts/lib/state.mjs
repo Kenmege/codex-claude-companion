@@ -1,5 +1,5 @@
 // Modified by Kennedy Umege for Codex-Claude Bridge, 2026.
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +12,32 @@ const FALLBACK_STATE_ROOT_DIR = path.join(os.tmpdir(), "codex-companion");
 const STATE_FILE_NAME = "state.json";
 const JOBS_DIR_NAME = "jobs";
 const MAX_JOBS = 50;
+const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
+export function terminalMarkerFile(jobFile) {
+  return jobFile.replace(/\.json$/, ".terminal.json");
+}
+
+function readTerminalMarker(jobFile) {
+  try {
+    return JSON.parse(fs.readFileSync(terminalMarkerFile(jobFile), "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function reconcileJobs(state, stateDir) {
+  let changed = false;
+  state.jobs = state.jobs.map((job) => {
+    const marker = readTerminalMarker(path.join(stateDir, JOBS_DIR_NAME, `${job.id}.json`));
+    if (!marker) return job;
+    const next = { ...job, ...marker };
+    if (JSON.stringify(next) !== JSON.stringify(job)) changed = true;
+    return next;
+  });
+  return changed;
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -62,9 +88,10 @@ export function loadState(cwd) {
     return defaultState();
   }
 
+  let state;
   try {
     const parsed = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-    return {
+    state = {
       ...defaultState(),
       ...parsed,
       config: {
@@ -76,6 +103,8 @@ export function loadState(cwd) {
   } catch {
     return defaultState();
   }
+  if (reconcileJobs(state, path.dirname(stateFile))) writeJsonAtomic(stateFile, state);
+  return state;
 }
 
 function pruneJobs(jobs) {
@@ -121,6 +150,7 @@ export function writeJsonAtomic(filePath, payload) {
 export function saveState(cwd, state) {
   const previousJobs = loadState(cwd).jobs;
   ensureStateDir(cwd);
+  reconcileJobs(state, resolveStateDir(cwd));
   const nextJobs = pruneJobs(state.jobs ?? []);
   const nextState = {
     version: STATE_VERSION,
@@ -156,6 +186,13 @@ export function generateJobId(prefix = "job") {
 }
 
 export function upsertJob(cwd, jobPatch) {
+  if (TERMINAL_STATUSES.has(jobPatch.status)) {
+    const jobFile = resolveJobFile(cwd, jobPatch.id);
+    let existing = {};
+    try { existing = JSON.parse(fs.readFileSync(jobFile, "utf8")); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    publishTerminalJob(cwd, jobPatch.id, { ...existing, ...jobPatch });
+  }
   return updateState(cwd, (state) => {
     const timestamp = nowIso();
     const existingIndex = state.jobs.findIndex((job) => job.id === jobPatch.id);
@@ -176,7 +213,9 @@ export function upsertJob(cwd, jobPatch) {
 }
 
 export function listJobs(cwd) {
-  return loadState(cwd).jobs;
+  const state = loadState(cwd);
+  if (reconcileJobs(state, resolveStateDir(cwd))) writeJsonAtomic(resolveStateFile(cwd), state);
+  return state.jobs;
 }
 
 export function setConfig(cwd, key, value) {
@@ -195,12 +234,60 @@ export function getConfig(cwd) {
 export function writeJobFile(cwd, jobId, payload) {
   ensureStateDir(cwd);
   const jobFile = resolveJobFile(cwd, jobId);
+  if (TERMINAL_STATUSES.has(payload.status)) {
+    publishTerminalJob(cwd, jobId, payload);
+    return jobFile;
+  }
+  if (readTerminalMarker(jobFile)) {
+    readJobFile(jobFile);
+    return jobFile;
+  }
   writeJsonAtomic(jobFile, payload);
+  if (readTerminalMarker(jobFile)) readJobFile(jobFile);
   return jobFile;
 }
 
 export function readJobFile(jobFile) {
+  const marker = readTerminalMarker(jobFile);
+  if (marker) {
+    const stateFile = path.join(path.dirname(path.dirname(jobFile)), STATE_FILE_NAME);
+    let state;
+    try { state = JSON.parse(fs.readFileSync(stateFile, "utf8")); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (state && Array.isArray(state.jobs) && reconcileJobs(state, path.dirname(stateFile))) {
+      writeJsonAtomic(stateFile, state);
+    }
+    return marker;
+  }
   return JSON.parse(fs.readFileSync(jobFile, "utf8"));
+}
+
+// link is the single first-writer-wins operation. No overwrite fallback is safe.
+export function publishTerminalJob(cwd, jobId, payload) {
+  if (!TERMINAL_STATUSES.has(payload.status)) throw new Error("Expected a terminal job status.");
+  const jobFile = resolveJobFile(cwd, jobId);
+  const marker = terminalMarkerFile(jobFile);
+  const temporaryFile = `${marker}.${process.pid}.${randomUUID()}.tmp`;
+  let won = false;
+  let descriptor;
+  try {
+    descriptor = fs.openSync(temporaryFile, "wx", 0o600);
+    fs.writeFileSync(descriptor, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    try {
+      fs.linkSync(temporaryFile, marker);
+      won = true;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    removeFileIfExists(temporaryFile);
+  }
+  const record = readJobFile(jobFile);
+  return { won, record };
 }
 
 function removeJobFile(jobFile) {

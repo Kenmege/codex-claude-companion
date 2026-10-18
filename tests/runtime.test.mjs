@@ -1660,7 +1660,7 @@ test("cancel stops an active background job and marks it cancelled", async (t) =
   assert.equal(cancelled.status, "cancelled");
   assert.equal(cancelled.pid, null);
 
-  const stored = JSON.parse(fs.readFileSync(jobFile, "utf8"));
+  const stored = JSON.parse(fs.readFileSync(jobFile.replace(/\.json$/, ".terminal.json"), "utf8"));
   assert.equal(stored.status, "cancelled");
   assert.match(fs.readFileSync(logFile, "utf8"), /Cancelled by user/);
 });
