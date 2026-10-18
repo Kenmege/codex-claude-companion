@@ -21,6 +21,10 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ### Fixed
 
+- A background Codex task no longer stays `queued` forever when its worker
+  starts before the launcher has saved the task request: the request is now
+  saved before the worker starts, and the worker records its own process id
+  and progress.
 - Durable steering messages and acknowledgements now validate content hashes
   and identity, publish atomically, and recover interrupted writes. Worker
   input/output failures terminate the worker instead of being silently ignored.
