@@ -1938,7 +1938,7 @@ test("session end fully cleans up jobs for the ending session", async (t) => {
     }
   });
 
-  const state = loadState(workspace);
+  const state = loadState(repo);
   assert.deepEqual(state.jobs.map((job) => job.id), ["review-other"]);
   const otherJob = state.jobs[0];
   assert.equal(otherJob.logFile, otherSessionLog);
