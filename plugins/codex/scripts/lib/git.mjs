@@ -9,11 +9,11 @@ const DEFAULT_INLINE_DIFF_MAX_FILES = 2;
 const DEFAULT_INLINE_DIFF_MAX_BYTES = 256 * 1024;
 
 function git(cwd, args, options = {}) {
-  return runCommand("git", args, { cwd, ...options });
+  return runCommand("git", args, { cwd, ...options, shell: false });
 }
 
 function gitChecked(cwd, args, options = {}) {
-  return runCommandChecked("git", args, { cwd, ...options });
+  return runCommandChecked("git", args, { cwd, ...options, shell: false });
 }
 
 function listUniqueFiles(...groups) {

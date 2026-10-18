@@ -18,6 +18,7 @@ test("a job update resolves its workspace once and later updates resolve it afre
   let discoveries = 0;
   t.mock.method(childProcess, "spawnSync", (command, args, options) => {
     if (command === "git" && args.join(" ") === "rev-parse --show-toplevel") {
+      if (process.platform === "win32") assert.equal(options.shell, false, "native Git discovery must not start PowerShell");
       discoveries++;
       return { status: 0, stdout: root, stderr: "" };
     }
