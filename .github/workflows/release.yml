@@ -191,7 +191,8 @@ jobs:
             echo "Expected exactly one npm package artifact; found ${#PACKAGES[@]}." >&2
             exit 1
           fi
-          PACKAGE_FILE="${PACKAGES[0]}"
+          # npm reads a bare "dir/file.tgz" argument as GitHub owner/repo shorthand; pass an absolute path.
+          PACKAGE_FILE="$PWD/${PACKAGES[0]}"
           LOCAL_INTEGRITY="$(cat release-artifact/package.integrity)"
           verify_registry_integrity() {
             local registry_integrity=""

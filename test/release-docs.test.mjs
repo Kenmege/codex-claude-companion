@@ -481,6 +481,8 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.match(workflow, /SEMVER_WITHOUT_BUILD="\$\{PACKAGE_VERSION%%\+\*\}"/);
   assert.match(workflow, /if \[\[ "\$SEMVER_WITHOUT_BUILD" == \*-\* \]\]; then[\s\S]{0,120}PUBLISH_TAG="next"/);
   assert.match(publishJob, /npm publish "\$PACKAGE_FILE" --access public --tag "\$PUBLISH_TAG"/);
+  // A relative "release-artifact/x.tgz" is parsed by npm as a GitHub shorthand spec (v1.2.0 tag run failed this way).
+  assert.match(publishJob, /PACKAGE_FILE="\$PWD\/\$\{PACKAGES\[0\]\}"/);
   assert.match(publishJob, /for ATTEMPT in 1 2 3 4 5 6/);
   assert.match(publishJob, /npm view "\$\{PACKAGE_NAME\}@\$\{PUBLISH_TAG\}" version/);
   assert.match(publishJob, /if \[ "\$RESOLVED_VERSION" != "\$VERSION" \]; then/);
