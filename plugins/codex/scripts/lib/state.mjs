@@ -267,7 +267,10 @@ export function publishTerminalJob(cwd, jobId, payload) {
   let existing = {};
   try { existing = JSON.parse(fs.readFileSync(jobFile, "utf8")); }
   catch (error) { if (error.code !== "ENOENT") throw error; }
-  const terminal = {
+  // A terminal base record may predate markers (or come from a legacy writer). Adopt it
+  // unchanged so a later publisher cannot replace the outcome or claim its side effects.
+  const adoptsExistingTerminal = TERMINAL_STATUSES.has(existing.status);
+  const terminal = adoptsExistingTerminal ? existing : {
     ...existing,
     ...payload,
     updatedAt: payload.completedAt ?? payload.updatedAt ?? nowIso()
@@ -287,7 +290,7 @@ export function publishTerminalJob(cwd, jobId, payload) {
     descriptor = undefined;
     try {
       fs.linkSync(temporaryFile, marker);
-      won = true;
+      won = !adoptsExistingTerminal;
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
     }

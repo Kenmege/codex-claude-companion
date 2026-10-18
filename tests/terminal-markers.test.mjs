@@ -7,6 +7,8 @@ import test from "node:test";
 import * as state from "../plugins/codex/scripts/lib/state.mjs";
 import { runTrackedJob } from "../plugins/codex/scripts/lib/tracked-jobs.mjs";
 import { resolveCancelableJob } from "../plugins/codex/scripts/lib/job-control.mjs";
+import { processTreeOwnsJob } from "../plugins/codex/scripts/lib/process.mjs";
+import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
 import { makeTempDir } from "./helpers.mjs";
 
 const script = fileURLToPath(new URL("../plugins/codex/scripts/codex-companion.mjs", import.meta.url));
@@ -20,8 +22,8 @@ function fixture(id = "task-marker") {
   return job;
 }
 function read(job) { return state.readJobFile(state.resolveJobFile(job.workspaceRoot, job.id)); }
-function cancel(job) {
-  return spawnSync(process.execPath, [script, "cancel", job.id, "--cwd", job.workspaceRoot, "--json"], { encoding: "utf8" });
+function cancel(job, env = process.env) {
+  return spawnSync(process.execPath, [script, "cancel", job.id, "--cwd", job.workspaceRoot, "--json"], { encoding: "utf8", env });
 }
 
 test("pruning a terminal job removes its record, marker and log while retaining other jobs", () => {
@@ -100,6 +102,64 @@ test("complete then cancel reports alreadyTerminal without interrupting", async 
   assert.equal(payload.alreadyTerminal, true);
   assert.equal(payload.turnInterruptAttempted, false);
   assert.deepEqual(read(job), before);
+});
+
+for (const status of ["completed", "failed"]) {
+  test(`legacy ${status} without a marker survives exact-id cancellation without stopping its worker`, async (t) => {
+    const job = fixture(`legacy-${status}`);
+    const worker = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "--", script, "task-worker", "--job-id", job.id], {
+      detached: true, stdio: "ignore"
+    });
+    const exited = new Promise(resolve => worker.once("exit", resolve));
+    t.after(async () => { worker.kill(); await exited; });
+    await new Promise((resolve, reject) => { worker.once("spawn", resolve); worker.once("error", reject); });
+    assert.equal(processTreeOwnsJob(worker.pid, job.id), true);
+    const binDir = makeTempDir();
+    installFakeCodex(binDir);
+    const fakeStateFile = path.join(binDir, "fake-codex-state.json");
+    const jobFile = state.resolveJobFile(job.workspaceRoot, job.id);
+    const marker = state.terminalMarkerFile(jobFile);
+    const legacy = {
+      ...job, status, pid: worker.pid, completedAt: "2020-01-01T00:00:00Z",
+      updatedAt: "2020-01-02T00:00:00Z", summary: "original terminal outcome",
+      threadId: "legacy-thread", turnId: "legacy-turn"
+    };
+    // Seed the on-disk format that predates terminal markers.
+    fs.writeFileSync(jobFile, JSON.stringify(legacy));
+    assert.equal(fs.existsSync(marker), false);
+    const result = cancel(job, buildEnv(binDir));
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.alreadyTerminal, true);
+    assert.equal(payload.status, status);
+    assert.equal(payload.turnInterruptAttempted, false);
+    assert.equal(payload.turnInterrupted, false);
+    assert.doesNotThrow(() => process.kill(worker.pid, 0));
+    assert.equal(fs.existsSync(fakeStateFile), false, "cancellation must not start the app-server");
+    assert.deepEqual(read(job), legacy);
+    assert.deepEqual(JSON.parse(fs.readFileSync(marker, "utf8")), legacy);
+    assert.deepEqual(state.listJobs(job.workspaceRoot), [legacy]);
+  });
+}
+
+test("runner completion adopts a cancellation recorded without a terminal marker", async () => {
+  const job = fixture("legacy-cancelled");
+  const jobFile = state.resolveJobFile(job.workspaceRoot, job.id);
+  const marker = state.terminalMarkerFile(jobFile);
+  const logFile = state.resolveJobLogFile(job.workspaceRoot, job.id);
+  const legacy = { ...job, status: "cancelled", completedAt: "2020-01-01T00:00:00Z", summary: "original cancellation" };
+  const result = await runTrackedJob(job, async () => {
+    fs.writeFileSync(jobFile, JSON.stringify(legacy));
+    assert.equal(fs.existsSync(marker), false);
+    return execution;
+  }, { logFile });
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.skipped, false);
+  assert.deepEqual(result.payload, legacy);
+  assert.deepEqual(read(job), legacy);
+  assert.deepEqual(JSON.parse(fs.readFileSync(marker, "utf8")), legacy);
+  assert.deepEqual(state.listJobs(job.workspaceRoot), [legacy]);
+  assert.match(fs.readFileSync(logFile, "utf8"), /output/);
 });
 
 test("cancel before start never invokes the runner", async () => {
