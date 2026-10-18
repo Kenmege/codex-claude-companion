@@ -14,6 +14,7 @@
  *   threadIds: Set<string>,
  *   threadTurnIds: Map<string, string>,
  *   threadLabels: Map<string, string>,
+ *   pendingThreadMetadata: Map<string, { threadName?: string, name?: string, agentNickname?: string, agentRole?: string }>,
  *   turnId: string | null,
  *   bufferedNotifications: AppServerNotification[],
  *   completion: Promise<TurnCaptureState>,
@@ -221,6 +222,8 @@ function registerThread(state, threadId, options = {}) {
   }
 
   state.threadIds.add(threadId);
+  options = { ...state.pendingThreadMetadata.get(threadId), ...options };
+  state.pendingThreadMetadata.delete(threadId);
   const label =
     options.threadName ??
     options.name ??
@@ -231,6 +234,29 @@ function registerThread(state, threadId, options = {}) {
   if (label) {
     state.threadLabels.set(threadId, label);
   }
+}
+
+function threadMetadata(message) {
+  if (message.method === "thread/started") {
+    const thread = message.params.thread;
+    if (!thread?.id) return null;
+    return {
+      threadId: thread.id,
+      options: {
+        threadName: thread.name,
+        name: thread.name,
+        agentNickname: thread.agentNickname,
+        agentRole: thread.agentRole
+      }
+    };
+  }
+  if (message.method === "thread/name/updated" && message.params.threadId) {
+    return {
+      threadId: message.params.threadId,
+      options: { threadName: message.params.threadName ?? null }
+    };
+  }
+  return null;
 }
 
 function describeStartedItem(state, item) {
@@ -309,6 +335,7 @@ function createTurnCaptureState(threadId, options = {}) {
     threadIds: new Set([threadId]),
     threadTurnIds: new Map(),
     threadLabels: new Map(),
+    pendingThreadMetadata: new Map(),
     turnId: null,
     bufferedNotifications: [],
     completion,
@@ -555,12 +582,18 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
   const state = createTurnCaptureState(threadId, options);
   const previousHandler = client.notificationHandler;
 
-  // One routing rule for live and buffered notifications. Thread announcements are always applied:
-  // a subagent's thread is not tracked yet when it is announced, so belongsToTurn() cannot claim it,
-  // and an announcement that raced ahead of the turn/start response used to be forwarded away,
-  // leaving the subagent logged by its thread id instead of its name.
+  // Use one route for live and buffered events. Announcements supply labels, not ownership.
+  // Keep early metadata until an owned collaboration names the receiver, preserving labels
+  // even when the announcement arrives before the turn/start response.
   const route = (message) => {
-    if (message.method === "thread/started" || message.method === "thread/name/updated" || belongsToTurn(state, message)) {
+    const metadata = threadMetadata(message);
+    if (metadata && !state.threadIds.has(metadata.threadId)) {
+      state.pendingThreadMetadata.set(metadata.threadId, {
+        ...state.pendingThreadMetadata.get(metadata.threadId),
+        ...metadata.options
+      });
+      previousHandler?.(message);
+    } else if (metadata || belongsToTurn(state, message)) {
       applyTurnNotification(state, message);
     } else if (previousHandler) {
       previousHandler(message);
@@ -594,6 +627,7 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
     return await state.completion;
   } finally {
     clearCompletionTimer(state);
+    state.pendingThreadMetadata.clear();
     client.setNotificationHandler(previousHandler ?? null);
   }
 }
@@ -953,7 +987,7 @@ export async function runAppServerReview(cwd, options = {}) {
         onProgress: options.onProgress,
         onResponse(response, state) {
           if (response.reviewThreadId) {
-            state.threadIds.add(response.reviewThreadId);
+            registerThread(state, response.reviewThreadId);
             if (delivery === "detached") {
               state.threadId = response.reviewThreadId;
             }

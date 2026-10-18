@@ -383,6 +383,22 @@ rl.on("line", (line) => {
 	          prompt
 	        };
 	        saveState(state);
+        // Foreign thread metadata must not make its subsequent events part of this task.
+        const emitUnrelatedThread = () => {
+          const foreignId = "unrelated-thread";
+          const foreignTurn = "unrelated-turn";
+          if (BEHAVIOR.includes("unrelated-name")) {
+            send({ method: "thread/name/updated", params: { threadId: foreignId, threadName: "UNRELATED_OWNER" } });
+          } else {
+            send({ method: "thread/started", params: { thread: { id: foreignId, name: "UNRELATED_OWNER" } } });
+          }
+          send({ method: "turn/started", params: { threadId: foreignId, turn: buildTurn(foreignTurn) } });
+          send({ method: "item/completed", params: {
+            threadId: foreignId, turnId: foreignTurn,
+            item: { type: "agentMessage", id: "foreign-message", text: "UNRELATED_OUTPUT", phase: "final_answer" }
+          } });
+        };
+        if (BEHAVIOR.startsWith("with-unrelated-") && BEHAVIOR.endsWith("before-response")) emitUnrelatedThread();
         // Announce the subagent before answering turn/start, so the client must buffer the announcement.
         let announcedSubThread = null;
         if (BEHAVIOR === "with-subagent-announced-before-response") {
@@ -393,6 +409,7 @@ rl.on("line", (line) => {
           send({ method: "thread/started", params: { thread: { ...buildThread(announcedRecord), name: "design-challenger", agentNickname: "design-challenger" } } });
         }
 	        send({ id: message.id, result: { turn: buildTurn(turnId) } });
+        if (BEHAVIOR.startsWith("with-unrelated-") && BEHAVIOR.endsWith("after-response")) emitUnrelatedThread();
 
         const payload = message.params.outputSchema && message.params.outputSchema.properties && message.params.outputSchema.properties.verdict
           ? structuredReviewPayload(prompt)

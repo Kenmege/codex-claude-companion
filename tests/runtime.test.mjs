@@ -760,6 +760,28 @@ test("task logs subagent reasoning and messages with a subagent prefix", () => {
   );
 });
 
+for (const announcement of ["thread", "name"]) {
+  for (const timing of ["before-response", "after-response"]) {
+    test(`task ignores unrelated ${announcement} announcements ${timing}`, () => {
+      const repo = makeTempDir();
+      const binDir = makeTempDir();
+      installFakeCodex(binDir, `with-unrelated-${announcement}-${timing}`);
+      initGitRepo(repo);
+      fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+      run("git", ["add", "README.md"], { cwd: repo });
+      run("git", ["commit", "-m", "init"], { cwd: repo });
+      const result = run("node", [SCRIPT, "task", "challenge the current design"], {
+        cwd: repo, env: buildEnv(binDir)
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const state = JSON.parse(fs.readFileSync(path.join(resolveStateDir(repo), "state.json"), "utf8"));
+      const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
+      assert.doesNotMatch(log, /UNRELATED_OWNER|UNRELATED_OUTPUT|unrelated-turn/);
+      assert.doesNotMatch(result.stdout, /UNRELATED/);
+    });
+  }
+}
+
 test("task keeps the subagent label when the subagent is announced before the turn/start response", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
