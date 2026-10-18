@@ -157,7 +157,7 @@ jobs:
     runs-on: ubuntu-latest
     # Leave headroom for the ten-minute registry propagation wait, setup,
     # publishing, and the separate dist-tag check.
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: read
       id-token: write
@@ -196,12 +196,15 @@ jobs:
           # npm reads a bare "dir/file.tgz" argument as GitHub owner/repo shorthand; pass an absolute path.
           PACKAGE_FILE="$PWD/${PACKAGES[0]}"
           LOCAL_INTEGRITY="$(cat release-artifact/package.integrity)"
+          # --prefer-online revalidates npm's local cache on every poll, so a just-published
+          # version is seen as soon as the registry serves it.
+          npm_view() { npm view --prefer-online "$@" 2>/dev/null || true; }
           verify_registry_integrity() {
             local registry_integrity=""
             # npm can accept a publish minutes before its version record is
             # readable. Allow 60 ten-second intervals, checking immediately.
             for ((ATTEMPT=1; ATTEMPT<=61; ATTEMPT++)); do
-              registry_integrity="$(npm view "${PACKAGE_NAME}@${VERSION}" dist.integrity 2>/dev/null || true)"
+              registry_integrity="$(npm_view "${PACKAGE_NAME}@${VERSION}" dist.integrity)"
               if [ -n "$registry_integrity" ]; then
                 break
               fi
@@ -216,13 +219,31 @@ jobs:
               exit 1
             fi
           }
-          RESOLVED_VERSION="$(npm view "${PACKAGE_NAME}@${VERSION}" version 2>/dev/null || true)"
+          RESOLVED_VERSION="$(npm_view "${PACKAGE_NAME}@${VERSION}" version)"
           if [ "$RESOLVED_VERSION" = "$VERSION" ]; then
             verify_registry_integrity
             echo "Package ${PACKAGE_NAME}@${VERSION} already exists with identical integrity; skipping npm publish."
           else
-            if ! npm publish "$PACKAGE_FILE" --access public --tag "$PUBLISH_TAG"; then
-              RESOLVED_VERSION="$(npm view "${PACKAGE_NAME}@${VERSION}" version 2>/dev/null || true)"
+            PUBLISH_LOG="$(mktemp)"
+            # No pipe: this step runs under bash -e without pipefail, so a pipe would hide npm's exit status.
+            if npm publish "$PACKAGE_FILE" --access public --tag "$PUBLISH_TAG" > "$PUBLISH_LOG" 2>&1; then
+              cat "$PUBLISH_LOG"
+            else
+              cat "$PUBLISH_LOG"
+              # Only a version conflict means another publish of this version won; it may not be
+              # readable yet, so wait for it. Any other failure (auth, network) fails immediately.
+              if ! grep -qi "previously published" "$PUBLISH_LOG"; then
+                echo "npm publish failed and ${PACKAGE_NAME}@${VERSION} was not published by another run." >&2
+                exit 1
+              fi
+              RESOLVED_VERSION=""
+              for ((ATTEMPT=1; ATTEMPT<=61; ATTEMPT++)); do
+                RESOLVED_VERSION="$(npm_view "${PACKAGE_NAME}@${VERSION}" version)"
+                if [ "$RESOLVED_VERSION" = "$VERSION" ]; then
+                  break
+                fi
+                if [ "$ATTEMPT" -lt 61 ]; then sleep 10; fi
+              done
               if [ "$RESOLVED_VERSION" != "$VERSION" ]; then
                 echo "npm publish failed and ${PACKAGE_NAME}@${VERSION} is not present in the registry." >&2
                 exit 1
@@ -233,13 +254,14 @@ jobs:
           fi
           verify_registry_integrity
           RESOLVED_VERSION=""
-          for ATTEMPT in 1 2 3 4 5 6; do
-            RESOLVED_VERSION="$(npm view "${PACKAGE_NAME}@${PUBLISH_TAG}" version 2>/dev/null || true)"
+          # The dist-tag can lag the version record; allow the same 10-minute window.
+          for ((ATTEMPT=1; ATTEMPT<=61; ATTEMPT++)); do
+            RESOLVED_VERSION="$(npm_view "${PACKAGE_NAME}@${PUBLISH_TAG}" version)"
             if [ "$RESOLVED_VERSION" = "$VERSION" ]; then
               break
             fi
-            if [ "$ATTEMPT" -lt 6 ]; then
-              sleep 5
+            if [ "$ATTEMPT" -lt 61 ]; then
+              sleep 10
             fi
           done
           if [ "$RESOLVED_VERSION" != "$VERSION" ]; then

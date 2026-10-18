@@ -473,14 +473,21 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.doesNotMatch(workflow, /npm install --global/);
   assert.match(publishJob, /sha256sum --check package\.sha256/);
   assert.match(publishJob, /Expected exactly one npm package artifact/);
-  assert.match(publishJob, /npm view "\$\{PACKAGE_NAME\}@\$\{VERSION\}" version/);
+  // Every registry poll revalidates npm's cache so a just-published version is seen promptly.
+  assert.match(publishJob, /npm_view\(\) \{ npm view --prefer-online "\$@" 2>\/dev\/null \|\| true; \}/);
+  assert.doesNotMatch(publishJob.replace(/npm_view\(\) \{[^\n]*\n/, ""), /\bnpm view /);
+  assert.match(publishJob, /npm_view "\$\{PACKAGE_NAME\}@\$\{VERSION\}" version/);
   assert.match(publishJob, /verify_registry_integrity/);
-  assert.match(publishJob, /npm view "\$\{PACKAGE_NAME\}@\$\{VERSION\}" dist\.integrity/);
+  assert.match(publishJob, /npm_view "\$\{PACKAGE_NAME\}@\$\{VERSION\}" dist\.integrity/);
   assert.match(publishJob, /already exists with identical integrity; skipping npm publish/);
   assert.match(workflow, /PUBLISH_TAG="latest"/);
   assert.match(workflow, /SEMVER_WITHOUT_BUILD="\$\{PACKAGE_VERSION%%\+\*\}"/);
   assert.match(workflow, /if \[\[ "\$SEMVER_WITHOUT_BUILD" == \*-\* \]\]; then[\s\S]{0,120}PUBLISH_TAG="next"/);
-  assert.match(publishJob, /npm publish "\$PACKAGE_FILE" --access public --tag "\$PUBLISH_TAG"/);
+  assert.match(publishJob, /npm publish "\$PACKAGE_FILE" --access public --tag "\$PUBLISH_TAG" > "\$PUBLISH_LOG" 2>&1/);
+  // The step runs under bash -e without pipefail: a pipe after npm publish would hide its exit status.
+  assert.doesNotMatch(publishJob, /npm publish [^\n]*\|/);
+  // Only a version conflict waits for another run's publish; other failures stop immediately.
+  assert.match(publishJob, /if ! grep -qi "previously published" "\$PUBLISH_LOG"; then\n\s+echo "npm publish failed[^\n]*"[^\n]*\n\s+exit 1/);
   // A relative "release-artifact/x.tgz" is parsed by npm as a GitHub shorthand spec (v1.2.0 tag run failed this way).
   assert.match(publishJob, /PACKAGE_FILE="\$PWD\/\$\{PACKAGES\[0\]\}"/);
   const integrityCheck = publishJob.match(/verify_registry_integrity\(\) \{[\s\S]*?^          \}/m)?.[0] ?? "";
@@ -492,9 +499,9 @@ test("npmjs release configuration is public and trusted-publisher safe", () => {
   assert.match(integrityCheck, /if \[ -z "\$registry_integrity" \]; then\s+echo "::error::npm version \$\{PACKAGE_NAME\}@\$\{VERSION\} did not become available with integrity after 10 minutes\."\s+exit 1\s+fi/);
   assert.match(integrityCheck, /if \[ "\$registry_integrity" != "\$LOCAL_INTEGRITY" \]; then\s+echo "::error::npm artifact integrity for \$\{PACKAGE_NAME\}@\$\{VERSION\} did not match the validated tarball\."\s+exit 1/);
   // Leave room for setup, publishing, and dist-tag verification around the wait.
-  assert.match(publishJob, /timeout-minutes: 20/);
-  assert.match(publishJob, /RESOLVED_VERSION=""\s+for ATTEMPT in 1 2 3 4 5 6; do/);
-  assert.match(publishJob, /npm view "\$\{PACKAGE_NAME\}@\$\{PUBLISH_TAG\}" version/);
+  assert.match(publishJob, /timeout-minutes: 40/);
+  assert.match(publishJob, /RESOLVED_VERSION=""\n[ \t]+# [^\n]*\n[ \t]+for \(\(ATTEMPT=1; ATTEMPT<=61; ATTEMPT\+\+\)\); do\n[ \t]+RESOLVED_VERSION="\$\(npm_view "\$\{PACKAGE_NAME\}@\$\{PUBLISH_TAG\}" version\)"/);
+  assert.match(publishJob, /npm_view "\$\{PACKAGE_NAME\}@\$\{PUBLISH_TAG\}" version/);
   assert.match(publishJob, /if \[ "\$RESOLVED_VERSION" != "\$VERSION" \]; then/);
   assert.match(publishJob, /npm dist-tag \$\{PUBLISH_TAG\} resolved to \$\{RESOLVED_VERSION:-<missing>\}, expected \$\{VERSION\}/);
 
