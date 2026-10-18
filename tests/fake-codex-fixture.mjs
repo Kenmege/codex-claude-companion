@@ -111,8 +111,11 @@ function buildConfigReadResult() {
   }
 }
 
+let outgoingBatch = null;
 function send(message) {
-  process.stdout.write(JSON.stringify(message) + "\\n");
+  const line = JSON.stringify(message) + "\\n";
+  if (outgoingBatch) outgoingBatch.push(line);
+  else process.stdout.write(line);
 }
 
 function nextThread(state, cwd, ephemeral) {
@@ -405,6 +408,9 @@ rl.on("line", (line) => {
           } });
         };
         if (BEHAVIOR.startsWith("with-unrelated-") && BEHAVIOR.endsWith("before-response")) emitUnrelatedThread();
+        // A response and its following notifications may arrive in one read, before
+        // the client's awaiting continuation runs. Make that interleaving repeatable.
+        if (BEHAVIOR.startsWith("with-early-subagent-")) outgoingBatch = [];
         const emitEarlySubagent = () => {
           const childId = "early-child";
           const childTurn = "early-turn";
@@ -475,6 +481,8 @@ rl.on("line", (line) => {
             item: { type: "collabAgentToolCall", id: "early-collab", tool: "wait", status: "completed", receiverThreadIds: ["early-child"] } } });
           send({ method: "item/completed", params: { threadId: thread.id, turnId,
             item: { type: "agentMessage", id: "root-final", text: payload, phase: "final_answer" } } });
+          process.stdout.write(outgoingBatch.join(""));
+          outgoingBatch = null;
           // No root completion: inference succeeds only if the child's completion was replayed.
           break;
         }

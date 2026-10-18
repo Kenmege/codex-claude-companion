@@ -111,7 +111,8 @@ function buildTaskThreadName(prompt) {
 }
 
 function extractThreadId(message) {
-  return message?.params?.threadId ?? null;
+  // thread/started nests its identity; route it in wire order even before turn/start resolves.
+  return message?.params?.threadId ?? message?.params?.thread?.id ?? null;
 }
 
 function extractTurnId(message) {

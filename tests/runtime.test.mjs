@@ -812,7 +812,7 @@ for (const timing of ["before-response", "after-response", "overflow-count", "ov
     const label = ["overflow-count", "overflow-bytes", "overflow-threads", "metadata-threads", "metadata-name-threads"].includes(timing)
       ? "early-child"
       : ["metadata-count", "metadata-bytes"].includes(timing) ? "recent-worker" : "early-worker";
-    assert.ok(log.includes(`Subagent ${label}: EARLY_FIRST`));
+    assert.ok(log.includes(`Subagent ${label}: EARLY_FIRST`), log);
     assert.ok(log.includes(`Subagent ${label}: EARLY_SECOND`));
     assert.doesNotMatch(log, /OVERSIZED_NAME|foreign-worker/);
     assert.ok(log.indexOf("EARLY_FIRST") < log.indexOf("EARLY_SECOND"));
