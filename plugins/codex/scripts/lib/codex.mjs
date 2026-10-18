@@ -597,6 +597,7 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
       logTitle: "Pending thread buffer overflow",
       logBody: "Limits: 64 threads, 128 events and 262144 UTF-8 JSON bytes per thread. " +
         "Drop oldest thread at thread limit, oldest events at count/byte limits, oversized incoming events. " +
+        "Deferred metadata shares these limits and is evicted with its events. " +
         "This diagnostic is emitted once per capture."
     });
   };
@@ -608,7 +609,9 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
     }
     if (!pendingEvents.has(id)) {
       if (pendingEvents.size >= PENDING_THREAD_LIMIT) {
-        pendingEvents.delete(pendingEvents.keys().next().value);
+        const oldestId = pendingEvents.keys().next().value;
+        pendingEvents.delete(oldestId);
+        state.pendingThreadMetadata.delete(oldestId);
         reportDrop();
       }
       pendingEvents.set(id, { events: [], bytes: 0 });
@@ -620,18 +623,24 @@ async function captureTurn(client, threadId, startRequest, options = {}) {
     }
     queue.events.push({ message, bytes });
     queue.bytes += bytes;
+    // Labels are derived only from retained announcements. Rebuild after eviction so
+    // a dropped announcement cannot survive in this index (including merged fields).
+    state.pendingThreadMetadata.delete(id);
+    let options = null;
+    for (const entry of queue.events) {
+      const metadata = threadMetadata(entry.message);
+      if (metadata) options = { ...options, ...metadata.options };
+    }
+    if (options) state.pendingThreadMetadata.set(id, options);
   };
 
   // Use one route for live and buffered events. Announcements supply labels, not ownership.
-  // Keep early metadata until an owned collaboration names the receiver, preserving labels
-  // even when the announcement arrives before the turn/start response.
+  // Keep early metadata in the bounded queue until an owned collaboration names the
+  // receiver, preserving retained labels even before the turn/start response.
   const route = (message) => {
     const metadata = threadMetadata(message);
     if (metadata && !state.threadIds.has(metadata.threadId)) {
-      state.pendingThreadMetadata.set(metadata.threadId, {
-        ...state.pendingThreadMetadata.get(metadata.threadId),
-        ...metadata.options
-      });
+      hold(metadata.threadId, message);
       previousHandler?.(message);
     } else if (metadata || belongsToTurn(state, message)) {
       applyTurnNotification(state, message);

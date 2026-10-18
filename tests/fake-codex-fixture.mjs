@@ -409,6 +409,22 @@ rl.on("line", (line) => {
           const childId = "early-child";
           const childTurn = "early-turn";
           send({ method: "thread/started", params: { thread: { id: childId, name: "early-worker" } } });
+          if (BEHAVIOR.includes("metadata-")) {
+            const name = (id, value) => send({ method: "thread/name/updated", params: { threadId: id, threadName: value } });
+            if (BEHAVIOR.endsWith("oversized")) {
+              name(childId, "OVERSIZED_NAME" + "界".repeat(90000));
+            } else if (BEHAVIOR.endsWith("count")) {
+              for (let i = 0; i < 130; i++) name(childId, "recent-worker");
+            } else if (BEHAVIOR.endsWith("bytes")) {
+              for (let i = 0; i < 4; i++) name(childId, "界".repeat(30000));
+              name(childId, "recent-worker");
+            } else {
+              for (let i = 0; i < (BEHAVIOR.endsWith("at-limit") ? 63 : 64); i++) {
+                if (BEHAVIOR.endsWith("name-threads")) name("foreign-" + i, "foreign-worker");
+                else send({ method: "thread/started", params: { thread: { id: "foreign-" + i, name: "foreign-worker" } } });
+              }
+            }
+          }
           send({ method: "turn/started", params: { threadId: childId, turn: buildTurn(childTurn) } });
           const earlyMessage = (text, id = childId) => send({ method: "item/completed", params: {
             threadId: id, turnId: childTurn,
@@ -447,7 +463,7 @@ rl.on("line", (line) => {
         }
 	        send({ id: message.id, result: { turn: buildTurn(turnId) } });
         if (BEHAVIOR.startsWith("with-unrelated-") && BEHAVIOR.endsWith("after-response")) emitUnrelatedThread();
-        if (BEHAVIOR === "with-early-subagent-after-response" || BEHAVIOR.includes("early-subagent-overflow")) emitEarlySubagent();
+        if (BEHAVIOR === "with-early-subagent-after-response" || BEHAVIOR.includes("early-subagent-overflow") || BEHAVIOR.includes("early-subagent-metadata-")) emitEarlySubagent();
 
         const payload = message.params.outputSchema && message.params.outputSchema.properties && message.params.outputSchema.properties.verdict
           ? structuredReviewPayload(prompt)

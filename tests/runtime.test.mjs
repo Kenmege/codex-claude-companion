@@ -793,7 +793,8 @@ test("task logs subagent reasoning and messages with a subagent prefix", () => {
   );
 });
 
-for (const timing of ["before-response", "after-response", "overflow-count", "overflow-bytes", "overflow-oversized", "overflow-threads"]) {
+for (const timing of ["before-response", "after-response", "overflow-count", "overflow-bytes", "overflow-oversized", "overflow-threads",
+  "metadata-threads", "metadata-name-threads", "metadata-oversized", "metadata-count", "metadata-bytes", "metadata-at-limit"]) {
   test(`task replays early subagent events in order ${timing}`, () => {
     const repo = makeTempDir();
     const binDir = makeTempDir();
@@ -808,12 +809,16 @@ for (const timing of ["before-response", "after-response", "overflow-count", "ov
     assert.equal(result.status, 0, result.stderr);
     const state = JSON.parse(fs.readFileSync(path.join(resolveStateDir(repo), "state.json"), "utf8"));
     const log = fs.readFileSync(state.jobs[0].logFile, "utf8");
-    assert.match(log, /Subagent early-worker: EARLY_FIRST/);
-    assert.match(log, /Subagent early-worker: EARLY_SECOND/);
+    const label = ["overflow-count", "overflow-bytes", "overflow-threads", "metadata-threads", "metadata-name-threads"].includes(timing)
+      ? "early-child"
+      : ["metadata-count", "metadata-bytes"].includes(timing) ? "recent-worker" : "early-worker";
+    assert.ok(log.includes(`Subagent ${label}: EARLY_FIRST`));
+    assert.ok(log.includes(`Subagent ${label}: EARLY_SECOND`));
+    assert.doesNotMatch(log, /OVERSIZED_NAME|foreign-worker/);
     assert.ok(log.indexOf("EARLY_FIRST") < log.indexOf("EARLY_SECOND"));
     assert.match(log, /Turn completion inferred/);
     assert.doesNotMatch(log, /DROP_OLD|UNRELATED_OUTPUT/);
-    if (timing.startsWith("overflow")) {
+    if (timing.startsWith("overflow") || (timing.startsWith("metadata") && timing !== "metadata-at-limit")) {
       assert.equal((log.match(/Pending thread buffer overflow/g) ?? []).length, 1);
       assert.match(log, /Drop oldest thread.*oldest events.*oversized incoming events/);
     } else {
