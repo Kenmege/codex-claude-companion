@@ -116,7 +116,8 @@ test("run-tests fails a passing run when it cannot remove the private temporary 
   fs.mkdirSync(locked);
   fs.writeFileSync(path.join(locked, "file"), "x");
   fs.chmodSync(locked, 0o500);`);
-  const result = run([path.join(directory, "probe.test.mjs")], { cwd: directory, report });
+  // This assertion consumes TAP; select it explicitly across Node versions.
+  const result = run(["--test-reporter=tap", path.join(directory, "probe.test.mjs")], { cwd: directory, report });
   const temporaryRoot = fs.readFileSync(report, "utf8");
   t.after(() => {
     fs.chmodSync(path.join(temporaryRoot, "locked"), 0o700);
