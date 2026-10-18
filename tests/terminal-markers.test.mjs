@@ -70,7 +70,7 @@ for (const missing of ["record", "marker", "both"]) {
     const marker = state.terminalMarkerFile(jobFile);
     if (missing !== "marker") fs.unlinkSync(jobFile);
     if (missing !== "record") fs.unlinkSync(marker);
-    state.saveState(job.workspaceRoot, { jobs: [] });
+    state.removeJobs(job.workspaceRoot, [job]);
     assert.equal(fs.existsSync(jobFile), false);
     assert.equal(fs.existsSync(marker), false);
     assert.deepEqual(state.listJobs(job.workspaceRoot), []);
@@ -112,7 +112,7 @@ test("cancel before start never invokes the runner", async () => {
   assert.equal(result.skipped, true);
 });
 
-test("a marker left before index update self-heals on record read and status listing", () => {
+test("a marker left after a crash overlays record reads and status without a shared index", () => {
   const job = fixture();
   const jobFile = state.resolveJobFile(job.workspaceRoot, job.id);
   const terminal = { ...job, status: "cancelled", pid: null, completedAt: "2026-10-18T00:00:00Z" };
@@ -120,12 +120,9 @@ test("a marker left before index update self-heals on record read and status lis
   fs.writeFileSync(temp, JSON.stringify(terminal));
   fs.linkSync(temp, jobFile.replace(/\.json$/, ".terminal.json"));
   fs.unlinkSync(temp);
-  const stale = fs.readFileSync(state.resolveStateFile(job.workspaceRoot), "utf8");
   assert.equal(read(job).status, "cancelled");
-  assert.equal(JSON.parse(fs.readFileSync(state.resolveStateFile(job.workspaceRoot))).jobs[0].status, "cancelled");
-  fs.writeFileSync(state.resolveStateFile(job.workspaceRoot), stale);
   assert.equal(state.listJobs(job.workspaceRoot)[0].status, "cancelled");
-  assert.equal(JSON.parse(fs.readFileSync(state.resolveStateFile(job.workspaceRoot))).jobs[0].status, "cancelled");
+  assert.equal(fs.existsSync(state.resolveStateFile(job.workspaceRoot)), false);
 });
 
 test("concurrent processes publish exactly one terminal winner and all adopt it", async () => {

@@ -5,7 +5,7 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 
 import { makeTempDir } from "./helpers.mjs";
-import { readJobFile, resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState, writeJobFile } from "../plugins/codex/scripts/lib/state.mjs";
+import { loadState, readJobFile, resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState, writeJobFile } from "../plugins/codex/scripts/lib/state.mjs";
 
 // A live Claude Code session exports CLAUDE_PLUGIN_DATA, which resolveStateDir
 // prefers over the temp-backed default. Scrub it at module load so the default
@@ -56,27 +56,17 @@ test("resolveStateDir uses CLAUDE_PLUGIN_DATA when it is provided", () => {
 test("saveState atomically replaces the state snapshot", { skip: process.platform === "win32" }, () => {
   const workspace = makeTempDir();
   const stateFile = resolveStateFile(workspace);
-  const firstJob = {
-    id: "job-first",
-    status: "completed",
-    updatedAt: "2026-07-11T15:00:00.000Z"
-  };
-  const secondJob = {
-    id: "job-second",
-    status: "completed",
-    updatedAt: "2026-07-11T15:01:00.000Z"
-  };
-
-  saveState(workspace, { jobs: [firstJob] });
+  saveState(workspace, { config: { stopReviewGate: false } });
   const previousSnapshot = fs.openSync(stateFile, "r");
 
   try {
-    saveState(workspace, { jobs: [secondJob] });
+    saveState(workspace, { config: { stopReviewGate: true } });
 
     const oldState = JSON.parse(fs.readFileSync(previousSnapshot, "utf8"));
     const newState = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-    assert.equal(oldState.jobs[0].id, firstJob.id);
-    assert.equal(newState.jobs[0].id, secondJob.id);
+    assert.equal(oldState.config.stopReviewGate, false);
+    assert.equal(newState.config.stopReviewGate, true);
+    assert.equal(Object.hasOwn(newState, "jobs"), false);
   } finally {
     fs.closeSync(previousSnapshot);
   }
@@ -192,7 +182,8 @@ test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", 
   assert.equal(fs.existsSync(retainedJobFile), true);
   assert.equal(fs.existsSync(retainedLogFile), true);
 
-  const savedState = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+  const savedState = loadState(workspace);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(stateFile, "utf8")), "jobs"), false);
   assert.equal(savedState.jobs.length, 50);
   assert.deepEqual(
     savedState.jobs.map((job) => job.id),

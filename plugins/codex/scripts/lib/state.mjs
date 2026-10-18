@@ -27,18 +27,6 @@ function readTerminalMarker(jobFile) {
   }
 }
 
-function reconcileJobs(state, stateDir) {
-  let changed = false;
-  state.jobs = state.jobs.map((job) => {
-    const marker = readTerminalMarker(path.join(stateDir, JOBS_DIR_NAME, `${job.id}.json`));
-    if (!marker) return job;
-    const next = { ...job, ...marker };
-    if (JSON.stringify(next) !== JSON.stringify(job)) changed = true;
-    return next;
-  });
-  return changed;
-}
-
 function nowIso() {
   return new Date().toISOString();
 }
@@ -48,8 +36,7 @@ function defaultState() {
     version: STATE_VERSION,
     config: {
       stopReviewGate: false
-    },
-    jobs: []
+    }
   };
 }
 
@@ -82,46 +69,80 @@ export function ensureStateDir(cwd) {
   fs.mkdirSync(resolveJobsDir(cwd), { recursive: true });
 }
 
-export function loadState(cwd) {
+function loadConfiguration(cwd) {
   const stateFile = resolveStateFile(cwd);
   if (!fs.existsSync(stateFile)) {
     return defaultState();
   }
 
-  let state;
+  let parsed;
   try {
-    const parsed = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-    state = {
-      ...defaultState(),
-      ...parsed,
-      config: {
-        ...defaultState().config,
-        ...(parsed.config ?? {})
-      },
-      jobs: Array.isArray(parsed.jobs) ? parsed.jobs : []
-    };
+    parsed = JSON.parse(fs.readFileSync(stateFile, "utf8"));
   } catch {
     return defaultState();
   }
-  if (reconcileJobs(state, path.dirname(stateFile))) writeJsonAtomic(stateFile, state);
+  const state = {
+    ...defaultState(),
+    config: { ...defaultState().config, ...(parsed.config ?? {}) }
+  };
+  if (Array.isArray(parsed.jobs)) {
+    // Legacy summaries and timestamps sometimes existed only in the index. Keep those fields,
+    // but prefer an existing per-job record for fields present in both places. Finish every file
+    // before retiring the legacy array; a failed migration can safely be retried.
+    ensureStateDir(cwd);
+    for (const legacy of parsed.jobs) {
+      const jobFile = resolveJobFile(cwd, legacy.id);
+      let existing;
+      try { existing = JSON.parse(fs.readFileSync(jobFile, "utf8")); }
+      catch (error) { if (error.code !== "ENOENT") throw error; }
+      if (existing) {
+        const merged = { ...legacy, ...existing };
+        if (JSON.stringify(merged) !== JSON.stringify(existing)) writeJsonAtomic(jobFile, merged);
+      } else {
+        writeJsonAtomic(jobFile, legacy, { exclusive: true });
+      }
+    }
+    writeJsonAtomic(stateFile, state);
+  }
   return state;
 }
 
-function pruneJobs(jobs) {
-  return [...jobs]
-    .sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")))
-    .slice(0, MAX_JOBS);
+function readJobs(cwd) {
+  const jobsDir = resolveJobsDir(cwd);
+  let names;
+  try { names = fs.readdirSync(jobsDir); }
+  catch (error) { if (error.code === "ENOENT") return []; throw error; }
+  const jobs = [];
+  for (const name of names) {
+    if (!name.endsWith(".json") || name.endsWith(".terminal.json")) continue;
+    try { jobs.push(readJobFile(path.join(jobsDir, name))); }
+    catch (error) { if (error.code !== "ENOENT") throw error; } // A concurrent prune may remove it.
+  }
+  return jobs.sort((left, right) =>
+    String(right.updatedAt ?? right.createdAt ?? "").localeCompare(String(left.updatedAt ?? left.createdAt ?? "")) ||
+    String(left.id).localeCompare(String(right.id)));
+}
+
+export function loadState(cwd) {
+  const state = loadConfiguration(cwd);
+  return { ...state, jobs: readJobs(cwd) };
+}
+
+function pruneJobs(cwd) {
+  const jobs = readJobs(cwd);
+  removeJobs(cwd, jobs.slice(MAX_JOBS));
+  return jobs.slice(0, MAX_JOBS);
 }
 
 function removeFileIfExists(filePath) {
-  if (filePath && fs.existsSync(filePath)) {
-    fs.unlinkSync(filePath);
-  }
+  if (!filePath) return;
+  try { fs.unlinkSync(filePath); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
 }
 
 // Every JSON record another process may read while it is rewritten goes through here: readers see the
 // old record or the new one, never a truncated file.
-export function writeJsonAtomic(filePath, payload) {
+export function writeJsonAtomic(filePath, payload, { exclusive = false } = {}) {
   const temporaryFile = `${filePath}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}.tmp`;
   let fileDescriptor;
   try {
@@ -130,7 +151,12 @@ export function writeJsonAtomic(filePath, payload) {
     fs.fsyncSync(fileDescriptor);
     fs.closeSync(fileDescriptor);
     fileDescriptor = undefined;
-    fs.renameSync(temporaryFile, filePath);
+    if (exclusive) {
+      try { fs.linkSync(temporaryFile, filePath); }
+      catch (error) { if (error.code !== "EEXIST") throw error; }
+    } else {
+      fs.renameSync(temporaryFile, filePath);
+    }
   } finally {
     if (fileDescriptor !== undefined) {
       try {
@@ -148,34 +174,24 @@ export function writeJsonAtomic(filePath, payload) {
 }
 
 export function saveState(cwd, state) {
-  const previousJobs = loadState(cwd).jobs;
+  loadConfiguration(cwd);
   ensureStateDir(cwd);
-  reconcileJobs(state, resolveStateDir(cwd));
-  const nextJobs = pruneJobs(state.jobs ?? []);
   const nextState = {
     version: STATE_VERSION,
     config: {
       ...defaultState().config,
       ...(state.config ?? {})
-    },
-    jobs: nextJobs
-  };
-
-  const retainedIds = new Set(nextJobs.map((job) => job.id));
-  for (const job of previousJobs) {
-    if (retainedIds.has(job.id)) {
-      continue;
     }
-    removeJobFile(resolveJobFile(cwd, job.id));
-    removeFileIfExists(job.logFile);
-  }
-
+  };
+  // Configuration remains an atomic, last-writer-wins snapshot. Concurrent configuration edits
+  // (including migration's retirement of the legacy array) are not serialized. Job updates never
+  // rewrite this snapshot after migration.
   writeJsonAtomic(resolveStateFile(cwd), nextState);
-  return nextState;
+  return { ...nextState, jobs: pruneJobs(cwd) };
 }
 
 export function updateState(cwd, mutate) {
-  const state = loadState(cwd);
+  const state = loadConfiguration(cwd);
   mutate(state);
   return saveState(cwd, state);
 }
@@ -186,36 +202,23 @@ export function generateJobId(prefix = "job") {
 }
 
 export function upsertJob(cwd, jobPatch) {
-  if (TERMINAL_STATUSES.has(jobPatch.status)) {
-    const jobFile = resolveJobFile(cwd, jobPatch.id);
-    let existing = {};
-    try { existing = JSON.parse(fs.readFileSync(jobFile, "utf8")); }
-    catch (error) { if (error.code !== "ENOENT") throw error; }
-    publishTerminalJob(cwd, jobPatch.id, { ...existing, ...jobPatch });
-  }
-  return updateState(cwd, (state) => {
-    const timestamp = nowIso();
-    const existingIndex = state.jobs.findIndex((job) => job.id === jobPatch.id);
-    if (existingIndex === -1) {
-      state.jobs.unshift({
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        ...jobPatch
-      });
-      return;
-    }
-    state.jobs[existingIndex] = {
-      ...state.jobs[existingIndex],
-      ...jobPatch,
-      updatedAt: timestamp
-    };
+  const state = loadConfiguration(cwd);
+  const jobFile = resolveJobFile(cwd, jobPatch.id);
+  let existing = {};
+  try { existing = readJobFile(jobFile); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  const timestamp = nowIso();
+  writeJobFile(cwd, jobPatch.id, {
+    createdAt: timestamp,
+    ...existing,
+    ...jobPatch,
+    updatedAt: jobPatch.updatedAt ?? timestamp
   });
+  return { ...state, jobs: pruneJobs(cwd) };
 }
 
 export function listJobs(cwd) {
-  const state = loadState(cwd);
-  if (reconcileJobs(state, resolveStateDir(cwd))) writeJsonAtomic(resolveStateFile(cwd), state);
-  return state.jobs;
+  return loadState(cwd).jobs;
 }
 
 export function setConfig(cwd, key, value) {
@@ -228,7 +231,7 @@ export function setConfig(cwd, key, value) {
 }
 
 export function getConfig(cwd) {
-  return loadState(cwd).config;
+  return loadConfiguration(cwd).config;
 }
 
 export function writeJobFile(cwd, jobId, payload) {
@@ -248,31 +251,37 @@ export function writeJobFile(cwd, jobId, payload) {
 }
 
 export function readJobFile(jobFile) {
+  let record;
+  try { record = JSON.parse(fs.readFileSync(jobFile, "utf8")); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
   const marker = readTerminalMarker(jobFile);
-  if (marker) {
-    const stateFile = path.join(path.dirname(path.dirname(jobFile)), STATE_FILE_NAME);
-    let state;
-    try { state = JSON.parse(fs.readFileSync(stateFile, "utf8")); }
-    catch (error) { if (error.code !== "ENOENT") throw error; }
-    if (state && Array.isArray(state.jobs) && reconcileJobs(state, path.dirname(stateFile))) {
-      writeJsonAtomic(stateFile, state);
-    }
-    return marker;
-  }
-  return JSON.parse(fs.readFileSync(jobFile, "utf8"));
+  if (marker) return { ...record, ...marker };
+  if (record) return record;
+  throw Object.assign(new Error(`Job record not found: ${jobFile}`), { code: "ENOENT" });
 }
 
 // link is the single first-writer-wins operation. No overwrite fallback is safe.
 export function publishTerminalJob(cwd, jobId, payload) {
   if (!TERMINAL_STATUSES.has(payload.status)) throw new Error("Expected a terminal job status.");
   const jobFile = resolveJobFile(cwd, jobId);
+  let existing = {};
+  try { existing = JSON.parse(fs.readFileSync(jobFile, "utf8")); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  const terminal = {
+    ...existing,
+    ...payload,
+    updatedAt: payload.completedAt ?? payload.updatedAt ?? nowIso()
+  };
+  // A terminal-only job must also have an enumerable base record. Never replace an existing record
+  // here: another publisher may already have won the terminal marker.
+  if (!fs.existsSync(jobFile)) writeJsonAtomic(jobFile, terminal, { exclusive: true });
   const marker = terminalMarkerFile(jobFile);
   const temporaryFile = `${marker}.${process.pid}.${randomUUID()}.tmp`;
   let won = false;
   let descriptor;
   try {
     descriptor = fs.openSync(temporaryFile, "wx", 0o600);
-    fs.writeFileSync(descriptor, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    fs.writeFileSync(descriptor, `${JSON.stringify(terminal, null, 2)}\n`, "utf8");
     fs.fsyncSync(descriptor);
     fs.closeSync(descriptor);
     descriptor = undefined;
@@ -297,6 +306,14 @@ function removeJobFile(jobFile) {
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
+  }
+}
+
+// Delete only the selected records, never the complement of a possibly stale snapshot.
+export function removeJobs(cwd, jobs) {
+  for (const job of jobs) {
+    removeJobFile(resolveJobFile(cwd, job.id));
+    removeFileIfExists(job.logFile ?? path.join(resolveJobsDir(cwd), `${job.id}.log`));
   }
 }
 
