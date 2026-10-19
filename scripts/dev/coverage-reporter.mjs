@@ -87,7 +87,11 @@ export default async function* coverageReporter(source) {
     }
   }
   yield* tap(testEvents());
-  if (!markdown) throw new Error("coverage: missing test:coverage event");
+  if (!markdown) {
+    // Node 18 exits non-zero on a reporter error but does not print it; say why explicitly.
+    process.stderr.write("coverage: missing test:coverage event (run with --experimental-test-coverage)\n");
+    throw new Error("coverage: missing test:coverage event");
+  }
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, markdown + "\n");
   yield markdown;
 }
