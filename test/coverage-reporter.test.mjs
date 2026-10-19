@@ -68,6 +68,7 @@ test('child-only', () => {
     assert.match(markdown, /scripts\/child\.mjs \| 100\.00 \| 100\.00 \| 100\.00/);
     assert.match(markdown, /unobserved\.mjs \| 0\.00 \| n\/a \| n\/a/);
     assert.doesNotMatch(markdown, /probe\.test\.mjs/);
-    assert.match(result.stdout, fails ? /# fail 1/ : /# pass 1/);
+    assert.match(result.stdout, /# tests 2/);
+    assert.match(result.stdout, fails ? /# fail 1/ : /# pass 2/);
   });
 }
