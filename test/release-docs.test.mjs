@@ -65,6 +65,18 @@ test("Windows smoke suite includes every hard-link publication suite", () => {
   ]) assert.ok(command.includes(suite), `Windows smoke suite must execute ${suite}`);
 });
 
+test("exactly the newest Linux matrix leg runs coverage instead of a second suite", () => {
+  const source = read(".github/workflows/pull-request-ci.yml");
+  const check = workflowJob(source, "check");
+  assert.match(check, /runs-on: ubuntu-latest/);
+  assert.match(check, /node-version:\s*\n\s*- 18\.18\.0\s*\n\s*- 20\s*\n\s*- 22/);
+  assert.match(workflowStep(check, "Run full check"), /if: matrix\.node-version != 22\s*\n\s*run: npm run check/);
+  assert.match(workflowStep(check, "Run full check with source coverage"), /if: matrix\.node-version == 22\s*\n\s*run: npm run lint && npm run test:coverage/);
+  assert.equal((source.match(/npm run test:coverage/g) ?? []).length, 1);
+  assert.equal(packageJson.scripts["test:coverage"], "node scripts/run-tests.mjs --experimental-test-coverage --test-reporter=./scripts/lib/coverage-reporter.mjs");
+  assert.doesNotMatch(packageJson.scripts["test:coverage"], /test-coverage-(?:lines|branches|functions)|test\/|tests\//);
+});
+
 test("pull request workflow runs the real tmux executor on macOS", () => {
   const source = read(".github/workflows/pull-request-ci.yml").replaceAll("\r\n", "\n");
   const macosJob = source.match(/\n  macos-tmux:\n([\s\S]*?)(?=\n  [a-z][a-z0-9-]*:\n|$)/)?.[0] ?? "";

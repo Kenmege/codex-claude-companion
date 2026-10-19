@@ -11,11 +11,31 @@
 ```bash
 npm run lint
 npm test
+npm run test:coverage
 npm run check
 npm run pack:check
 ```
 
 Do not weaken tests to pass. If a regression test exposes a real bug, fix the implementation.
+
+### Testing with coverage
+
+`npm run test:coverage` runs the same complete suite as `npm test` with Node's
+built-in coverage enabled. Its dependency-free reporter prints a weighted
+line/branch/function summary for JavaScript in `scripts/` and
+`plugins/codex/scripts/`, including maintenance tools. It excludes tests, fixtures,
+dependencies and temporary copies. Node propagates V8 collection to spawned Node
+processes and merges their results, so CLI subprocess tests contribute coverage.
+Children that replace their entire environment must preserve `NODE_V8_COVERAGE`
+to contribute. Abruptly killed children may not flush their coverage.
+
+Unobserved source files appear with zero covered lines. Their branch/function
+counts are unknown (`n/a`); branch/function totals cover observed V8 ranges only,
+and V8 can omit dynamically created functions that never execute. These are
+execution-range metrics, not static syntax counts. The reporter does not impose
+a coverage threshold. When `GITHUB_STEP_SUMMARY` is set it also appends the same
+Markdown report there. Only the newest Node leg in Linux CI replaces its ordinary
+full test run with this coverage run; all other legs keep their existing checks.
 
 `npm test` and `npm run test:windows` include the bounded fast-check properties in
 `tests/property-fuzzing.test.mjs` for Codex argument parsing, job artifact paths,

@@ -43,7 +43,12 @@ jobs:
         run: npm ci
 
       - name: Run full check
+        if: matrix.node-version != 22
         run: npm run check
+
+      - name: Run full check with source coverage
+        if: matrix.node-version == 22
+        run: npm run lint && npm run test:coverage
 
       - name: Verify package contents
         run: npm run pack:check
