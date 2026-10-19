@@ -73,7 +73,10 @@ test("exactly the newest Linux matrix leg runs coverage instead of a second suit
   assert.match(workflowStep(check, "Run full check"), /if: matrix\.node-version != 22\s*\n\s*run: npm run check/);
   assert.match(workflowStep(check, "Run full check with source coverage"), /if: matrix\.node-version == 22\s*\n\s*run: npm run lint && npm run test:coverage/);
   assert.equal((source.match(/npm run test:coverage/g) ?? []).length, 1);
-  assert.equal(packageJson.scripts["test:coverage"], "node scripts/run-tests.mjs --experimental-test-coverage --test-reporter=./scripts/lib/coverage-reporter.mjs");
+  assert.equal(packageJson.scripts["test:coverage"], "node scripts/run-tests.mjs --experimental-test-coverage --test-reporter=./scripts/dev/coverage-reporter.mjs");
+  // The coverage leg inlines `check`; keep them equivalent, and keep the dev-only reporter out of the package.
+  assert.equal(packageJson.scripts.check, "npm run lint && npm test");
+  assert.ok(!packageJson.files.some((entry) => "scripts/dev/coverage-reporter.mjs".startsWith(entry)), "coverage reporter must not be published");
   assert.doesNotMatch(packageJson.scripts["test:coverage"], /test-coverage-(?:lines|branches|functions)|test\/|tests\//);
 });
 

@@ -6,6 +6,13 @@ The format follows Keep a Changelog and this project uses Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- `npm run test:coverage` runs the full suite with Node's built-in coverage
+  (including code run in spawned child processes) and prints a line, branch and
+  function summary for the shipped source; CI publishes it on the Linux Node 22
+  job. The reporter is development-only and not part of the npm package.
+
 ## [1.2.0] — 2026-10-18
 
 ### Changed

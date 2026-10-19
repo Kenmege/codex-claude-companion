@@ -49,7 +49,7 @@
   "scripts": {
     "lint": "node scripts/validate-repo.mjs",
     "test": "node scripts/run-tests.mjs",
-    "test:coverage": "node scripts/run-tests.mjs --experimental-test-coverage --test-reporter=./scripts/lib/coverage-reporter.mjs",
+    "test:coverage": "node scripts/run-tests.mjs --experimental-test-coverage --test-reporter=./scripts/dev/coverage-reporter.mjs",
     "test:windows": "node scripts/run-tests.mjs test/args.test.mjs test/mcp-config.test.mjs test/release-docs.test.mjs test/render.test.mjs tests/broker-lifecycle.test.mjs tests/helpers.test.mjs tests/process.test.mjs tests/terminal-markers.test.mjs tests/job-index.test.mjs tests/state.test.mjs tests/input-boundaries.test.mjs tests/property-fuzzing.test.mjs test/bridge-input.test.mjs test/bridge-repair.test.mjs",
     "check": "npm run lint && npm test",
     "pack:check": "npm pack --dry-run"

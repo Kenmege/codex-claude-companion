@@ -5,10 +5,10 @@ import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { coverageMarkdown, sourceCoverage } from "../scripts/lib/coverage-reporter.mjs";
+import { coverageMarkdown, sourceCoverage } from "../scripts/dev/coverage-reporter.mjs";
 
 const runner = fileURLToPath(new URL("../scripts/run-tests.mjs", import.meta.url));
-const reporter = fileURLToPath(new URL("../scripts/lib/coverage-reporter.mjs", import.meta.url));
+const reporter = fileURLToPath(new URL("../scripts/dev/coverage-reporter.mjs", import.meta.url));
 
 function fixture(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "coverage-fixture-")));
@@ -72,3 +72,15 @@ test('child-only', () => {
     assert.match(result.stdout, fails ? /# fail 1/ : /# pass 2/);
   });
 }
+
+test("coverage CLI fails when no coverage event arrives", (t) => {
+  const root = fixture(t);
+  fs.writeFileSync(path.join(root, "test/probe.test.mjs"), "import test from 'node:test';\ntest('ok', () => {});\n");
+  const { NODE_TEST_CONTEXT: _context, NODE_V8_COVERAGE: _coverage, ...env } = process.env;
+  // Without --experimental-test-coverage Node emits no test:coverage event; the reporter must not report success.
+  const result = spawnSync(process.execPath, [runner, `--test-reporter=${reporter}`], {
+    cwd: root, env, encoding: "utf8", timeout: 30_000
+  });
+  assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout + result.stderr, /coverage: missing test:coverage event/);
+});
